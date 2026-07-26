@@ -63,7 +63,7 @@ OUT:
 10. Code must be extendable by coding agents without archaeology
 
 # REPO STRUCTURE (CREATE EXACTLY)
-whaleagent/
+whaledecode/
 ├── README.md
 ├── docs/
 │   ├── architecture.md
@@ -78,7 +78,7 @@ whaleagent/
 ├── data/wallets_seed.json
 ├── prompts/
 │   └── v1/
-├── src/whaleagent/
+├── src/whaledecode/
 │   ├── domain/
 │   ├── application/
 │   ├── adapters/

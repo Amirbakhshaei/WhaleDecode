@@ -88,7 +88,7 @@ Let me explain each file we're about to create:
 
 ```mermaid
 graph TD
-    A[whaleagent CLI] --> B[bot entrypoint]
+    A[whaledecode CLI] --> B[bot entrypoint]
     A --> C[worker entrypoint]
     A --> D[migrate command]
     A --> E[seed command]
@@ -100,6 +100,6 @@ graph TD
 - **pyproject.toml**: Poetry manifest — declares project name, python version, all dependencies.
 - **config/settings.py**: Pydantic `BaseSettings` — reads env vars, validates them, provides typed access.
 - **config/logging.py**: structlog setup — gives us JSON logs with correlation IDs (essential for debugging a distributed system).
-- **main.py**: Click CLI — `whaleagent bot`, `whaleagent worker`, `whaleagent migrate`, `whaleagent seed`.
+- **main.py**: Click CLI — `whaledecode bot`, `whaledecode worker`, `whaledecode migrate`, `whaledecode seed`.
 
 **Let's build it.**

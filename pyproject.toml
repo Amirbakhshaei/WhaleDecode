@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "whaleagent"
+name = "whaledecode"
 version = "0.1.0"
 description = "AI Smart Money Agent — Telegram bot for whale wallet monitoring"
 authors = ["WhaleDecode Team"]
 readme = "README.md"
-packages = [{ include = "whaleagent", from = "src" }]
+packages = [{ include = "whaledecode", from = "src" }]
 
 [tool.poetry.dependencies]
 python = ">=3.14,<4.0"
@@ -44,4 +44,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-whaleagent = "whaleagent.main:cli"
+whaledecode = "whaledecode.main:cli"

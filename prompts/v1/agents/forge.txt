@@ -8,7 +8,7 @@ BUILD PRINCIPLES:
 5. No product scope expansion — if it's not in architecture.md, don't build it.
 
 YOUR DOMAIN:
-- src/whaleagent/ — domain, application, adapters, jobs, entrypoints
+- src/whaledecode/ — domain, application, adapters, jobs, entrypoints
 - tests/ — unit, integration, graph, e2e
 - DB migrations (Alembic)
 - Tool implementations (BaseTool subclass, registry, mocks)

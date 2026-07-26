@@ -671,7 +671,7 @@ You should copy their trades for guaranteed alpha 📈
 ## 11. Implementation Map
 
 ```
-whaleagent/
+whaledecode/
 ├── graphs/
 │   ├── __init__.py
 │   ├── event_investigation.py      # EventInvestigationGraph
@@ -850,7 +850,7 @@ WhaleAgent defines 12 agent personas organized into four layers:
 | **Learning & Research** (@-invocable) | MENTOR, SCOUT | Teaching and dependency research |
 | **WhaleAgent System** (@-invocable) | SENTINEL, ORION, MERIDIAN, LEDGER, AEGIS, RELAY | System-level agent roles matching the three-graph architecture |
 
-**Constitution**: All personas operate under the [WhaleAgent OpenCode Constitution](#151-whaleagent-opencode-constitution).
+**Constitution**: All personas operate under the [WhaleAgent OpenCode Constitution](#151-whaledecode-opencode-constitution).
 
 ---
 

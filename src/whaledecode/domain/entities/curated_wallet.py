@@ -1,0 +1,13 @@
+from pydantic import BaseModel
+
+from whaledecode.domain.value_objects.chain import Chain
+
+
+class CuratedWallet(BaseModel):
+    id: int | None = None
+    address: str
+    chain: Chain
+    label: str = ""
+    tags: list[str] = []
+    quality_score: float = 0.5
+    is_active: bool = True

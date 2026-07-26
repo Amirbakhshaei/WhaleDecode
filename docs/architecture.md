@@ -42,7 +42,7 @@ C4Context
     Persona(user, "User", "Telegram user (Free or Paid plan)")
     Persona(admin, "Admin", "Bot admin (manual plan grants, broadcast)")
 
-    System(whaleagent, "WhaleAgent", "Telegram bot + worker services for whale wallet monitoring")
+    System(whaledecode, "WhaleAgent", "Telegram bot + worker services for whale wallet monitoring")
 
     System_Ext(telegram, "Telegram Bot API", "Message delivery, commands, callbacks")
     System_Ext(llm, "LLM Provider", "OpenAI / Anthropic / OpenRouter (model routing)")
@@ -51,11 +51,11 @@ C4Context
 
     Rel(user, telegram, "Messages, commands, callbacks")
     Rel(admin, telegram, "Admin commands, broadcast")
-    Rel(telegram, whaleagent, "Webhook / long-poll updates")
-    Rel(whaleagent, llm, "Structured LLM calls (LangGraph)")
-    Rel(whaleagent, chains, "eth_getLogs, eth_call, trace_call (polling)")
-    Rel(whaleagent, payments, "Plan grants (manual v0.1)")
-    Rel(admin, whaleagent, "Admin commands / broadcast")
+    Rel(telegram, whaledecode, "Webhook / long-poll updates")
+    Rel(whaledecode, llm, "Structured LLM calls (LangGraph)")
+    Rel(whaledecode, chains, "eth_getLogs, eth_call, trace_call (polling)")
+    Rel(whaledecode, payments, "Plan grants (manual v0.1)")
+    Rel(admin, whaledecode, "Admin commands / broadcast")
 ```
 
 **Trust Boundaries**
@@ -183,7 +183,7 @@ erDiagram
 ### 5.1 Package Layout
 
 ```
-src/whaleagent/
+src/whaledecode/
 ├── domain/
 │   ├── entities/
 │   ├── value_objects/
@@ -779,15 +779,15 @@ structlog.configure(
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `whaleagent_updates_total` | Counter | `type` (message/callback), `status` |
-| `whaleagent_command_duration_seconds` | Histogram | `command` |
-| `whaleagent_agent_run_duration_seconds` | Histogram | `graph`, `status` |
-| `whaleagent_agent_run_cost_usd` | Histogram | `graph`, `model_tier` |
-| `whaleagent_alerts_dispatched_total` | Counter | `plan`, `status` |
-| `whaleagent_candidate_events_total` | Counter | `chain`, `status` |
-| `whaleagent_active_users` | Gauge | `plan` |
-| `whaleagent_job_duration_seconds` | Histogram | `job`, `status` |
-| `whaleagent_llm_tokens_total` | Counter | `model`, `tier` (in/out) |
+| `whaledecode_updates_total` | Counter | `type` (message/callback), `status` |
+| `whaledecode_command_duration_seconds` | Histogram | `command` |
+| `whaledecode_agent_run_duration_seconds` | Histogram | `graph`, `status` |
+| `whaledecode_agent_run_cost_usd` | Histogram | `graph`, `model_tier` |
+| `whaledecode_alerts_dispatched_total` | Counter | `plan`, `status` |
+| `whaledecode_candidate_events_total` | Counter | `chain`, `status` |
+| `whaledecode_active_users` | Gauge | `plan` |
+| `whaledecode_job_duration_seconds` | Histogram | `job`, `status` |
+| `whaledecode_llm_tokens_total` | Counter | `model`, `tier` (in/out) |
 
 ### 12.4 Health Endpoints
 
@@ -889,8 +889,8 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: whaleagent
-      POSTGRES_USER: whaleagent
+      POSTGRES_DB: whaledecode
+      POSTGRES_USER: whaledecode
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -898,7 +898,7 @@ services:
     secrets:
       - pg_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whaleagent"]
+      test: ["CMD-SHELL", "pg_isready -U whaledecode"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -916,7 +916,7 @@ services:
 
   bot:
     build: .
-    command: python -m whaleagent.entrypoints.bot
+    command: python -m whaledecode.entrypoints.bot
     environment:
       - ENV=prod
     env_file: .env.prod
@@ -933,7 +933,7 @@ services:
 
   worker:
     build: .
-    command: python -m whaleagent.entrypoints.worker
+    command: python -m whaledecode.entrypoints.worker
     environment:
       - ENV=prod
     env_file: .env.prod
@@ -952,7 +952,7 @@ services:
     image: postgres:16-alpine
     command: >
       sh -c "while true; do 
-        pg_dump -h postgres -U whaleagent whaleagent | gzip > /backups/whaleagent_$(date +%%Y%%m%%d_%%H%%M).sql.gz;
+        pg_dump -h postgres -U whaledecode whaledecode | gzip > /backups/whaledecode_$(date +%%Y%%m%%d_%%H%%M).sql.gz;
         find /backups -mtime +7 -delete;
         sleep 86400; done"
     volumes:

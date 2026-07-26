@@ -1,0 +1,13 @@
+from typing import Any, Protocol
+
+
+class ChainProviderPort(Protocol):
+    async def get_logs(
+        self, chain: str, addresses: list[str], from_block: int, to_block: int, topics: list[str] | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    async def get_block_number(self, chain: str) -> int: ...
+
+    async def get_token_metadata(self, chain: str, address: str) -> dict[str, Any]: ...
+
+    async def trace_call(self, chain: str, tx_hash: str) -> dict[str, Any]: ...

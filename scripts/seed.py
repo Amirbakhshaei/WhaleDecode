@@ -1,13 +1,13 @@
 """Seed database with curated wallets and demo events.
 
-Run via: whaleagent seed
+Run via: whaledecode seed
 """
 
 import json
 from pathlib import Path
 
 import structlog
-from whaleagent.config.settings import Settings
+from whaledecode.config.settings import Settings
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 

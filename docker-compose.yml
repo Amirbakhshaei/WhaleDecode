@@ -2,15 +2,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: whaleagent
-      POSTGRES_USER: whaleagent
-      POSTGRES_PASSWORD: whaleagent
+      POSTGRES_DB: whaledecode
+      POSTGRES_USER: whaledecode
+      POSTGRES_PASSWORD: whaledecode
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whaleagent"]
+      test: ["CMD-SHELL", "pg_isready -U whaledecode"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,7 +30,7 @@ services:
 
   bot:
     build: .
-    command: python -m whaleagent.main bot
+    command: python -m whaledecode.main bot
     env_file: .env
     depends_on:
       postgres:
@@ -41,7 +41,7 @@ services:
 
   worker:
     build: .
-    command: python -m whaleagent.main worker
+    command: python -m whaledecode.main worker
     env_file: .env
     depends_on:
       postgres:

@@ -13,16 +13,16 @@ logs:
 	docker compose logs -f
 
 run-bot:
-	poetry run whaleagent bot
+	poetry run whaledecode bot
 
 run-worker:
-	poetry run whaleagent worker
+	poetry run whaledecode worker
 
 migrate:
 	alembic upgrade head
 
 seed:
-	poetry run whaleagent seed
+	poetry run whaledecode seed
 
 lint:
 	ruff check src/ tests/

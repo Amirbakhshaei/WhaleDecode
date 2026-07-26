@@ -1,0 +1,9 @@
+from typing import Any, Protocol
+
+
+class ReasonerPort(Protocol):
+    async def investigate_event(self, event_input: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def investigate_chat(self, chat_input: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def generate_briefing(self, briefing_input: dict[str, Any]) -> dict[str, Any]: ...
