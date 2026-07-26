@@ -1,0 +1,84 @@
+{
+  "project": "WhaleDecode",
+  "mcp": {
+    "servers": {
+      "opencode": {
+        "url": "http://localhost:3000"
+      },
+
+      "context7": {
+        "type": "local",
+        "command": ["npx", "-y", "@upstash/context7-mcp"],
+        "enabled": true
+      },
+      "serena": {
+        "type": "local",
+        "command": ["npx", "-y", "serena"],
+        "enabled": true
+      },
+      "filesystem": {
+        "type": "local",
+        "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/mobin"],
+        "enabled": true
+      },
+      "git": {
+        "type": "local",
+        "command": ["npx", "-y", "@cyanheads/git-mcp-server"],
+        "enabled": true
+      },
+      "shell": {
+        "type": "local",
+        "command": ["npx", "-y", "@kevinwatt/shell-mcp"],
+        "enabled": true
+      },
+      "fetch": {
+        "type": "local",
+        "command": ["npx", "-y", "@mokei/mcp-fetch"],
+        "enabled": true
+      },
+      "sqlite": {
+        "type": "local",
+        "command": ["npx", "-y", "@mokei/mcp-sqlite"],
+        "enabled": true
+      },
+      "postgres": {
+        "type": "local",
+        "command": ["npx", "-y", "@yawlabs/postgres-mcp"],
+        "enabled": true
+      },
+      "memory": {
+        "type": "local",
+        "command": ["npx", "-y", "@modelcontextprotocol/server-memory"],
+        "enabled": true
+      },
+      "sequential-thinking": {
+        "type": "local",
+        "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "enabled": true
+      }
+    }
+  },
+  "commands": {
+    "lint": "ruff check .",
+    "typecheck": "mypy src",
+    "test": "pytest",
+    "test-unit": "pytest tests/unit",
+    "test-integration": "pytest tests/integration",
+    "test-graphs": "pytest tests/graphs",
+    "format": "ruff format ."
+  },
+  "agent": {
+    "atlas": {
+      "prompt": "{file:./.opencode/agents/atlas.md}"
+    },
+    "forge": {
+      "prompt": "{file:./.opencode/agents/forge.md}"
+    },
+    "prism": {
+      "prompt": "{file:./.opencode/agents/prism.md}"
+    },
+    "quill": {
+      "prompt": "{file:./.opencode/agents/quill.md}"
+    }
+  }
+}

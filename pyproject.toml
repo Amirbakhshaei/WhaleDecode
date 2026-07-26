@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "whaleagent"
+version = "0.1.0"
+description = "AI Smart Money Agent — Telegram bot for whale wallet monitoring"
+authors = ["WhaleDecode Team"]
+readme = "README.md"
+packages = [{ include = "whaleagent", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.14,<4.0"
+pydantic = "^2.6"
+pydantic-settings = "^2.1"
+aiogram = "^3.4"
+sqlalchemy = "^2.0"
+asyncpg = "^0.29"
+alembic = "^1.13"
+redis = "^5.0"
+arq = "^0.26"
+httpx = "^0.27"
+langgraph = "^0.1"
+langchain-core = "^0.2"
+langchain-openai = "^0.1"
+structlog = "^24.1"
+tenacity = "^8.2"
+jinja2 = "^3.1"
+click = "^8.1"
+pyyaml = "^6.0"
+polars = "^0.20"
+duckdb = "^0.10"
+langgraph-checkpoint-postgres = ">=1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-asyncio = "^0.23"
+pytest-mock = "^3.12"
+ruff = "^0.3"
+mypy = "^1.8"
+respx = "^0.21"
+types-pyyaml = "^6.0"
+types-redis = "^4.6"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+whaleagent = "whaleagent.main:cli"
