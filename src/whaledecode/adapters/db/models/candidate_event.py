@@ -17,6 +17,7 @@ class CandidateEventModel(Base):
     chain: Mapped[str] = mapped_column(String(20), nullable=False)
     tx_hash: Mapped[str] = mapped_column(String(66), nullable=False)
     log_index: Mapped[int] = mapped_column(Integer, default=0)
+    block_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     event_type: Mapped[str] = mapped_column(String(50), default="UNKNOWN")
     raw_json: Mapped[str] = mapped_column(Text, default="{}")
     score: Mapped[float] = mapped_column(Float, default=0.0)

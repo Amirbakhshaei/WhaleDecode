@@ -63,6 +63,7 @@ def upgrade() -> None:
         sa.Column("chain", sa.String(20), nullable=False),
         sa.Column("tx_hash", sa.String(66), nullable=False),
         sa.Column("log_index", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("block_number", sa.Integer(), server_default="0", nullable=False),
         sa.Column("event_type", sa.String(50), server_default="UNKNOWN", nullable=False),
         sa.Column("raw_json", sa.Text(), server_default="{}", nullable=False),
         sa.Column("score", sa.Float(), server_default="0.0", nullable=False),
