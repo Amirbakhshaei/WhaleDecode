@@ -81,6 +81,16 @@ def seed():
 
 
 @cli.command()
+def ui():
+    """Launch Gradio web UI."""
+    settings = _load_settings()
+    setup_logging(settings)
+    from whaledecode.adapters.ui.gradio_app import create_gradio_app
+    app = create_gradio_app()
+    app.launch(server_name="0.0.0.0")
+
+
+@cli.command()
 def db_init():
     """Create initial migration and apply it."""
     settings = _load_settings()
