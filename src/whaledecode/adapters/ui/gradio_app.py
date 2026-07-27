@@ -14,12 +14,15 @@ from whaledecode.config.settings import Settings
 def _init_services():
     settings = Settings()
     session_factory = create_session_factory(settings)
-    uow = UnitOfWork(session_factory)
+
+    async def _uow() -> UnitOfWork:
+        return UnitOfWork(session_factory)
+
     reasoner = LangGraphReasoner(settings)
     chain = create_chain_provider(settings)
-    investigation = InvestigationService(uow, reasoner)
-    wallets = WalletService(uow)
-    return settings, uow, investigation, wallets, chain
+    investigation = InvestigationService(_uow, reasoner)
+    wallets = WalletService(_uow)
+    return settings, _uow, investigation, wallets, chain
 
 
 def create_gradio_app():
@@ -35,8 +38,9 @@ def create_gradio_app():
         return [[w.id, w.address[:10] + "...", w.chain.value, w.label, w.quality_score] for w in wallets_list]
 
     async def event_list_fn() -> list[list]:
-        events = await uow.candidate_events.list_by_status("AGENT_QUEUED", limit=20)
-        return [[e.id, e.event_type, e.chain, e.score, e.status] for e in events]
+        async with uow() as uow_instance:
+            events = await uow_instance.candidate_events.list_by_status("AGENT_QUEUED", limit=20)
+            return [[e.id, e.event_type, e.chain, e.score, e.status] for e in events]
 
     async def dashboard_stats_fn() -> str:
         return (

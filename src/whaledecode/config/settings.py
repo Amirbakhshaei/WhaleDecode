@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     DATABASE_POOL_SIZE: int = 10
 
-    # Redis
-    REDIS_URL: str
+    # Redis (optional — used for alert dedup; worker uses pure asyncio without Redis)
+    REDIS_URL: str = ""
     REDIS_MAX_CONNECTIONS: int = 20
 
     # LLM (Groq)
@@ -42,21 +42,15 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: SecretStr | None = None
 
     # Chain Providers
-    CHAIN_PROVIDER: str = "alchemy"
-    ALCHEMY_API_KEY: SecretStr | None = None
-    ALCHEMY_BASE_URL: str = "https://eth-mainnet.g.alchemy.com/v2"
+    CHAIN_PROVIDER: str = "drpc"
     DRPC_API_KEY: SecretStr | None = None
     DRPC_BASE_URL: str = "https://rpc.drpc.org"
-    ANKR_API_KEY: SecretStr | None = None
-    ANKR_BASE_URL: str = "https://rpc.ankr.com"
-    QUICKNODE_API_KEY: SecretStr | None = None
-    QUICKNODE_BASE_URL: str = "https://rpc.quiknode.pro"
     POLL_INTERVAL_SECONDS: int = 30
     POLL_BATCH_SIZE: int = 50
     REORG_SAFE_BLOCKS: int = 64
 
     # Alert Pipeline
-    ALERT_SCORE_THRESHOLD: float = 50.0
+    ALERT_SCORE_THRESHOLD: float = 0.50
     FREE_ALERT_BATCH_INTERVAL_MINUTES: int = 60
     PAID_ALERT_BATCH_INTERVAL_SECONDS: int = 5
 

@@ -6,10 +6,41 @@ admin_router = Router(name="admin")
 
 
 @admin_router.message(Command("admin"))
-async def cmd_admin(message: Message) -> None:
-    await message.answer("Admin panel coming soon.")
+async def cmd_admin(message: Message, uow_factory, settings, **kwargs) -> None:
+    tg_id = message.from_user.id
+    if tg_id not in settings.ADMIN_USER_IDS:
+        await message.answer("Access denied.")
+        return
+    async with uow_factory() as uow:
+        users = await uow.users.list_by_plan("free")
+        paid = await uow.users.list_by_plan("paid")
+    await message.answer(
+        f"*Admin Panel*\n\n"
+        f"Users: {len(users) + len(paid)}\n"
+        f"  Free: {len(users)}\n"
+        f"  Paid: {len(paid)}\n\n"
+        f"Commands:\n"
+        f"`/admin_grant_paid <tg_id>` — grant paid plan"
+    )
 
 
 @admin_router.message(Command("admin_grant_paid"))
-async def cmd_admin_grant_paid(message: Message) -> None:
-    await message.answer("Grant not yet implemented.")
+async def cmd_admin_grant_paid(message: Message, uow_factory, settings, **kwargs) -> None:
+    tg_id = message.from_user.id
+    if tg_id not in settings.ADMIN_USER_IDS:
+        await message.answer("Access denied.")
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Usage: `/admin_grant_paid <tg_id>`")
+        return
+    target_tg_id = int(args[1].strip())
+    async with uow_factory() as uow:
+        user = await uow.users.get_by_tg_id(target_tg_id)
+        if user is None:
+            await message.answer(f"User `{target_tg_id}` not found.")
+            return
+        user.plan = "paid"
+        await uow.users.update(user)
+        await uow.commit()
+    await message.answer(f"✅ Granted PAID plan to user `{target_tg_id}`")
