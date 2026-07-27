@@ -95,7 +95,7 @@ def seed():
     settings = _load_settings()
     setup_logging(settings)
 
-    from scripts.seed import run_seed
+    from whaledecode.entrypoints.seed import run_seed
 
     asyncio.run(run_seed(settings))
 

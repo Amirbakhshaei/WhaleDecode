@@ -7,13 +7,12 @@ import json
 from pathlib import Path
 
 import structlog
+
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 _CHAIN_FROM_STR: dict[str, Chain] = {
     "ETH": Chain.ETH,
@@ -22,12 +21,21 @@ _CHAIN_FROM_STR: dict[str, Chain] = {
 }
 
 
+def _find_data_dir() -> Path:
+    path = Path(__file__).resolve()
+    for parent in path.parents:
+        candidate = parent / "data"
+        if candidate.is_dir():
+            return candidate
+    return path.parent / "data"
+
+
 async def run_seed(settings: Settings) -> None:
     log = structlog.get_logger()
 
-    wallets_path = DATA_DIR / "wallets_seed.json"
+    wallets_path = _find_data_dir() / "wallets_seed.json"
     if not wallets_path.exists():
-        log.warning("wallets_seed.json not found, skipping")
+        log.warning("wallets_seed.json not found", path=str(wallets_path))
         return
 
     with open(wallets_path) as f:
