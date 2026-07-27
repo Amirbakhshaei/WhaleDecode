@@ -10,6 +10,6 @@
     "restartPolicyMaxRetries": 10
   },
   "release": {
-    "command": "whaledecode migrate"
+    "command": "whaledecode db-init"
   }
 }
