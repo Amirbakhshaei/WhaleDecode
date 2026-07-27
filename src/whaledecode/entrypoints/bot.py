@@ -35,7 +35,7 @@ async def run_bot(settings: Settings) -> None:
 
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
-        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
 

@@ -29,17 +29,17 @@ async def cmd_start(message: Message, uow_factory, **kwargs) -> None:
         user = await _get_or_create_user(message, uow)
     plan_badge = "⭐ FREE" if user.plan == "free" else "💎 PAID"
     await message.answer(
-        f"🐋 *WhaleDecode*\n\n"
+        f"🐋 <b>WhaleDecode</b>\n\n"
         f"Welcome{', ' + user.username if user.username else ''}! "
         f"Plan: {plan_badge}\n\n"
         "I monitor smart-money wallets and alert you to interesting on-chain activity.\n\n"
         "Commands:\n"
-        "`/wallets` — browse curated wallets\n"
-        "`/track <id>` — track a wallet\n"
-        "`/untrack <id>` — stop tracking\n"
-        "`/chat <question>` — ask the AI agent\n"
-        "`/alerts` — view your alerts\n"
-        "`/help` — this message"
+        "<code>/wallets</code> — browse curated wallets\n"
+        "<code>/track &lt;id&gt;</code> — track a wallet\n"
+        "<code>/untrack &lt;id&gt;</code> — stop tracking\n"
+        "<code>/chat &lt;question&gt;</code> — ask the AI agent\n"
+        "<code>/alerts</code> — view your alerts\n"
+        "<code>/help</code> — this message"
     )
 
 
@@ -49,13 +49,13 @@ async def cmd_help(message: Message, uow_factory, **kwargs) -> None:
         user = await _get_or_create_user(message, uow)
     plan_badge = "⭐ FREE" if user.plan == "free" else "💎 PAID"
     await message.answer(
-        f"🐋 *WhaleDecode*\n\n"
+        f"🐋 <b>WhaleDecode</b>\n\n"
         f"Plan: {plan_badge}\n\n"
         "Commands:\n"
-        "`/wallets` — browse curated wallets\n"
-        "`/track <id>` — track a wallet\n"
-        "`/untrack <id>` — stop tracking\n"
-        "`/chat <question>` — ask the AI agent\n"
-        "`/alerts` — view your alerts\n"
-        "`/help` — this message"
+        "<code>/wallets</code> — browse curated wallets\n"
+        "<code>/track &lt;id&gt;</code> — track a wallet\n"
+        "<code>/untrack &lt;id&gt;</code> — stop tracking\n"
+        "<code>/chat &lt;question&gt;</code> — ask the AI agent\n"
+        "<code>/alerts</code> — view your alerts\n"
+        "<code>/help</code> — this message"
     )

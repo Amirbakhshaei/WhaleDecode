@@ -18,7 +18,7 @@ class TelegramAlertDispatcher(AlertDispatcherPort):
             self._log.warning("dispatch_alert_no_bot", user_id=user_id)
             return False
         try:
-            await bot.send_message(chat_id=user_id, text=message)
+            await bot.send_message(chat_id=user_id, text=message, parse_mode=None)
             self._log.info("dispatch_alert", user_id=user_id, preview=message[:50])
             return True
         except Exception as e:
@@ -31,7 +31,7 @@ class TelegramAlertDispatcher(AlertDispatcherPort):
             self._log.warning("dispatch_briefing_no_bot", user_id=user_id)
             return False
         try:
-            await bot.send_message(chat_id=user_id, text=message)
+            await bot.send_message(chat_id=user_id, text=message, parse_mode=None)
             self._log.info("dispatch_briefing", user_id=user_id, preview=message[:50])
             return True
         except Exception as e:

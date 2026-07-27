@@ -23,7 +23,7 @@ async def _get_or_create_user(message: Message, uow: UnitOfWork) -> User:
 async def cmd_chat(message: Message, investigation_service, uow_factory, **kwargs) -> None:
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Usage: `/chat <your question>`\nExample: `/chat what did 0x742d... do recently?`")
+        await message.answer("Usage: <code>/chat &lt;your question&gt;</code>\nExample: <code>/chat what did 0x742d... do recently?</code>")
         return
     question = args[1]
     await message.answer("🧠 Thinking...")
@@ -42,8 +42,8 @@ async def cmd_alerts(message: Message, uow_factory, **kwargs) -> None:
     if not alerts:
         await message.answer("No alerts yet. Events are detected every 30 seconds.")
         return
-    lines = ["*Your Recent Alerts:*\n"]
+    lines = ["<b>Your Recent Alerts:</b>\n"]
     for a in alerts:
-        dedup = f" key: `{a.dedupe_key[:16]}...`" if a.dedupe_key else ""
-        lines.append(f"• event `{a.event_id}` — {a.status} — {a.priority}{dedup}")
+        dedup = f" key: <code>{a.dedupe_key[:16]}...</code>" if a.dedupe_key else ""
+        lines.append(f"• event <code>{a.event_id}</code> — {a.status} — {a.priority}{dedup}")
     await message.answer("\n".join(lines))

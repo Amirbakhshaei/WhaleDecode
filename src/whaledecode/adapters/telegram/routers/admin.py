@@ -15,12 +15,12 @@ async def cmd_admin(message: Message, uow_factory, settings, **kwargs) -> None:
         users = await uow.users.list_by_plan("free")
         paid = await uow.users.list_by_plan("paid")
     await message.answer(
-        f"*Admin Panel*\n\n"
+        f"<b>Admin Panel</b>\n\n"
         f"Users: {len(users) + len(paid)}\n"
         f"  Free: {len(users)}\n"
         f"  Paid: {len(paid)}\n\n"
         f"Commands:\n"
-        f"`/admin_grant_paid <tg_id>` — grant paid plan"
+        f"<code>/admin_grant_paid &lt;tg_id&gt;</code> — grant paid plan"
     )
 
 
@@ -32,15 +32,15 @@ async def cmd_admin_grant_paid(message: Message, uow_factory, settings, **kwargs
         return
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Usage: `/admin_grant_paid <tg_id>`")
+        await message.answer("Usage: <code>/admin_grant_paid &lt;tg_id&gt;</code>")
         return
     target_tg_id = int(args[1].strip())
     async with uow_factory() as uow:
         user = await uow.users.get_by_tg_id(target_tg_id)
         if user is None:
-            await message.answer(f"User `{target_tg_id}` not found.")
+            await message.answer(f"User <code>{target_tg_id}</code> not found.")
             return
         user.plan = "paid"
         await uow.users.update(user)
         await uow.commit()
-    await message.answer(f"✅ Granted PAID plan to user `{target_tg_id}`")
+    await message.answer(f"✅ Granted PAID plan to user <code>{target_tg_id}</code>")

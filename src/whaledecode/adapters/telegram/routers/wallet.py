@@ -26,10 +26,10 @@ async def cmd_wallets(message: Message, uow_factory, **kwargs) -> None:
     if not wallets:
         await message.answer("No curated wallets available yet.")
         return
-    lines = ["*Curated Wallets:*\n"]
+    lines = ["<b>Curated Wallets:</b>\n"]
     for w in wallets:
         addr_short = f"{w.address[:6]}...{w.address[-4:]}"
-        lines.append(f"`{w.id}` | {addr_short} | {w.chain.value} | {w.label} | score: {w.quality_score}")
+        lines.append(f"<code>{w.id}</code> | {addr_short} | {w.chain.name} | {w.label} | score: {w.quality_score}")
     await message.answer("\n".join(lines))
 
 
@@ -37,35 +37,35 @@ async def cmd_wallets(message: Message, uow_factory, **kwargs) -> None:
 async def cmd_track(message: Message, uow_factory, wallet_service, **kwargs) -> None:
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Usage: `/track <wallet_id>`")
+        await message.answer("Usage: <code>/track &lt;wallet_id&gt;</code>")
         return
     wallet_id_str = args[1].strip()
     if not wallet_id_str.isdigit():
-        await message.answer("Usage: `/track <wallet_id>` — wallet_id must be a number.")
+        await message.answer("Usage: <code>/track &lt;wallet_id&gt;</code> — wallet_id must be a number.")
         return
     wallet_id = int(wallet_id_str)
     async with uow_factory() as uow:
         user = await _get_or_create_user(message, uow)
         curated = await uow.curated_wallets.get(wallet_id)
         if curated is None:
-            await message.answer(f"Wallet `{wallet_id}` not found in curated list.")
+            await message.answer(f"Wallet <code>{wallet_id}</code> not found in curated list.")
             return
         await wallet_service.track(user.id, wallet_id, curated.chain.value)
-    await message.answer(f"✅ Now tracking `{curated.label}` ({curated.address[:6]}...{curated.address[-4:]})")
+    await message.answer(f"✅ Now tracking <code>{curated.label}</code> ({curated.address[:6]}...{curated.address[-4:]})")
 
 
 @wallet_router.message(Command("untrack"))
 async def cmd_untrack(message: Message, wallet_service, uow_factory, **kwargs) -> None:
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Usage: `/untrack <wallet_id>`")
+        await message.answer("Usage: <code>/untrack &lt;wallet_id&gt;</code>")
         return
     wallet_id_str = args[1].strip()
     if not wallet_id_str.isdigit():
-        await message.answer("Usage: `/untrack <wallet_id>` — wallet_id must be a number.")
+        await message.answer("Usage: <code>/untrack &lt;wallet_id&gt;</code> — wallet_id must be a number.")
         return
     wallet_id = int(wallet_id_str)
     async with uow_factory() as uow:
         user = await _get_or_create_user(message, uow)
     await wallet_service.untrack(user.id, wallet_id)
-    await message.answer(f"✅ Stopped tracking wallet `{wallet_id}`")
+    await message.answer(f"✅ Stopped tracking wallet <code>{wallet_id}</code>")
