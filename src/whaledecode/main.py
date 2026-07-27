@@ -65,15 +65,28 @@ def worker():
     asyncio.run(run_worker(settings))
 
 
+def _alembic_url(settings: Settings) -> str:
+    url = settings.DATABASE_URL
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if settings.ENV != "dev" and "sslmode" not in url:
+        url += "&sslmode=require" if "?" in url else "?sslmode=require"
+    return url
+
+
 @cli.command()
 def migrate():
     """Run Alembic database migrations."""
     settings = _load_settings()
     setup_logging(settings)
 
-    from alembic.config import CommandLine
+    from alembic.config import Config
 
-    CommandLine().main(argv=["upgrade", "head"])
+    from alembic import command
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))
+    command.upgrade(cfg, "head")
 
 
 @cli.command()
@@ -93,10 +106,14 @@ def db_init():
     settings = _load_settings()
     setup_logging(settings)
 
-    from alembic.config import CommandLine
+    from alembic.config import Config
 
-    CommandLine().main(argv=["revision", "--autogenerate", "-m", "initial"])
-    CommandLine().main(argv=["upgrade", "head"])
+    from alembic import command
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))
+    command.revision(cfg, autogenerate=True, message="initial")
+    command.upgrade(cfg, "head")
 
 
 if __name__ == "__main__":
