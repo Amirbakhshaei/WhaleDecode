@@ -5,6 +5,12 @@ from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
 
+_CHAIN_FROM_STR: dict[str, Chain] = {
+    "ETH": Chain.ETH,
+    "BASE": Chain.BASE,
+    "ARB": Chain.ARB,
+}
+
 
 class CuratedWalletRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -26,7 +32,7 @@ class CuratedWalletRepository:
     async def create(self, wallet: CuratedWallet) -> CuratedWallet:
         model = CuratedWalletModel(
             address=wallet.address,
-            chain=wallet.chain.value,
+            chain=wallet.chain.name,
             label=wallet.label,
             tags=",".join(wallet.tags),
             quality_score=wallet.quality_score,
@@ -41,11 +47,18 @@ class CuratedWalletRepository:
         row = result.scalar_one_or_none()
         return self._to_domain(row) if row else None
 
+    async def get_by_address(self, address: str) -> CuratedWallet | None:
+        result = await self._session.execute(
+            select(CuratedWalletModel).where(CuratedWalletModel.address == address)
+        )
+        row = result.scalar_one_or_none()
+        return self._to_domain(row) if row else None
+
     def _to_domain(self, model: CuratedWalletModel) -> CuratedWallet:
         return CuratedWallet(
             id=model.id,
             address=model.address,
-            chain=Chain(int(model.chain)),
+            chain=_CHAIN_FROM_STR.get(model.chain, Chain.ETH),
             label=model.label,
             tags=[t for t in model.tags.split(",") if t],
             quality_score=model.quality_score,

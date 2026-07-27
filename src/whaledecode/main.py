@@ -102,18 +102,12 @@ def seed():
 
 @cli.command()
 def db_init():
-    """Create initial migration and apply it."""
+    """Run migrations then seed database."""
     settings = _load_settings()
     setup_logging(settings)
-
-    from alembic.config import Config
-
-    from alembic import command
-
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))
-    command.revision(cfg, autogenerate=True, message="initial")
-    command.upgrade(cfg, "head")
+    ctx = click.get_current_context()
+    ctx.invoke(migrate)
+    ctx.invoke(seed)
 
 
 if __name__ == "__main__":
