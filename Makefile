@@ -18,9 +18,6 @@ run-bot:
 run-worker:
 	poetry run whaledecode worker
 
-run-ui:
-	poetry run whaledecode ui
-
 migrate:
 	alembic upgrade head
 
