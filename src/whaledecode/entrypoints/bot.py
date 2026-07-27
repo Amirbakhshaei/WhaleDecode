@@ -27,7 +27,7 @@ async def run_bot(settings: Settings) -> None:
 
     alert_dispatcher = TelegramAlertDispatcher()
 
-    async def _uow() -> UnitOfWork:
+    def _uow() -> UnitOfWork:
         return UnitOfWork(session_factory)
 
     wallet_service = WalletService(_uow)
