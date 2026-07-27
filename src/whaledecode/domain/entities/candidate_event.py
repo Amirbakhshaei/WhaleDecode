@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -17,4 +17,4 @@ class CandidateEvent(BaseModel):
     score: float = 0.0
     dedupe_key: str = ""
     status: str = "NEW"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

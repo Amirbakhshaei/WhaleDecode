@@ -1,8 +1,23 @@
-"""Shared fixtures for all tests."""
+from collections.abc import AsyncGenerator
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from whaledecode.adapters.db.models import Base
 
 
 @pytest.fixture
 def sample_address() -> str:
     return "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+
+
+@pytest_asyncio.fixture
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        yield session
+    await engine.dispose()

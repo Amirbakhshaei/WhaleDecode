@@ -51,7 +51,7 @@ class TrackedWalletRepository:
             id=model.id,
             user_id=model.user_id,
             wallet_id=model.wallet_id,
-            chain=Chain(model.chain),
+            chain=Chain(int(model.chain)),
             alias=model.alias,
             is_active=model.is_active,
             created_at=model.created_at,

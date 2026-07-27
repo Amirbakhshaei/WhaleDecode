@@ -45,7 +45,7 @@ class CuratedWalletRepository:
         return CuratedWallet(
             id=model.id,
             address=model.address,
-            chain=Chain(model.chain),
+            chain=Chain(int(model.chain)),
             label=model.label,
             tags=[t for t in model.tags.split(",") if t],
             quality_score=model.quality_score,
