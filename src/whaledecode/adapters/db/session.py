@@ -6,8 +6,11 @@ from whaledecode.config.settings import Settings
 
 
 def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSession]:
+    url = settings.DATABASE_URL
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     engine = create_async_engine(
-        settings.DATABASE_URL,
+        url,
         pool_size=settings.DATABASE_POOL_SIZE,
         echo=settings.ENV == "dev",
     )
