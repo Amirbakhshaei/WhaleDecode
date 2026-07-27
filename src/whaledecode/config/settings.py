@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: SecretStr | None = None
 
     # Database
-    DATABASE_URL: str
+    DATABASE_URL: str = ""
     DATABASE_POOL_SIZE: int = 10
 
     # Redis (optional — used for alert dedup; worker uses pure asyncio without Redis)

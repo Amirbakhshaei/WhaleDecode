@@ -15,12 +15,19 @@ def cli():
 
 def _load_settings() -> Settings:
     try:
-        return Settings()
+        settings = Settings()
     except Exception as e:
         raise click.ClickException(
             f"Missing or invalid env vars:\n{e}\n\n"
             "Copy .env.example to .env and fill in the required values."
         )
+    if not settings.DATABASE_URL:
+        raise click.ClickException(
+            "DATABASE_URL is not set.\n\n"
+            "On Railway: add the Postgres plugin (it injects DATABASE_URL automatically).\n"
+            "Locally: set DATABASE_URL in .env (see .env.example)."
+        )
+    return settings
 
 
 @cli.command()
