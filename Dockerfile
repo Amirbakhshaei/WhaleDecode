@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir poetry
 
 COPY pyproject.toml README.md poetry.lock* ./
 COPY src/ ./src/
+COPY data/ ./data/
 COPY alembic/ alembic/
 COPY alembic.ini .
 COPY scripts/ scripts/
