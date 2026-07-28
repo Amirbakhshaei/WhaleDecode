@@ -5,9 +5,6 @@ from whaledecode.adapters.db.models.base import Base
 from whaledecode.adapters.db.models.briefing import BriefingModel
 from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
-from whaledecode.adapters.db.models.onchain_event import OnchainEventModel
-from whaledecode.adapters.db.models.reasoning_report import ReasoningReportModel
-from whaledecode.adapters.db.models.tool_call_log import ToolCallLogModel
 from whaledecode.adapters.db.models.tracked_wallet import TrackedWalletModel
 from whaledecode.adapters.db.models.user import UserModel
 
@@ -17,11 +14,8 @@ __all__ = [
     "CuratedWalletModel",
     "TrackedWalletModel",
     "CandidateEventModel",
-    "OnchainEventModel",
     "AlertModel",
     "AgentRunModel",
-    "ReasoningReportModel",
     "BriefingModel",
-    "ToolCallLogModel",
     "AdminAuditLogModel",
 ]

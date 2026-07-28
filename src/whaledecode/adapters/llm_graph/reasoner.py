@@ -4,7 +4,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph
-from whaledecode.config.models import DEFAULT_MODEL_CONFIG
+from whaledecode.config.models import STRONG_MODEL_ID
 from whaledecode.config.settings import Settings
 from whaledecode.domain.ports.reasoner import ReasonerPort
 
@@ -12,7 +12,7 @@ from whaledecode.domain.ports.reasoner import ReasonerPort
 class LangGraphReasoner(ReasonerPort):
     def __init__(self, settings: Settings) -> None:
         strong_llm = ChatOpenAI(
-            model=DEFAULT_MODEL_CONFIG.strong_id,
+            model=STRONG_MODEL_ID,
             api_key=settings.GROQ_API_KEY.get_secret_value(),
             base_url=settings.GROQ_BASE_URL,
             temperature=0.2,

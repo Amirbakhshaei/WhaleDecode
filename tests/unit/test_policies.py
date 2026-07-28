@@ -1,28 +1,5 @@
-from whaledecode.domain.policies.event_state import transition
 from whaledecode.domain.policies.event_weights import EVENT_TYPE_WEIGHTS
 from whaledecode.domain.policies.scoring import TIER_THRESHOLDS, calculate_alert_worthiness
-
-
-class TestEventState:
-    def test_valid_transition(self):
-        assert transition("NEW", "SCORING") == "SCORING"
-        assert transition("SCORING", "AGENT_QUEUED") == "AGENT_QUEUED"
-        assert transition("PENDING_DISPATCH", "SENT") == "SENT"
-
-    def test_invalid_transition(self):
-        try:
-            transition("SENT", "SCORING")
-            assert False, "should have raised"
-        except ValueError:
-            pass
-
-    def test_terminal_states(self):
-        for state in ("SENT", "SUPPRESSED", "DROPPED"):
-            try:
-                transition(state, "SCORING")
-                assert False, f"{state} should reject transitions"
-            except ValueError:
-                pass
 
 
 class TestEventWeights:

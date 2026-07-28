@@ -1,4 +1,8 @@
-"""Alert worthiness scoring formula — agents.md §7.1."""
+TIER_THRESHOLDS = {
+    "free": 0.70,
+    "pro": 0.55,
+    "whale": 0.40,
+}
 
 
 def calculate_alert_worthiness(
@@ -16,22 +20,3 @@ def calculate_alert_worthiness(
         + 0.05 * market_context_boost
     )
     return max(0.0, min(1.0, base))
-
-
-TIER_THRESHOLDS = {
-    "free": 0.70,
-    "pro": 0.55,
-    "whale": 0.40,
-}
-
-TIER_TTL_SECONDS = {
-    "free": 14400,
-    "pro": 7200,
-    "whale": 1800,
-}
-
-TIER_DAILY_ALERT_CAP = {
-    "free": 5,
-    "pro": 50,
-    "whale": 999,
-}

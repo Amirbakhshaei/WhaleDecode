@@ -14,7 +14,7 @@ class AlertModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    event_id: Mapped[int] = mapped_column(Integer, ForeignKey("onchain_events.id"), nullable=False)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     priority: Mapped[str] = mapped_column(String(20), default="normal")
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)

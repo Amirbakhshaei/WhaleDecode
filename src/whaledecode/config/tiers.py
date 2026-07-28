@@ -7,17 +7,6 @@ class PlanCode(StrEnum):
     PAID = "paid"
 
 
-class AlertTier(StrEnum):
-    FREE = "free"
-    PRO = "pro"
-    WHALE = "whale"
-
-
-class UserTier(StrEnum):
-    FREE = "free"
-    PAID = "paid"
-
-
 @dataclass
 class PlanLimits:
     chat_daily: int

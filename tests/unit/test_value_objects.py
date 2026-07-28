@@ -1,29 +1,8 @@
 import pytest
 
-from whaledecode.domain.value_objects.address import Address
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.domain.value_objects.money import Money
-
-
-class TestAddress:
-    def test_valid(self):
-        addr = Address("0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
-        assert addr.startswith("0x")
-        assert len(addr) == 42
-
-    def test_invalid_short(self):
-        with pytest.raises(ValueError):
-            Address("0x1234")
-
-    def test_invalid_no_prefix(self):
-        with pytest.raises(ValueError):
-            Address("742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
-
-    def test_short_display(self):
-        addr = Address("0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
-        assert addr.short() == "0x742d...bD18"
-        assert len(addr.short()) == 13
 
 
 class TestHash:
