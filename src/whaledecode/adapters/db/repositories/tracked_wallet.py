@@ -23,7 +23,7 @@ class TrackedWalletRepository:
         model = TrackedWalletModel(
             user_id=wallet.user_id,
             wallet_id=wallet.wallet_id,
-            chain=wallet.chain.value,
+            chain=wallet.chain.name,
             alias=wallet.alias,
             is_active=wallet.is_active,
         )
@@ -51,7 +51,7 @@ class TrackedWalletRepository:
             id=model.id,
             user_id=model.user_id,
             wallet_id=model.wallet_id,
-            chain=Chain(int(model.chain)),
+            chain=Chain[model.chain],
             alias=model.alias,
             is_active=model.is_active,
             created_at=model.created_at,

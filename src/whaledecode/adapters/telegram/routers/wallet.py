@@ -50,7 +50,7 @@ async def cmd_track(message: Message, uow_factory, wallet_service, **kwargs) -> 
         if curated is None:
             await message.answer(f"Wallet <code>{wallet_id}</code> not found in curated list.")
             return
-        await wallet_service.track(user.id, wallet_id, curated.chain.value)
+        await wallet_service.track(user.id, wallet_id, curated.chain.name)
     await message.answer(f"✅ Now tracking <code>{curated.label}</code> ({curated.address[:6]}...{curated.address[-4:]})")
 
 

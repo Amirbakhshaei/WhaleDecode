@@ -20,7 +20,7 @@ class WalletService:
             wallet = TrackedWallet(
                 user_id=user_id,
                 wallet_id=wallet_id,
-                chain=Chain(chain.upper()),
+                chain=Chain[chain],
             )
             result = await uow.tracked_wallets.create(wallet)
             await uow.commit()

@@ -23,4 +23,4 @@ class ThrottlingMiddleware(BaseMiddleware):
             if now - last < self._rate_limit:
                 return
             self._last_time[user_id] = now
-        await handler(event, data)
+        return await handler(event, data)
