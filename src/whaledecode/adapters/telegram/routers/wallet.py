@@ -2,21 +2,9 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.domain.entities.user import User
+from whaledecode.adapters.telegram.user_access import get_or_create_user
 
 wallet_router = Router(name="wallet")
-
-
-async def _get_or_create_user(message: Message, uow: UnitOfWork) -> User:
-    tg_id = message.from_user.id
-    existing = await uow.users.get_by_tg_id(tg_id)
-    if existing:
-        return existing
-    user = User(tg_id=tg_id, username=message.from_user.username, plan="free")
-    created = await uow.users.create(user)
-    await uow.commit()
-    return created
 
 
 @wallet_router.message(Command("wallets"))
@@ -45,7 +33,7 @@ async def cmd_track(message: Message, uow_factory, wallet_service, **kwargs) -> 
         return
     wallet_id = int(wallet_id_str)
     async with uow_factory() as uow:
-        user = await _get_or_create_user(message, uow)
+        user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         curated = await uow.curated_wallets.get(wallet_id)
         if curated is None:
             await message.answer(f"Wallet <code>{wallet_id}</code> not found in curated list.")
@@ -66,6 +54,6 @@ async def cmd_untrack(message: Message, wallet_service, uow_factory, **kwargs) -
         return
     wallet_id = int(wallet_id_str)
     async with uow_factory() as uow:
-        user = await _get_or_create_user(message, uow)
+        user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
     await wallet_service.untrack(user.id, wallet_id)
     await message.answer(f"✅ Stopped tracking wallet <code>{wallet_id}</code>")

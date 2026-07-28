@@ -27,8 +27,10 @@ class UnitOfWork:
         self.admin_audit_logs = AdminAuditLogRepository(self._session)
         return self
 
-    async def __aexit__(self, *args) -> None:
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         if self._session is not None:
+            if exc_type is not None:
+                await self._session.rollback()
             await self._session.close()
 
     async def commit(self) -> None:

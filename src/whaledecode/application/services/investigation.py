@@ -1,12 +1,12 @@
 from typing import Any
 
-from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
 from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
+from whaledecode.domain.ports.reasoner import ReasonerPort
 
 
 class InvestigationService:
-    def __init__(self, uow_factory, reasoner: LangGraphReasoner) -> None:
+    def __init__(self, uow_factory, reasoner: ReasonerPort) -> None:
         self._uow_factory = uow_factory
         self._reasoner = reasoner
 

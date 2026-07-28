@@ -2,21 +2,9 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.domain.entities.user import User
+from whaledecode.adapters.telegram.user_access import get_or_create_user
 
 chat_router = Router(name="chat")
-
-
-async def _get_or_create_user(message: Message, uow: UnitOfWork) -> User:
-    tg_id = message.from_user.id
-    existing = await uow.users.get_by_tg_id(tg_id)
-    if existing:
-        return existing
-    user = User(tg_id=tg_id, username=message.from_user.username, plan="free")
-    created = await uow.users.create(user)
-    await uow.commit()
-    return created
 
 
 @chat_router.message(Command("chat"))
@@ -37,7 +25,7 @@ async def cmd_chat(message: Message, investigation_service, uow_factory, **kwarg
 @chat_router.message(Command("alerts"))
 async def cmd_alerts(message: Message, uow_factory, **kwargs) -> None:
     async with uow_factory() as uow:
-        user = await _get_or_create_user(message, uow)
+        user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         alerts = await uow.alerts.list_by_user(user.id, limit=20)
     if not alerts:
         await message.answer("No alerts yet. Events are detected every 30 seconds.")
