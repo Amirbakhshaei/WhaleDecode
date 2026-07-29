@@ -10,7 +10,7 @@ from whaledecode.config.settings import Settings
 @click.group()
 @click.version_option(version=__version__, prog_name="whaledecode")
 def cli():
-    """WhaleAgent v0.1 — AI Smart Money Agent."""
+    """WhaleDecode — AI Smart Money Agent."""
 
 
 def _load_settings() -> Settings:

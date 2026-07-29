@@ -42,6 +42,17 @@ class AgentRunRepository:
         model.error = run.error
         model.completed_at = run.completed_at
 
+    async def get_by_trigger(self, trigger_type: str, trigger_ref_id: int) -> AgentRun | None:
+        result = await self._session.execute(
+            select(AgentRunModel)
+            .where(AgentRunModel.trigger_type == trigger_type)
+            .where(AgentRunModel.trigger_ref_id == trigger_ref_id)
+            .order_by(desc(AgentRunModel.created_at))
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+        return self._to_domain(row) if row else None
+
     async def list_recent(self, limit: int = 20) -> list[AgentRun]:
         result = await self._session.execute(
             select(AgentRunModel).order_by(desc(AgentRunModel.created_at)).limit(limit)

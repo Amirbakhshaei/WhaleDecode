@@ -47,6 +47,18 @@ class CuratedWalletRepository:
         row = result.scalar_one_or_none()
         return self._to_domain(row) if row else None
 
+    async def update(self, wallet: CuratedWallet) -> None:
+        result = await self._session.execute(
+            select(CuratedWalletModel).where(CuratedWalletModel.id == wallet.id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return
+        model.is_active = wallet.is_active
+        model.label = wallet.label
+        model.tags = ",".join(wallet.tags)
+        model.quality_score = wallet.quality_score
+
     async def get_by_address_and_chain(self, address: str, chain: str) -> CuratedWallet | None:
         result = await self._session.execute(
             select(CuratedWalletModel).where(

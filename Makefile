@@ -19,7 +19,7 @@ run-worker:
 	poetry run whaledecode worker
 
 migrate:
-	alembic upgrade head
+	poetry run alembic upgrade head
 
 seed:
 	poetry run whaledecode seed
@@ -31,12 +31,12 @@ typecheck:
 	mypy src/
 
 test:
-	pytest
+	poetry run pytest
 
 test-unit:
-	pytest tests/unit
+	poetry run pytest tests/unit
 
 test-graphs:
-	pytest tests/graphs
+	poetry run pytest tests/graphs
 
 pre-commit: lint typecheck test

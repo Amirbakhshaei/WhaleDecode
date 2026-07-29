@@ -1,6 +1,6 @@
 # WhaleDecode
 
-AI Smart Money Agent — monitors whale wallets, detects on-chain events, investigates with LangGraph/Groq, and sends Telegram alerts.
+AI Smart Money Intelligence — monitors whale wallets on Base + Arbitrum, detects on-chain moves, investigates with LangGraph/Groq, and sends Telegram alerts and briefings.
 
 ## Quick Start
 

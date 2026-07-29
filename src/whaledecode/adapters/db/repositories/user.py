@@ -9,6 +9,11 @@ class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def get_by_id(self, user_id: int) -> User | None:
+        result = await self._session.execute(select(UserModel).where(UserModel.id == user_id))
+        row = result.scalar_one_or_none()
+        return self._to_domain(row) if row else None
+
     async def get_by_tg_id(self, tg_id: int) -> User | None:
         result = await self._session.execute(select(UserModel).where(UserModel.tg_id == tg_id))
         row = result.scalar_one_or_none()
@@ -23,6 +28,7 @@ class UserRepository:
             daily_chat_count=user.daily_chat_count,
             daily_alert_count=user.daily_alert_count,
             is_admin=user.is_admin,
+            alerts_enabled=user.alerts_enabled,
         )
         self._session.add(model)
         await self._session.flush()
@@ -39,6 +45,7 @@ class UserRepository:
         model.daily_chat_count = user.daily_chat_count
         model.daily_alert_count = user.daily_alert_count
         model.is_admin = user.is_admin
+        model.alerts_enabled = user.alerts_enabled
 
     async def list_by_plan(self, plan: str) -> list[User]:
         result = await self._session.execute(select(UserModel).where(UserModel.plan == plan))
@@ -54,5 +61,6 @@ class UserRepository:
             daily_chat_count=model.daily_chat_count,
             daily_alert_count=model.daily_alert_count,
             is_admin=model.is_admin,
+            alerts_enabled=model.alerts_enabled,
             created_at=model.created_at,
         )

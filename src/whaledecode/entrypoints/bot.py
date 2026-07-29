@@ -10,6 +10,7 @@ from whaledecode.adapters.telegram.dispatcher import TelegramAlertDispatcher
 from whaledecode.adapters.telegram.middleware import ThrottlingMiddleware
 from whaledecode.adapters.telegram.routers import (
     admin_router,
+    callback_router,
     chat_router,
     common_router,
     wallet_router,
@@ -32,7 +33,7 @@ async def run_bot(settings: Settings) -> None:
         return UnitOfWork(session_factory)
 
     wallet_service = WalletService(_uow)
-    investigation_service = InvestigationService(_uow, reasoner)
+    investigation_service = InvestigationService(_uow, reasoner, settings)
 
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
@@ -47,7 +48,7 @@ async def run_bot(settings: Settings) -> None:
     dp["bot"] = bot
     dp["settings"] = settings
 
-    dp.include_routers(common_router, wallet_router, chat_router, admin_router)
+    dp.include_routers(common_router, wallet_router, chat_router, admin_router, callback_router)
     dp.message.middleware(ThrottlingMiddleware())
 
     @dp.startup()

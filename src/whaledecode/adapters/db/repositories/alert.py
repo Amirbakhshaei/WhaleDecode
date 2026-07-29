@@ -35,6 +35,14 @@ class AlertRepository:
         )
         return [self._to_domain(row) for row in result.scalars()]
 
+    async def update(self, alert: Alert) -> None:
+        result = await self._session.execute(select(AlertModel).where(AlertModel.id == alert.id))
+        model = result.scalar_one_or_none()
+        if model is None:
+            return
+        model.status = alert.status
+        model.sent_at = alert.sent_at
+
     async def list_by_status(self, status: str, limit: int = 100) -> list[Alert]:
         result = await self._session.execute(
             select(AlertModel).where(AlertModel.status == status).limit(limit)

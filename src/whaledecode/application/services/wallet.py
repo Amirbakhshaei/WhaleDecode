@@ -1,5 +1,7 @@
+from whaledecode.application.services.user_service import get_user_with_limits
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.entities.tracked_wallet import TrackedWallet
+from whaledecode.domain.exceptions import PlanLimitError
 from whaledecode.domain.value_objects.chain import Chain
 
 
@@ -17,6 +19,10 @@ class WalletService:
 
     async def track(self, user_id: int, wallet_id: int, chain: str) -> TrackedWallet:
         async with self._uow_factory() as uow:
+            user, limits = await get_user_with_limits(uow, user_id)
+            current = await uow.tracked_wallets.count_active_by_user(user_id)
+            if current >= limits.max_tracked_wallets:
+                raise PlanLimitError(f"Plan limit: {limits.max_tracked_wallets} wallets. You have {current}.")
             wallet = TrackedWallet(
                 user_id=user_id,
                 wallet_id=wallet_id,

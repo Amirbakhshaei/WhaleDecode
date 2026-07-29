@@ -1,14 +1,17 @@
 from typing import Any
 
+from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
+from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.ports.reasoner import ReasonerPort
 
 
 class InvestigationService:
-    def __init__(self, uow_factory, reasoner: ReasonerPort) -> None:
+    def __init__(self, uow_factory, reasoner: ReasonerPort, settings: Settings | None = None) -> None:
         self._uow_factory = uow_factory
         self._reasoner = reasoner
+        self._relay = RelayFormatter(settings)
 
     async def process_event(self, event: CandidateEvent) -> dict[str, Any]:
         event_dict = event.model_dump()
@@ -30,8 +33,8 @@ class InvestigationService:
 
     async def chat(self, user_message: str, context: dict[str, Any] | None = None) -> str:
         result = await self._reasoner.investigate_chat({"message": user_message, "context": context or {}})
-        return result.get("response", "I'm not sure how to answer that yet.")
+        return self._relay.format_chat_response(result)
 
     async def generate_briefing(self, user_id: int) -> str:
         result = await self._reasoner.generate_briefing({"user_id": user_id})
-        return result.get("briefing", "No briefing available yet.")
+        return self._relay.format_briefing(result)

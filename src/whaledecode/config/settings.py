@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     FREE_ALERT_BATCH_INTERVAL_MINUTES: int = 60
     PAID_ALERT_BATCH_INTERVAL_SECONDS: int = 5
 
+    # Channel Publishing
+    CHANNEL_CHAT_ID: str | None = None
+    CHANNEL_PUBLISH_ENABLED: bool = False
+    CHANNEL_MAX_DAILY: int = 20
+
+    # Content
+    DISCLAIMER_TEXT: str = "⚠️ Not financial advice. DYOR. Data may be delayed or inaccurate."
+
     # Billing
     FREE_PLAN_CHAT_DAILY: int = 5
     PAID_PLAN_CHAT_DAILY: int = 50

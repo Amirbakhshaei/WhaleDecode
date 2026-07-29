@@ -1,4 +1,4 @@
-# WhaleAgent Architecture
+# WhaleDecode Architecture
 
 ## Architecture Thesis (8 Bullets)
 
@@ -37,12 +37,12 @@
 
 ```mermaid
 C4Context
-    title System Context — WhaleAgent v0.1
+    title System Context — WhaleDecode v0.1
 
     Persona(user, "User", "Telegram user (Free or Paid plan)")
     Persona(admin, "Admin", "Bot admin (manual plan grants, broadcast)")
 
-    System(whaledecode, "WhaleAgent", "Telegram bot + worker services for whale wallet monitoring")
+    System(whaledecode, "WhaleDecode", "Telegram bot + worker services for whale wallet monitoring")
 
     System_Ext(telegram, "Telegram Bot API", "Message delivery, commands, callbacks")
     System_Ext(llm, "LLM Provider", "OpenAI / Anthropic / OpenRouter (model routing)")
@@ -69,7 +69,7 @@ C4Context
 
 ```mermaid
 C4Container
-    title Container View — WhaleAgent v0.1
+    title Container View — WhaleDecode v0.1
 
     Container(bot, "Telegram Bot Service", "Python 3.11, aiogram 3", "Receives updates, enforces auth/plan/rate-limit, dispatches commands/callbacks")
     Container(worker, "Worker Service", "Python 3.11, apscheduler + custom job runner", "Polling jobs, candidate processing, AgentRuns, briefing, analytics, cleanup")
