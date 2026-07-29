@@ -47,9 +47,12 @@ class CuratedWalletRepository:
         row = result.scalar_one_or_none()
         return self._to_domain(row) if row else None
 
-    async def get_by_address(self, address: str) -> CuratedWallet | None:
+    async def get_by_address_and_chain(self, address: str, chain: str) -> CuratedWallet | None:
         result = await self._session.execute(
-            select(CuratedWalletModel).where(CuratedWalletModel.address == address)
+            select(CuratedWalletModel).where(
+                CuratedWalletModel.address == address,
+                CuratedWalletModel.chain == chain,
+            )
         )
         row = result.scalar_one_or_none()
         return self._to_domain(row) if row else None

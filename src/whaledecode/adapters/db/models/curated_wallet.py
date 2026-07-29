@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Float, Integer, String
+from sqlalchemy import Boolean, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from whaledecode.adapters.db.models.base import Base
@@ -6,6 +6,7 @@ from whaledecode.adapters.db.models.base import Base
 
 class CuratedWalletModel(Base):
     __tablename__ = "curated_wallets"
+    __table_args__ = (UniqueConstraint("address", "chain", name="uq_address_chain"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     address: Mapped[str] = mapped_column(String(42), nullable=False, index=True)

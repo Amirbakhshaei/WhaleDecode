@@ -57,7 +57,7 @@ async def ensure_curated_wallets_seeded(session_factory) -> None:
             is_active=True,
         )
         async with UnitOfWork(session_factory) as uow:
-            existing = await uow.curated_wallets.get_by_address(wallet.address)
+            existing = await uow.curated_wallets.get_by_address_and_chain(wallet.address, wallet.chain.name)
             if existing:
                 continue
             await uow.curated_wallets.create(wallet)
@@ -93,7 +93,7 @@ async def run_seed(settings: Settings) -> None:
             is_active=True,
         )
         async with UnitOfWork(session_factory) as uow:
-            existing = await uow.curated_wallets.get_by_address(wallet.address)
+            existing = await uow.curated_wallets.get_by_address_and_chain(wallet.address, wallet.chain.name)
             if existing:
                 skipped += 1
                 continue
