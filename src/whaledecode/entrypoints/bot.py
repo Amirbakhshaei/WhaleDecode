@@ -17,6 +17,7 @@ from whaledecode.adapters.telegram.routers import (
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.application.services.wallet import WalletService
 from whaledecode.config.settings import Settings
+from whaledecode.entrypoints.seed import ensure_curated_wallets_seeded
 
 
 async def run_bot(settings: Settings) -> None:
@@ -52,6 +53,7 @@ async def run_bot(settings: Settings) -> None:
     @dp.startup()
     async def on_startup():
         alert_dispatcher.set_bot(bot)
+        await ensure_curated_wallets_seeded(session_factory)
         log.info("bot_started", bot_name=await bot.get_my_name())
 
     @dp.shutdown()

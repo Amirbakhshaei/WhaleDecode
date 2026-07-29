@@ -30,6 +30,40 @@ def _find_data_dir() -> Path:
     return path.parent / "data"
 
 
+async def ensure_curated_wallets_seeded(session_factory) -> None:
+    wallets_path = _find_data_dir() / "wallets_seed.json"
+    if not wallets_path.exists():
+        return
+
+    existing_count = 0
+    async with UnitOfWork(session_factory) as uow:
+        existing = await uow.curated_wallets.list_active()
+        existing_count = len(existing)
+    if existing_count > 0:
+        return
+
+    with open(wallets_path) as f:
+        wallets_data = json.load(f)
+    for w in wallets_data:
+        chain = _CHAIN_FROM_STR.get(w["chain"])
+        if chain is None:
+            continue
+        wallet = CuratedWallet(
+            address=w["address"],
+            chain=chain,
+            label=w.get("label", ""),
+            tags=w.get("tags", []),
+            quality_score=w.get("quality_score", 0.5),
+            is_active=True,
+        )
+        async with UnitOfWork(session_factory) as uow:
+            existing = await uow.curated_wallets.get_by_address(wallet.address)
+            if existing:
+                continue
+            await uow.curated_wallets.create(wallet)
+            await uow.commit()
+
+
 async def run_seed(settings: Settings) -> None:
     log = structlog.get_logger()
 
