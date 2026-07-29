@@ -12,7 +12,6 @@ COPY src/ ./src/
 COPY data/ ./data/
 COPY alembic/ alembic/
 COPY alembic.ini .
-COPY scripts/ scripts/
 
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --without dev
