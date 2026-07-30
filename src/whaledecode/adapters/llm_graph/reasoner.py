@@ -1,31 +1,62 @@
 import time
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+import tenacity
 
+import structlog
 from whaledecode.adapters.llm_graph.graphs.chat_investigation import build_chat_investigation_graph
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph
+from whaledecode.adapters.llm_graph.rotating_llm import RotatingChatOpenAI
 from whaledecode.config.models import STRONG_MODEL_ID
 from whaledecode.config.settings import Settings
 from whaledecode.domain.ports.reasoner import ReasonerPort
+
+log = structlog.get_logger()
 
 
 class LangGraphReasoner(ReasonerPort):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        strong_llm = ChatOpenAI(
+        secondary_keys = []
+        if settings.GROQ_API_KEY_SECONDARY:
+            secondary_keys.append(settings.GROQ_API_KEY_SECONDARY.get_secret_value())
+
+        strong_llm = RotatingChatOpenAI(
             model=STRONG_MODEL_ID,
             api_key=settings.GROQ_API_KEY.get_secret_value(),
             base_url=settings.GROQ_BASE_URL,
             temperature=0.2,
+            secondary_keys=secondary_keys,
         )
         self._strong_llm = strong_llm
         self._investigation_graph = build_investigation_graph(strong_llm)
         self._chat_graph = build_chat_investigation_graph(strong_llm)
 
+    @staticmethod
+    def _retry_predicate(exc: BaseException) -> bool:
+        """Retry on transient errors only."""
+        return isinstance(exc, (ConnectionError, TimeoutError, OSError))
+
+    async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str) -> dict:
+        """Invoke a LangGraph graph with retry on transient errors."""
+        retrier = tenacity.Retrying(
+            retry=tenacity.retry_if_exception(self._retry_predicate),
+            stop=tenacity.stop_after_attempt(3),
+            wait=tenacity.wait_exponential(multiplier=0.5, min=0.5, max=5),
+            before_sleep=lambda rs: log.warning(
+                "llm_retry",
+                attempt=rs.attempt_number,
+                label=label,
+                error=str(rs.outcome.exception()) if rs.outcome else "",
+            ),
+            reraise=True,
+        )
+        with retrier:
+            return await graph.ainvoke(inputs)
+
     async def investigate_event(self, event_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
-        state = await self._investigation_graph.ainvoke({"event_data": event_input})
+        state = await self._invoke_graph(self._investigation_graph, {"event_data": event_input}, "investigate_event")
         tokens_in = self._count_tokens(state.get("messages", []))
         return {
             "summary": state.get("summary", ""),
@@ -42,7 +73,7 @@ class LangGraphReasoner(ReasonerPort):
     async def investigate_chat(self, chat_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
         query = chat_input.get("message", "")
-        state = await self._chat_graph.ainvoke({"query": query})
+        state = await self._invoke_graph(self._chat_graph, {"query": query}, "investigate_chat")
         tokens_in = self._count_tokens(state.get("messages", []))
         return {
             "summary": state.get("summary", ""),
@@ -77,7 +108,21 @@ class LangGraphReasoner(ReasonerPort):
             "in 2-3 paragraphs. Highlight the most significant events, patterns, and risks.\n\n"
             f"Events today ({len(events)} total):\n" + "\n".join(lines)
         )
-        resp = await self._strong_llm.ainvoke([{"role": "user", "content": prompt}])
+        messages = [{"role": "user", "content": prompt}]
+        retrier = tenacity.Retrying(
+            retry=tenacity.retry_if_exception(self._retry_predicate),
+            stop=tenacity.stop_after_attempt(3),
+            wait=tenacity.wait_exponential(multiplier=0.5, min=0.5, max=5),
+            before_sleep=lambda rs: log.warning(
+                "llm_retry",
+                attempt=rs.attempt_number,
+                label="generate_briefing",
+                error=str(rs.outcome.exception()) if rs.outcome else "",
+            ),
+            reraise=True,
+        )
+        with retrier:
+            resp = await self._strong_llm.ainvoke(messages)
 
         lat_ms = int((time.monotonic() - start) * 1000)
         return {

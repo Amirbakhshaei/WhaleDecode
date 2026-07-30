@@ -1,5 +1,6 @@
 from html import escape
 
+import structlog
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -7,11 +8,14 @@ from aiogram.types import Message
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.config.tiers import get_limits
 
+log = structlog.get_logger()
+
 chat_router = Router(name="chat")
 
 
 @chat_router.message(Command("ask"))
 async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs) -> None:
+    log.info("ask_command_received", user_id=message.from_user.id, text=message.text)
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.answer("Usage: <code>/ask &lt;your question&gt;</code>\nExample: <code>/ask what did 0x742d... do recently?</code>")
@@ -32,12 +36,17 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
     try:
         response = await investigation_service.chat(question)
         await message.answer(response[:4000])
+    except ConnectionError as e:
+        log.error("ask_connection_error", user_id=message.from_user.id, error=str(e))
+        await message.answer("LLM connection failed — check GROQ_API_KEY or try again shortly.")
     except Exception as e:
+        log.error("ask_error", user_id=message.from_user.id, error=str(e))
         await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")
 
 
 @chat_router.message(Command("decode"))
 async def cmd_decode(message: Message, investigation_service, uow_factory, **kwargs) -> None:
+    log.info("decode_command_received", user_id=message.from_user.id, text=message.text)
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.answer("Usage: <code>/decode &lt;tx_hash or address&gt;</code>\nExample: <code>/decode 0x1234...</code>")
@@ -58,7 +67,11 @@ async def cmd_decode(message: Message, investigation_service, uow_factory, **kwa
     try:
         response = await investigation_service.chat(f"Decode and analyze this address or transaction: {target}")
         await message.answer(response[:4000])
+    except ConnectionError as e:
+        log.error("decode_connection_error", user_id=message.from_user.id, error=str(e))
+        await message.answer("LLM connection failed — check GROQ_API_KEY or try again shortly.")
     except Exception as e:
+        log.error("decode_error", user_id=message.from_user.id, error=str(e))
         await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")
 
 

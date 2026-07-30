@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     # LLM (Groq)
     GROQ_API_KEY: SecretStr
+    GROQ_API_KEY_SECONDARY: SecretStr | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     DEFAULT_CHEAP_MODEL: str = "llama-3.1-8b-instant"
     DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
