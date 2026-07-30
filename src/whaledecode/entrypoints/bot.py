@@ -62,4 +62,5 @@ async def run_bot(settings: Settings) -> None:
         log.info("bot_stopped")
 
     log.info("bot_polling_start")
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
