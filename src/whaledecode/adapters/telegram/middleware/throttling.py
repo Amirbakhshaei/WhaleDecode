@@ -1,5 +1,6 @@
 import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
@@ -12,10 +13,10 @@ class ThrottlingMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[TelegramObject, dict], Awaitable],
+        handler: Callable[[TelegramObject, dict], Awaitable[Any]],
         event: TelegramObject,
         data: dict,
-    ) -> None:
+    ) -> Any:
         user_id = getattr(getattr(event, "from_user", None), "id", None)
         if user_id is not None:
             now = time.monotonic()

@@ -1,3 +1,5 @@
+from html import escape
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -31,7 +33,7 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
         response = await investigation_service.chat(question)
         await message.answer(response[:4000])
     except Exception as e:
-        await message.answer(f"Sorry, I encountered an error: {str(e)[:200]}")
+        await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")
 
 
 @chat_router.message(Command("decode"))
@@ -57,7 +59,7 @@ async def cmd_decode(message: Message, investigation_service, uow_factory, **kwa
         response = await investigation_service.chat(f"Decode and analyze this address or transaction: {target}")
         await message.answer(response[:4000])
     except Exception as e:
-        await message.answer(f"Sorry, I encountered an error: {str(e)[:200]}")
+        await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")
 
 
 @chat_router.message(Command("alerts"))
@@ -104,4 +106,4 @@ async def cmd_briefing(message: Message, investigation_service, uow_factory, **k
         briefing = await investigation_service.generate_briefing(user.id)
         await message.answer(briefing[:4000])
     except Exception as e:
-        await message.answer(f"Sorry, I encountered an error: {str(e)[:200]}")
+        await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")

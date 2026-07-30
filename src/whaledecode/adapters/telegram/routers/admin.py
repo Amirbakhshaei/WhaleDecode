@@ -1,3 +1,5 @@
+from html import escape
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -134,7 +136,7 @@ async def _cmd_admin_wallet(message: Message, args: str, uow_factory, settings) 
             )
             await uow.admin_audit_logs.create(audit)
             await uow.commit()
-            await message.answer(f"✅ Added wallet <code>{address[:6]}...{address[-4:]}</code> ({label})")
+            await message.answer(f"✅ Added wallet <code>{address[:6]}...{address[-4:]}</code> ({escape(label)})")
         elif action == "remove" and len(pieces) >= 2:
             wallet_id = int(pieces[1])
             from whaledecode.domain.entities.curated_wallet import CuratedWallet

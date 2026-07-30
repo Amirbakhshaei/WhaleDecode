@@ -9,8 +9,11 @@ def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSessio
     url = settings.DATABASE_URL
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if settings.ENV != "dev" and "sslmode" not in url:
+
+    is_internal_host = any(h in url for h in ["railway.internal", "localhost", "127.0.0.1", "postgres:"])
+    if settings.ENV != "dev" and "sslmode" not in url and not is_internal_host:
         url += "&sslmode=require" if "?" in url else "?sslmode=require"
+
     engine = create_async_engine(
         url,
         pool_size=settings.DATABASE_POOL_SIZE,

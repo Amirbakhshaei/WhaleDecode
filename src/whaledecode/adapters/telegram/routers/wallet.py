@@ -1,3 +1,5 @@
+from html import escape
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -39,7 +41,7 @@ async def cmd_track(message: Message, uow_factory, wallet_service, **kwargs) -> 
             await message.answer(f"Wallet <code>{wallet_id}</code> not found in curated list.")
             return
         await wallet_service.track(user.id, wallet_id, curated.chain.name)
-    await message.answer(f"✅ Now tracking <code>{curated.label}</code> ({curated.address[:6]}...{curated.address[-4:]})")
+    await message.answer(f"✅ Now tracking <code>{escape(curated.label)}</code> ({curated.address[:6]}...{curated.address[-4:]})")
 
 
 @wallet_router.message(Command("untrack"))

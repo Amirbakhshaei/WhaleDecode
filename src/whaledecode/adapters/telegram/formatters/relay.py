@@ -1,3 +1,4 @@
+from html import escape
 from typing import Any
 
 from whaledecode.config.settings import Settings
@@ -8,14 +9,14 @@ class RelayFormatter:
         self._disclaimer = settings.DISCLAIMER_TEXT if settings else "Not financial advice. DYOR."
 
     def format_alert(self, event: dict[str, Any], report: dict[str, Any]) -> str:
-        wallet_label = event.get("label", "Unknown Wallet")
+        wallet_label = escape(event.get("label", "Unknown Wallet"))
         addr = event.get("address", "")
-        addr_short = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else addr
-        chain = event.get("chain", "")
-        event_type = event.get("event_type", "EVENT")
-        summary = report.get("summary", "No analysis available.")
+        addr_short = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else escape(addr)
+        chain = escape(event.get("chain", ""))
+        event_type = escape(event.get("event_type", "EVENT"))
+        summary = escape(report.get("summary", "No analysis available."))
         score = report.get("risk_score", 0.0)
-        thesis = report.get("thesis", "")
+        thesis = escape(report.get("thesis", ""))
 
         lines = [
             f"🐋 <b>Whale Alert</b> — {wallet_label}",
@@ -34,7 +35,7 @@ class RelayFormatter:
         return "\n".join(lines)
 
     def format_chat_response(self, report: dict[str, Any]) -> str:
-        summary = report.get("summary", "I couldn't find enough information to answer that.")
+        summary = escape(report.get("summary", "I couldn't find enough information to answer that."))
         evidence = report.get("evidence", [])
         score = report.get("risk_score", 0.0)
 
@@ -47,8 +48,8 @@ class RelayFormatter:
             lines.append("")
             lines.append("<b>Evidence:</b>")
             for e in evidence[:5]:
-                fact = e.get("fact", "") if isinstance(e, dict) else str(e)
-                source = e.get("source", "on-chain") if isinstance(e, dict) else ""
+                fact = escape(e.get("fact", "")) if isinstance(e, dict) else escape(str(e))
+                source = escape(e.get("source", "on-chain")) if isinstance(e, dict) else "on-chain"
                 lines.append(f"• {fact} <i>({source})</i>")
         if score > 0:
             lines.append("")
@@ -58,7 +59,7 @@ class RelayFormatter:
         return "\n".join(lines)
 
     def format_briefing(self, briefing: dict[str, Any]) -> str:
-        summary = briefing.get("summary", "No briefing available.")
+        summary = escape(briefing.get("summary", "No briefing available."))
         events = briefing.get("events", [])
 
         lines = [
@@ -71,17 +72,17 @@ class RelayFormatter:
             lines.append("<b>Top Events:</b>")
             for e in events[:10]:
                 if isinstance(e, dict):
-                    lines.append(f"• {e.get('summary', str(e))}")
+                    lines.append(f"• {escape(e.get('summary', str(e)))}")
                 else:
-                    lines.append(f"• {e}")
+                    lines.append(f"• {escape(str(e))}")
         lines.append("")
         lines.append(self._disclaimer)
         return "\n".join(lines)
 
     def format_channel_post(self, event: dict[str, Any], report: dict[str, Any]) -> str:
-        wallet_label = event.get("label", "Unknown Wallet")
-        chain = event.get("chain", "")
-        summary = report.get("summary", "")
+        wallet_label = escape(event.get("label", "Unknown Wallet"))
+        chain = escape(event.get("chain", ""))
+        summary = escape(report.get("summary", ""))
         value = event.get("value_usd", 0)
 
         lines = [
