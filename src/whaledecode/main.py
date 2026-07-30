@@ -70,7 +70,7 @@ def _alembic_url(settings: Settings) -> str:
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    is_internal_host = any(h in url for h in ["railway.internal", "localhost", "127.0.0.1", "postgres:"])
+    is_internal_host = any(h in url for h in ["railway.internal", "localhost", "127.0.0.1", "@postgres:"])
     if settings.ENV != "dev" and "sslmode" not in url and not is_internal_host:
         url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
