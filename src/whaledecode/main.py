@@ -16,6 +16,7 @@ def cli():
 def _load_settings() -> Settings:
     try:
         settings = Settings()
+        settings.inject_langsmith_env()
     except Exception as e:
         raise click.ClickException(
             f"Missing or invalid env vars:\n{e}\n\n"

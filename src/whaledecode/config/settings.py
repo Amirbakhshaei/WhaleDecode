@@ -1,3 +1,4 @@
+import os
 from typing import Literal
 
 from pydantic import SecretStr
@@ -85,3 +86,14 @@ class Settings(BaseSettings):
     LANGCHAIN_TRACING_V2: bool = True
     LANGCHAIN_API_KEY: str | None = None
     LANGCHAIN_PROJECT: str = "whaledecode"
+
+    def inject_langsmith_env(self) -> None:
+        """Push LangSmith vars into os.environ so LangChain auto-traces."""
+        env_map = {
+            "LANGCHAIN_TRACING_V2": str(self.LANGCHAIN_TRACING_V2),
+            "LANGCHAIN_PROJECT": self.LANGCHAIN_PROJECT,
+        }
+        if self.LANGCHAIN_API_KEY:
+            env_map["LANGCHAIN_API_KEY"] = self.LANGCHAIN_API_KEY
+        for k, v in env_map.items():
+            os.environ[k] = v
