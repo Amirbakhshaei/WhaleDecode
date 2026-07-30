@@ -70,7 +70,12 @@ def _alembic_url(settings: Settings) -> str:
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    is_internal_host = any(h in url for h in ["railway.internal", "localhost", "127.0.0.1", "postgres:"])
+    from sqlalchemy.engine.url import make_url
+
+    parsed_url = make_url(url)
+    host = parsed_url.host or ""
+    is_internal_host = host in ["localhost", "127.0.0.1", "postgres"] or host.endswith(".railway.internal")
+
     if settings.ENV != "dev" and "sslmode" not in url and not is_internal_host:
         url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
