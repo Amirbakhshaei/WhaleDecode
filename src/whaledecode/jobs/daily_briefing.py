@@ -11,10 +11,12 @@ async def run_daily_briefing(
     session_factory: async_sessionmaker, bot: Bot, settings: Settings
 ) -> None:
     from whaledecode.adapters.db.uow import UnitOfWork
+    from whaledecode.adapters.llm.factory import LLMFactory
     from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
     from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
 
-    reasoner = LangGraphReasoner(settings)
+    llm_factory = LLMFactory(settings)
+    reasoner = LangGraphReasoner(settings, llm_factory)
     relay = RelayFormatter(settings)
 
     uow = UnitOfWork(session_factory)

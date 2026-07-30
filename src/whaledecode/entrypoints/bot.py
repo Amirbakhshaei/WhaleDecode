@@ -5,6 +5,7 @@ from aiogram.enums import ParseMode
 
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
+from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
 from whaledecode.adapters.telegram.dispatcher import TelegramAlertDispatcher
 from whaledecode.adapters.telegram.middleware import ThrottlingMiddleware
@@ -25,7 +26,8 @@ async def run_bot(settings: Settings) -> None:
     log = structlog.get_logger()
 
     session_factory = create_session_factory(settings)
-    reasoner = LangGraphReasoner(settings)
+    llm_factory = LLMFactory(settings)
+    reasoner = LangGraphReasoner(settings, llm_factory)
 
     alert_dispatcher = TelegramAlertDispatcher()
 

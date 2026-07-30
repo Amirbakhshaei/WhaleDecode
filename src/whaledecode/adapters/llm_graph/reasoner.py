@@ -3,10 +3,10 @@ import time
 from typing import Any
 
 import structlog
+
+from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.graphs.chat_investigation import build_chat_investigation_graph
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph
-from whaledecode.adapters.llm_graph.rotating_llm import RotatingChatOpenAI
-from whaledecode.config.models import STRONG_MODEL_ID
 from whaledecode.config.settings import Settings
 from whaledecode.domain.ports.reasoner import ReasonerPort
 
@@ -14,22 +14,12 @@ log = structlog.get_logger()
 
 
 class LangGraphReasoner(ReasonerPort):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, factory: LLMFactory) -> None:
         self._settings = settings
-        secondary_keys = []
-        if settings.GROQ_API_KEY_SECONDARY:
-            secondary_keys.append(settings.GROQ_API_KEY_SECONDARY.get_secret_value())
-
-        strong_llm = RotatingChatOpenAI(
-            model=STRONG_MODEL_ID,
-            api_key=settings.GROQ_API_KEY.get_secret_value(),
-            base_url=settings.GROQ_BASE_URL,
-            temperature=0.2,
-            secondary_keys=secondary_keys,
-        )
-        self._strong_llm = strong_llm
-        self._investigation_graph = build_investigation_graph(strong_llm)
-        self._chat_graph = build_chat_investigation_graph(strong_llm)
+        self._heavy_llm = factory.get_heavy_reasoning_llm()
+        self._fast_llm = factory.get_fast_chat_llm()
+        self._investigation_graph = build_investigation_graph(self._heavy_llm)
+        self._chat_graph = build_chat_investigation_graph(self._fast_llm)
 
     async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str) -> dict:
         """Invoke a LangGraph graph with one retry on transient errors."""
@@ -100,7 +90,7 @@ class LangGraphReasoner(ReasonerPort):
         messages = [{"role": "user", "content": prompt}]
         for attempt in range(2):
             try:
-                resp = await self._strong_llm.ainvoke(messages)
+                resp = await self._heavy_llm.ainvoke(messages)
                 break
             except (ConnectionError, TimeoutError, OSError) as exc:
                 if attempt == 0:

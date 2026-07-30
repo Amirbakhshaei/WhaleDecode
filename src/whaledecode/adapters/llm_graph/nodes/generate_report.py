@@ -1,5 +1,5 @@
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 REPORT_PROMPT = """Based on the analysis, produce a structured investigation report with:
 - summary: one-line plain text
@@ -12,7 +12,7 @@ REPORT_PROMPT = """Based on the analysis, produce a structured investigation rep
 Output as valid JSON with these exact keys."""
 
 
-def create_report_node(llm: ChatOpenAI):
+def create_report_node(llm: BaseChatModel):
     async def generate_report(state: dict) -> dict:
         analysis = state.get("summary", "")
         msg = HumanMessage(content=f"Analysis to summarize:\n\n{analysis}")

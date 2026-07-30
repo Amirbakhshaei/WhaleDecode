@@ -29,10 +29,16 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
     REDIS_MAX_CONNECTIONS: int = 20
 
-    # LLM (Groq)
+    # LLM — Gemini (heavy reasoning / briefing)
+    GEMINI_API_KEY: SecretStr | None = None
+    MODEL_HEAVY_REASONING: str = "gemini-2.5-flash"
+
+    # LLM — Groq (structured data & fast chat)
     GROQ_API_KEY: SecretStr
     GROQ_API_KEY_SECONDARY: SecretStr | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    MODEL_STRUCTURED_DATA: str = "llama-3.3-70b-versatile"
+    MODEL_FAST_CHAT: str = "llama-3.1-8b-instant"
     DEFAULT_CHEAP_MODEL: str = "llama-3.1-8b-instant"
     DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
     MAX_COST_PER_RUN_USD: float = 0.03

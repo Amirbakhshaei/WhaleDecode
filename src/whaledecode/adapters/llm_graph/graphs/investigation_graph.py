@@ -1,4 +1,4 @@
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -11,7 +11,7 @@ from whaledecode.adapters.llm_graph.state.event_investigation import EventInvest
 from whaledecode.adapters.llm_graph.tools.onchain import create_onchain_tools
 
 
-def build_investigation_graph(llm: ChatOpenAI):
+def build_investigation_graph(llm: BaseChatModel):
     workflow = StateGraph(EventInvestigationState)
 
     tools = create_onchain_tools()

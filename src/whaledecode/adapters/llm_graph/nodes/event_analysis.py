@@ -1,5 +1,5 @@
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given an on-chain event:
 1. Identify what happened (type, tokens, value).
@@ -8,7 +8,7 @@ SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given an on-chain 
 4. Output your analysis concisely."""
 
 
-def create_analysis_node(llm: ChatOpenAI):
+def create_analysis_node(llm: BaseChatModel):
     async def analyze_event(state: dict) -> dict:
         event = state["event_data"]
         msg = HumanMessage(content=f"Investigate this on-chain event:\n\n{event}")
