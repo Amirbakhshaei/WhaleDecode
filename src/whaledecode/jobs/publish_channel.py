@@ -9,13 +9,13 @@ log = structlog.get_logger()
 
 
 async def publish_channel(session_factory: async_sessionmaker, bot: Bot, settings: Settings) -> None:
-    if not settings.CHANNEL_PUBLISH_ENABLED or not settings.CHANNEL_CHAT_ID:
+    channel_id = settings.TELEGRAM_CHANNEL_ID or settings.CHANNEL_CHAT_ID
+    if not settings.CHANNEL_PUBLISH_ENABLED or not channel_id:
         return
 
     from whaledecode.adapters.db.uow import UnitOfWork
 
     relay = RelayFormatter(settings)
-    channel_id = settings.CHANNEL_CHAT_ID
 
     uow = UnitOfWork(session_factory)
     async with uow:

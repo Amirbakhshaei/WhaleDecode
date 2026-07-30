@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     PAID_ALERT_BATCH_INTERVAL_SECONDS: int = 5
 
     # Channel Publishing
+    TELEGRAM_CHANNEL_ID: str | None = None
     CHANNEL_CHAT_ID: str | None = None
     CHANNEL_PUBLISH_ENABLED: bool = False
     CHANNEL_MAX_DAILY: int = 20
