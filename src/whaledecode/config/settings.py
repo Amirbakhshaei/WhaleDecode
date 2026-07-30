@@ -73,3 +73,8 @@ class Settings(BaseSettings):
     # Observability
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     SENTRY_DSN: SecretStr | None = None
+
+    # LangSmith (optional — enables tracing for LangChain/LangGraph)
+    LANGCHAIN_TRACING_V2: bool = True
+    LANGCHAIN_API_KEY: str | None = None
+    LANGCHAIN_PROJECT: str = "whaledecode"
