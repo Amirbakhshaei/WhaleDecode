@@ -1,7 +1,6 @@
+import asyncio
 import time
 from typing import Any
-
-import tenacity
 
 import structlog
 from whaledecode.adapters.llm_graph.graphs.chat_investigation import build_chat_investigation_graph
@@ -32,27 +31,17 @@ class LangGraphReasoner(ReasonerPort):
         self._investigation_graph = build_investigation_graph(strong_llm)
         self._chat_graph = build_chat_investigation_graph(strong_llm)
 
-    @staticmethod
-    def _retry_predicate(exc: BaseException) -> bool:
-        """Retry on transient errors only."""
-        return isinstance(exc, (ConnectionError, TimeoutError, OSError))
-
     async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str) -> dict:
-        """Invoke a LangGraph graph with retry on transient errors."""
-        retrier = tenacity.Retrying(
-            retry=tenacity.retry_if_exception(self._retry_predicate),
-            stop=tenacity.stop_after_attempt(3),
-            wait=tenacity.wait_exponential(multiplier=0.5, min=0.5, max=5),
-            before_sleep=lambda rs: log.warning(
-                "llm_retry",
-                attempt=rs.attempt_number,
-                label=label,
-                error=str(rs.outcome.exception()) if rs.outcome else "",
-            ),
-            reraise=True,
-        )
-        with retrier:
-            return await graph.ainvoke(inputs)
+        """Invoke a LangGraph graph with one retry on transient errors."""
+        for attempt in range(2):
+            try:
+                return await graph.ainvoke(inputs)
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                if attempt == 0:
+                    log.warning("llm_retry", attempt=1, label=label, error=str(exc)[:120])
+                    await asyncio.sleep(1)
+                else:
+                    raise
 
     async def investigate_event(self, event_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
@@ -109,20 +98,16 @@ class LangGraphReasoner(ReasonerPort):
             f"Events today ({len(events)} total):\n" + "\n".join(lines)
         )
         messages = [{"role": "user", "content": prompt}]
-        retrier = tenacity.Retrying(
-            retry=tenacity.retry_if_exception(self._retry_predicate),
-            stop=tenacity.stop_after_attempt(3),
-            wait=tenacity.wait_exponential(multiplier=0.5, min=0.5, max=5),
-            before_sleep=lambda rs: log.warning(
-                "llm_retry",
-                attempt=rs.attempt_number,
-                label="generate_briefing",
-                error=str(rs.outcome.exception()) if rs.outcome else "",
-            ),
-            reraise=True,
-        )
-        with retrier:
-            resp = await self._strong_llm.ainvoke(messages)
+        for attempt in range(2):
+            try:
+                resp = await self._strong_llm.ainvoke(messages)
+                break
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                if attempt == 0:
+                    log.warning("llm_retry", attempt=1, label="generate_briefing", error=str(exc)[:120])
+                    await asyncio.sleep(1)
+                else:
+                    raise
 
         lat_ms = int((time.monotonic() - start) * 1000)
         return {
