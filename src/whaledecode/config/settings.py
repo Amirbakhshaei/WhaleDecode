@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # LLM — Gemini (heavy reasoning / briefing)
     GEMINI_API_KEY: SecretStr | None = None
-    MODEL_HEAVY_REASONING: str = "gemini-2.5-flash"
+    MODEL_HEAVY_REASONING: str = "gemini-3.5-flash-lite"
 
     # LLM — Groq (structured data & fast chat)
     GROQ_API_KEY: SecretStr

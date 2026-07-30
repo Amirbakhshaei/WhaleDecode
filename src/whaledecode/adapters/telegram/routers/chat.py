@@ -12,6 +12,13 @@ log = structlog.get_logger()
 
 chat_router = Router(name="chat")
 
+_GREETINGS = {"hi", "hello", "hey", "help"}
+
+
+def is_greeting(query: str) -> bool:
+    q = query.strip().lower()
+    return len(q) < 10 or q in _GREETINGS
+
 
 @chat_router.message(Command("ask"))
 async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs) -> None:
@@ -32,10 +39,21 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
         await uow.commit()
 
     question = args[1]
+
+    if is_greeting(question):
+        await message.answer(
+            "👋 Hey! I'm WhaleDecode — your on-chain intelligence bot.\n\n"
+            "Send me a wallet address, transaction hash, or token symbol to investigate!\n\n"
+            "Examples:\n"
+            "• <code>/ask what did 0x742d... do recently?</code>\n"
+            "• <code>/decode 0x1234...</code>"
+        )
+        return
+
     await message.answer("🧠 Thinking...")
     try:
-        response = await investigation_service.chat(question)
-        await message.answer(response[:4000])
+        result = await investigation_service.chat(question)
+        await message.answer(result[:4000])
     except ConnectionError as e:
         log.error("ask_connection_error", user_id=message.from_user.id, error=str(e))
         await message.answer("LLM connection failed — check GROQ_API_KEY or try again shortly.")

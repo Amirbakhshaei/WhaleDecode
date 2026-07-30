@@ -37,7 +37,8 @@ class RelayFormatter:
     def format_chat_response(self, report: dict[str, Any]) -> str:
         summary = escape(report.get("summary", "I couldn't find enough information to answer that."))
         evidence = report.get("evidence", [])
-        score = report.get("risk_score", 0.0)
+        raw_score = report.get("risk_score")
+        score = raw_score if raw_score is not None else 0.0
 
         lines = [
             "🧠 <b>Investigation Result</b>",
@@ -51,9 +52,8 @@ class RelayFormatter:
                 fact = escape(e.get("fact", "")) if isinstance(e, dict) else escape(str(e))
                 source = escape(e.get("source", "on-chain")) if isinstance(e, dict) else "on-chain"
                 lines.append(f"• {fact} <i>({source})</i>")
-        if score > 0:
-            lines.append("")
-            lines.append(f"⚠️ <b>Risk Score:</b> {self._format_score(score)}")
+        lines.append("")
+        lines.append(f"⚠️ <b>Risk Score:</b> {self._format_score(score)}")
         lines.append("")
         lines.append(self._disclaimer)
         return "\n".join(lines)

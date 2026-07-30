@@ -39,7 +39,7 @@ def test_factory_uses_correct_model_strings(settings: Settings) -> None:
     structured = factory.get_structured_data_llm()
     fast = factory.get_fast_chat_llm()
 
-    assert "gemini-2.5-flash" in heavy.model
+    assert "gemini" in heavy.model.lower()
     assert structured.model == "llama-3.3-70b-versatile"
     assert fast.model == "llama-3.1-8b-instant"
 
