@@ -2,9 +2,16 @@ import time
 from typing import Any
 
 import httpx
+import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
+
+DEFAULT_HEADERS = {
+    "User-Agent": "WhaleDecodeBot/1.0",
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+}
 
 ERC20_METADATA_ABI = {
     "name": "0x06fdde03",
@@ -16,8 +23,9 @@ ERC20_METADATA_ABI = {
 class HttpRpcProvider(ChainProviderPort):
     def __init__(self, chain_urls: dict[str, str], timeout: int = 30) -> None:
         self._urls = {chain.upper(): url for chain, url in chain_urls.items()}
-        self._client = httpx.AsyncClient(timeout=timeout)
+        self._client = httpx.AsyncClient(timeout=timeout, headers=DEFAULT_HEADERS)
         self._timeout = timeout
+        self._log = structlog.get_logger()
 
     def _url_for_chain(self, chain: str) -> str:
         url = self._urls.get(chain.upper())
@@ -25,13 +33,29 @@ class HttpRpcProvider(ChainProviderPort):
             raise ValueError(f"Unsupported chain: {chain}. Supported: {list(self._urls)}")
         return url
 
+    def _raise_with_body(self, chain: str, method: str, resp: httpx.Response, reason: str) -> None:
+        body = resp.text[:500]
+        self._log.error(
+            "rpc_invalid_response",
+            chain=chain,
+            method=method,
+            status=resp.status_code,
+            reason=reason,
+            body=body,
+        )
+        raise ValueError(f"RPC {reason} from {chain} (status {resp.status_code}): {body}")
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
     async def rpc_call(self, method: str, params: list[Any] | None = None, chain: str = "ETH") -> Any:
         url = self._url_for_chain(chain)
         payload = {"jsonrpc": "2.0", "method": method, "params": params or [], "id": int(time.time())}
         resp = await self._client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+        if resp.status_code != 200:
+            self._raise_with_body(chain, method, resp, "non-200 response")
+        try:
+            data = resp.json()
+        except ValueError:
+            self._raise_with_body(chain, method, resp, "non-JSON response")
         if "error" in data:
             raise ValueError(f"RPC error on {chain}: {data['error']}")
         return data.get("result")
