@@ -17,7 +17,7 @@ class AgentRunRepository:
             trigger_ref_id=run.trigger_ref_id,
             graph_name=run.graph_name,
             status=run.status,
-            input_json=json.dumps(run.input_json),
+            input_json=json.dumps(run.input_json, default=str),
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             cost_usd=run.cost_usd,
@@ -34,7 +34,7 @@ class AgentRunRepository:
         if model is None:
             return
         model.status = run.status
-        model.output_json = json.dumps(run.output_json) if run.output_json else None
+        model.output_json = json.dumps(run.output_json, default=str) if run.output_json else None
         model.tokens_in = run.tokens_in
         model.tokens_out = run.tokens_out
         model.cost_usd = run.cost_usd
