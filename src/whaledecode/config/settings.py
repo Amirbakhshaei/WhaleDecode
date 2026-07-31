@@ -83,17 +83,20 @@ class Settings(BaseSettings):
     SENTRY_DSN: SecretStr | None = None
 
     # LangSmith (optional — enables tracing for LangChain/LangGraph)
-    LANGCHAIN_TRACING_V2: bool = True
-    LANGCHAIN_API_KEY: str | None = None
-    LANGCHAIN_PROJECT: str = "whaledecode"
+    LANGSMITH_TRACING: bool = True
+    LANGSMITH_ENDPOINT: str | None = None
+    LANGSMITH_API_KEY: str | None = None
+    LANGSMITH_PROJECT: str = "WhaleDecode"
 
     def inject_langsmith_env(self) -> None:
         """Push LangSmith vars into os.environ so LangChain auto-traces."""
         env_map = {
-            "LANGCHAIN_TRACING_V2": str(self.LANGCHAIN_TRACING_V2),
-            "LANGCHAIN_PROJECT": self.LANGCHAIN_PROJECT,
+            "LANGSMITH_TRACING": "true" if self.LANGSMITH_TRACING else "false",
+            "LANGSMITH_PROJECT": self.LANGSMITH_PROJECT,
         }
-        if self.LANGCHAIN_API_KEY:
-            env_map["LANGCHAIN_API_KEY"] = self.LANGCHAIN_API_KEY
+        if self.LANGSMITH_ENDPOINT:
+            env_map["LANGSMITH_ENDPOINT"] = self.LANGSMITH_ENDPOINT
+        if self.LANGSMITH_API_KEY:
+            env_map["LANGSMITH_API_KEY"] = self.LANGSMITH_API_KEY
         for k, v in env_map.items():
             os.environ[k] = v
