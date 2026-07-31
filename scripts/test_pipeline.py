@@ -29,7 +29,7 @@ log = structlog.get_logger()
 
 MOCK_TX_HASH = "0x" + "ab" * 32
 MOCK_EVENT = CandidateEvent(
-    wallet_id=999999,
+    wallet_id=9,
     chain="ethereum",
     tx_hash=Hash(MOCK_TX_HASH),
     log_index=0,
