@@ -81,5 +81,5 @@
       "prompt": "{file:./.opencode/agents/quill.md}"
     }
   },
-  "plugin": ["@dietrichgebert/ponytail"]
+  "plugin": ["@dietrichgebert/ponytail", "@langchain/langsmith-opencode"]
 }
