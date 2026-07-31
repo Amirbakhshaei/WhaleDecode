@@ -49,10 +49,10 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: SecretStr | None = None
     OPENROUTER_API_KEY: SecretStr | None = None
 
-    # Chain Providers
-    CHAIN_PROVIDER: str = "drpc"
-    DRPC_API_KEY: SecretStr | None = None
-    DRPC_BASE_URL: str = "https://rpc.drpc.org"
+    # Chain Providers (per-chain RPC URLs; at least one needed for real data)
+    ETH_RPC_URL: str | None = None
+    ARB_RPC_URL: str | None = None
+    BASE_RPC_URL: str | None = None
     POLL_INTERVAL_SECONDS: int = 30
     POLL_BATCH_SIZE: int = 50
     REORG_SAFE_BLOCKS: int = 64

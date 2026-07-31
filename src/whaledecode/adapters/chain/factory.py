@@ -1,14 +1,16 @@
-from whaledecode.adapters.chain.multi_provider import MultiChainProvider
+from whaledecode.adapters.chain.providers.http_rpc import HttpRpcProvider
 from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.config.settings import Settings
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
 
 def create_chain_provider(settings: Settings) -> ChainProviderPort:
-    if not settings.DRPC_API_KEY:
+    urls = {
+        "ETH": settings.ETH_RPC_URL,
+        "ARB": settings.ARB_RPC_URL,
+        "BASE": settings.BASE_RPC_URL,
+    }
+    urls = {chain: url for chain, url in urls.items() if url}
+    if not urls:
         return MockChainProvider()
-    providers: list[ChainProviderPort] = []
-    if settings.DRPC_API_KEY:
-        from whaledecode.adapters.chain.providers.http_rpc import HttpRpcProvider
-        providers.append(HttpRpcProvider(settings.DRPC_API_KEY.get_secret_value()))
-    return MultiChainProvider(providers)
+    return HttpRpcProvider(urls)

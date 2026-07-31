@@ -81,8 +81,7 @@ whaledecode seed
 4. Restart the worker
 
 ### Polling Not Detecting Events
-1. Check `CHAIN_PROVIDER` setting (should be `drpc` for real data)
-2. Verify `DRPC_API_KEY` is set
+1. Check at least one `ETH_RPC_URL` / `ARB_RPC_URL` / `BASE_RPC_URL` is set
 3. Check curated wallets have active status
 4. Check poll logs for `candidate_created` messages
 

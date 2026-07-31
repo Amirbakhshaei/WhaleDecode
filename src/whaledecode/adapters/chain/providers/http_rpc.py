@@ -6,12 +6,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
-CHAIN_RPC_URLS: dict[str, str] = {
-    "ETH": "https://eth.rpc.drpc.org?key={api_key}",
-    "BASE": "https://base.rpc.drpc.org?key={api_key}",
-    "ARB": "https://arbitrum.rpc.drpc.org?key={api_key}",
-}
-
 ERC20_METADATA_ABI = {
     "name": "0x06fdde03",
     "symbol": "0x95d89b41",
@@ -20,16 +14,16 @@ ERC20_METADATA_ABI = {
 
 
 class HttpRpcProvider(ChainProviderPort):
-    def __init__(self, api_key: str, timeout: int = 30) -> None:
-        self._api_key = api_key
+    def __init__(self, chain_urls: dict[str, str], timeout: int = 30) -> None:
+        self._urls = {chain.upper(): url for chain, url in chain_urls.items()}
         self._client = httpx.AsyncClient(timeout=timeout)
         self._timeout = timeout
 
     def _url_for_chain(self, chain: str) -> str:
-        template = CHAIN_RPC_URLS.get(chain.upper())
-        if not template:
-            raise ValueError(f"Unsupported chain: {chain}. Supported: {list(CHAIN_RPC_URLS)}")
-        return template.format(api_key=self._api_key)
+        url = self._urls.get(chain.upper())
+        if not url:
+            raise ValueError(f"Unsupported chain: {chain}. Supported: {list(self._urls)}")
+        return url
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
     async def rpc_call(self, method: str, params: list[Any] | None = None, chain: str = "ETH") -> Any:

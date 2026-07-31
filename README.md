@@ -95,7 +95,7 @@ Hexagonal layering: `domain → application → adapters`. See `docs/architectur
 
 ## Limits
 
-- Mock chain data when `DRPC_API_KEY` unset
+- Mock chain data when no RPC URLs (`ETH_RPC_URL`/`ARB_RPC_URL`/`BASE_RPC_URL`) set
 - Bot runs in polling mode (no webhook)
 - No per-user rate limiting enforced yet
 - Alert scoring thresholds are preliminary
