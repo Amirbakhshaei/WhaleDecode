@@ -2,16 +2,14 @@
 Synthetic pipeline test: mock event -> ORION graph -> DB -> Telegram channel.
 
 Usage:
-    python -m scripts.test_pipeline          # full pipeline
-    python -m scripts.test_pipeline --dry    # skip Telegram publish
+    python scripts/test_pipeline.py          # full pipeline
+    python scripts/test_pipeline.py --dry    # skip Telegram publish
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 import time
-from datetime import UTC, datetime
 
 import structlog
 
@@ -19,7 +17,9 @@ from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
-from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
+from whaledecode.adapters.telegram.formatters.channel_formatter import (
+    format_premium_event_post,
+)
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
@@ -27,10 +27,9 @@ from whaledecode.domain.value_objects.hash import Hash
 
 log = structlog.get_logger()
 
-# ── Mock event ───────────────────────────────────────────────────────────
 MOCK_TX_HASH = "0x" + "ab" * 32
 MOCK_EVENT = CandidateEvent(
-    wallet_id=9,
+    wallet_id=999999,
     chain="ethereum",
     tx_hash=Hash(MOCK_TX_HASH),
     log_index=0,
@@ -64,6 +63,7 @@ async def main() -> None:
     )
 
     # ── 1. Create mock event ─────────────────────────────────────────────
+    event_dict = MOCK_EVENT.model_dump()
     log.info(
         "mock_event_created",
         chain=MOCK_EVENT.chain,
@@ -78,7 +78,7 @@ async def main() -> None:
 
     log.info("graph_execution_start")
     t0 = time.monotonic()
-    result = await reasoner.investigate_event(MOCK_EVENT.model_dump())
+    result = await reasoner.investigate_event(event_dict)
     latency = int((time.monotonic() - t0) * 1000)
     log.info(
         "graph_execution_complete",
@@ -98,13 +98,12 @@ async def main() -> None:
             trigger_ref_id=saved_event.id,
             graph_name="event_investigation",
             status="completed",
-            input_json=MOCK_EVENT.model_dump(mode="json"),
+            input_json=event_dict,
             output_json=result,
             latency_ms=result.get("latency_ms", 0),
         )
         saved_run = await uow.agent_runs.create(run)
 
-        # AgentRunRepository.create() doesn't persist output_json — update does
         saved_run.output_json = result
         await uow.agent_runs.update(saved_run)
 
@@ -112,15 +111,14 @@ async def main() -> None:
         log.info("db_save_success", run_id=saved_run.id, event_id=saved_event.id)
 
     # ── 4. Publish to Telegram ───────────────────────────────────────────
+    msg = format_premium_event_post(event_dict, result)
+
     if dry_run or not settings.CHANNEL_PUBLISH_ENABLED or not channel_id:
         reason = "dry_run" if dry_run else "channel_not_configured"
         log.info("telegram_publish_skipped", reason=reason, channel_id=channel_id)
-        relay = RelayFormatter(settings)
-        msg = relay.format_channel_post(MOCK_EVENT.model_dump(), result)
         log.info("channel_post_preview", message=msg)
         return
 
-    # Safety: print channel and wait
     print(f"\n⚠️  About to publish to channel: {channel_id}")
     print("    Press Ctrl+C within 3 seconds to abort...\n")
     await asyncio.sleep(3)
@@ -134,11 +132,8 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     try:
-        relay = RelayFormatter(settings)
-        msg = relay.format_channel_post(MOCK_EVENT.model_dump(), result)
         await bot.send_message(chat_id=channel_id, text=msg)
 
-        # Mark published in DB
         async with UnitOfWork(session_factory) as uow:
             await uow.candidate_events.mark_published(saved_event.id)
             await uow.commit()

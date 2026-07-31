@@ -1,6 +1,8 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from whaledecode.adapters.llm_graph.utils import extract_clean_json
+
 REPORT_PROMPT = """Based on the analysis, produce a structured investigation report with:
 - summary: one-line plain text
 - risk_score: float 0.0–1.0
@@ -17,11 +19,7 @@ def create_report_node(llm: BaseChatModel):
         analysis = state.get("summary", "")
         msg = HumanMessage(content=f"Analysis to summarize:\n\n{analysis}")
         result = await llm.ainvoke([SystemMessage(content=REPORT_PROMPT), msg])
-        import json
-        try:
-            report = json.loads(result.content)
-        except (json.JSONDecodeError, TypeError):
-            report = {"summary": result.content, "risk_score": 0.5, "thesis": "", "evidence": [], "tool_calls": [], "disclaimer": "Not financial advice."}
+        report = extract_clean_json(result.content)
         return {
             "messages": [result],
             **report,

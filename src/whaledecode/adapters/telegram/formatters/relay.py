@@ -1,6 +1,9 @@
 from html import escape
 from typing import Any
 
+from whaledecode.adapters.telegram.formatters.channel_formatter import (
+    format_premium_event_post,
+)
 from whaledecode.config.settings import Settings
 
 
@@ -80,22 +83,7 @@ class RelayFormatter:
         return "\n".join(lines)
 
     def format_channel_post(self, event: dict[str, Any], report: dict[str, Any]) -> str:
-        wallet_label = escape(event.get("label", "Unknown Wallet"))
-        chain = escape(event.get("chain", ""))
-        summary = escape(report.get("summary", ""))
-        value = event.get("value_usd", 0)
-
-        lines = [
-            f"🐋 <b>WhaleDecode Alert</b> — {wallet_label}",
-            f"⛓️ {chain}",
-            "",
-            f"📝 <b>What happened:</b> {summary}",
-        ]
-        if value:
-            lines.append(f"💰 <b>Value:</b> ${value:,.0f}" if isinstance(value, (int, float)) else "")
-        lines.append("")
-        lines.append(self._disclaimer)
-        return "\n".join(lines)
+        return format_premium_event_post(event, report)
 
     def _format_score(self, score: float) -> str:
         if score >= 0.7:
