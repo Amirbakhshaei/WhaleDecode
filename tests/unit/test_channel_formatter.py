@@ -60,18 +60,14 @@ class TestFormatPremiumEventPost:
         html = format_premium_event_post(EVENT, {"thesis": "Bearish signal"})
         assert "<blockquote>Bearish signal</blockquote>" in html
 
-    def test_evidence_rendered(self):
+    def test_evidence_not_in_text(self):
+        """Evidence moved to inline keyboard — formatter no longer renders it."""
         analysis = {
             "risk_score": 0.3,
-            "evidence": [
-                {"fact": "Moved to CEX", "source": "etherscan"},
-                {"fact": "Known mixer", "source": "arkham"},
-            ],
+            "evidence": [{"fact": "Moved to CEX", "source": "etherscan"}],
         }
         html = format_premium_event_post(EVENT, analysis)
-        assert "Moved to CEX" in html
-        assert "Known mixer" in html
-        assert "EVIDENCE" in html
+        assert "EVIDENCE" not in html
 
     def test_no_evidence_section_when_empty(self):
         html = format_premium_event_post(EVENT, {"risk_score": 0.3, "evidence": []})
@@ -83,11 +79,10 @@ class TestFormatPremiumEventPost:
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
 
-    def test_explorer_link_contains_tx(self):
+    def test_no_explorer_link_in_text(self):
+        """Explorer link moved to inline keyboard — not in message body."""
         html = format_premium_event_post(EVENT, {"risk_score": 0.3})
-        tx = "0x" + "ab" * 32
-        assert tx in html
-        assert "etherscan.io/tx/" in html
+        assert "etherscan.io" not in html
 
     def test_code_tags_used(self):
         html = format_premium_event_post(EVENT, {"risk_score": 0.3})

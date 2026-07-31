@@ -1,11 +1,23 @@
 import structlog
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from whaledecode.adapters.db.session import async_sessionmaker
-from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
+from whaledecode.adapters.telegram.formatters.channel_formatter import (
+    format_premium_event_post,
+)
 from whaledecode.config.settings import Settings
 
 log = structlog.get_logger()
+
+
+def _build_keyboard(tx_hash: str) -> InlineKeyboardMarkup:
+    deep_link = f"https://t.me/whaledecodebot?start={tx_hash}" if tx_hash else "https://t.me/whaledecodebot"
+    explorer = f"https://etherscan.io/tx/{tx_hash}" if tx_hash else "https://etherscan.io"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✦ Deep Dive with AI", url=deep_link)],
+        [InlineKeyboardButton(text="⚲ View on Explorer", url=explorer)],
+    ])
 
 
 async def publish_channel(session_factory: async_sessionmaker, bot: Bot, settings: Settings) -> None:
@@ -14,8 +26,6 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
         return
 
     from whaledecode.adapters.db.uow import UnitOfWork
-
-    relay = RelayFormatter(settings)
 
     uow = UnitOfWork(session_factory)
     async with uow:
@@ -29,9 +39,16 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
             report = run.output_json if run else {}
 
             event_data = event.model_dump()
-            msg = relay.format_channel_post(event_data, report)
+            msg = format_premium_event_post(event_data, report)
+            tx_hash = event_data.get("tx_hash", "")
+            keyboard = _build_keyboard(tx_hash)
             try:
-                await bot.send_message(chat_id=channel_id, text=msg)
+                await bot.send_message(
+                    chat_id=channel_id,
+                    text=msg,
+                    reply_markup=keyboard,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
                 await uow.candidate_events.mark_published(event.id)
                 published += 1
                 log.info("channel_published", event_id=event.id, event_type=event.event_type)

@@ -4,46 +4,46 @@ import json
 import re
 from typing import Any
 
+# ponytail: stripped-down parser — the old fence_match regex missed nested
+# objects and edge cases. This version strips all markdown cruft first,
+# then finds the outermost JSON object boundaries.
+_CLEANUP_RE = re.compile(r"```(?:json)?|```")
+
 
 def extract_clean_json(content: Any) -> dict[str, Any]:
     """Parse LLM response content into a dict.
 
-    Handles:
-      - Plain JSON strings
-      - Markdown code-fenced JSON (```json ... ```)
-      - Gemini-style list-of-content-blocks: [{"type":"text","text":"..."}]
-    Falls back to a safe default on parse failure.
+    Handles plain JSON, markdown-fenced JSON, Gemini content blocks,
+    and arbitrary surrounding text. Falls back to a safe default.
     """
-    # 0. Already a dict — pass through
     if isinstance(content, dict):
         return content
 
-    # 1. Flatten content blocks
+    # Flatten content blocks
     if isinstance(content, list):
-        text_parts = [
+        raw_str = "".join(
             block.get("text", "") if isinstance(block, dict) else str(block)
             for block in content
-        ]
-        raw_str = "".join(text_parts)
+        )
     else:
         raw_str = str(content)
 
-    # 2. Strip markdown code fences
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_str, re.DOTALL)
-    if fence_match:
-        clean_str = fence_match.group(1)
-    else:
-        clean_str = raw_str.strip()
+    # Strip ALL markdown backticks and 'json' identifiers
+    clean = _CLEANUP_RE.sub("", raw_str).strip()
 
-    # 3. Parse
+    # Find the first '{' and last '}' to isolate the JSON object
+    start = clean.find("{")
+    end = clean.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        clean = clean[start : end + 1]
+
     try:
-        parsed = json.loads(clean_str)
+        parsed = json.loads(clean)
         if isinstance(parsed, dict):
             return parsed
     except (json.JSONDecodeError, TypeError):
         pass
 
-    # 4. Fallback — return raw text as summary so downstream always has content
     return {
         "summary": raw_str,
         "risk_score": 0.5,
