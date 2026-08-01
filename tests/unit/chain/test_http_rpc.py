@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from whaledecode.adapters.chain.providers.http_rpc import HttpRpcProvider
@@ -47,3 +49,17 @@ class TestHttpRpcProvider:
         out = capsys.readouterr().out
         assert "rpc_invalid_response" in out
         assert "<html>WAF</html>" in out
+
+    async def test_get_logs_payload_includes_addresses(self) -> None:
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "result": []})
+
+        p = _provider(httpx.MockTransport(handler))
+        await p.get_logs(chain="ETH", addresses=["0xabc", "0xdef"], from_block=1, to_block=2)
+        params = captured["payload"]["params"][0]
+        assert params["address"] == ["0xabc", "0xdef"]
+        assert int(params["fromBlock"], 16) == 1
+        assert int(params["toBlock"], 16) == 2
