@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     POLL_INTERVAL_SECONDS: int = 30
     POLL_BATCH_SIZE: int = 50
     REORG_SAFE_BLOCKS: int = 64
+    MAX_GET_LOGS_BLOCK_RANGE: int = 50
 
     # Alert Pipeline
     ALERT_SCORE_THRESHOLD: float = 0.50

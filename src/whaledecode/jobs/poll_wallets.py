@@ -9,6 +9,13 @@ from whaledecode.domain.policies.sentinel import SentinelEngine
 log = structlog.get_logger()
 
 
+def bounded_from_block(from_block: int, to_block: int, max_block_range: int) -> int:
+    """Clamp from_block so the requested range never exceeds max_block_range."""
+    if to_block - from_block > max_block_range:
+        return to_block - max_block_range
+    return from_block
+
+
 async def poll_wallets(session_factory: async_sessionmaker, settings: Settings) -> None:
     from whaledecode.adapters.db.uow import UnitOfWork
 
@@ -36,11 +43,23 @@ async def poll_wallets(session_factory: async_sessionmaker, settings: Settings) 
 
             for i in range(0, len(addresses), settings.POLL_BATCH_SIZE):
                 batch = addresses[i : i + settings.POLL_BATCH_SIZE]
+                requested_from = block - settings.REORG_SAFE_BLOCKS
+                from_block = bounded_from_block(
+                    requested_from, block, settings.MAX_GET_LOGS_BLOCK_RANGE
+                )
+                if from_block != requested_from:
+                    log.warning(
+                        "block_range_clamped",
+                        chain=chain,
+                        from_block=from_block,
+                        to_block=block,
+                        max_block_range=settings.MAX_GET_LOGS_BLOCK_RANGE,
+                    )
                 try:
                     logs = await provider.get_logs(
                         chain=chain,
                         addresses=batch,
-                        from_block=block - settings.REORG_SAFE_BLOCKS,
+                        from_block=from_block,
                         to_block=block,
                         topics=[],
                     )
