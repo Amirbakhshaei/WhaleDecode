@@ -17,6 +17,21 @@ class TestHttpRpcProvider:
         assert headers["accept"] == "application/json"
         assert headers["content-type"] == "application/json"
 
+    def test_chain_names_normalized_to_codes(self) -> None:
+        p = HttpRpcProvider({"ETH": "http://eth", "ARB": "http://arb", "BASE": "http://base"})
+        assert p._url_for_chain("Ethereum") == "http://eth"
+        assert p._url_for_chain("ethereum") == "http://eth"
+        assert p._url_for_chain("ETH") == "http://eth"
+        assert p._url_for_chain("Arbitrum") == "http://arb"
+        assert p._url_for_chain("arb") == "http://arb"
+        assert p._url_for_chain("Base") == "http://base"
+        assert p._url_for_chain("base") == "http://base"
+
+    def test_unknown_chain_raises(self) -> None:
+        p = HttpRpcProvider({"ETH": "http://x"})
+        with pytest.raises(ValueError, match="Unsupported chain"):
+            p._url_for_chain("Solana")
+
     async def test_non_200_response_raises_value_error_with_body(self, capsys: pytest.CaptureFixture[str]) -> None:
         p = _provider(httpx.MockTransport(lambda r: httpx.Response(403, text="<html>challenge</html>")))
         with pytest.raises(ValueError, match="<html>challenge</html>"):

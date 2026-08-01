@@ -14,6 +14,14 @@ DEFAULT_HEADERS = {
     "Accept": "application/json",
 }
 
+CHAIN_ALIASES: dict[str, str] = {
+    "ETH": "ETH",
+    "ETHEREUM": "ETH",
+    "ARB": "ARB",
+    "ARBITRUM": "ARB",
+    "BASE": "BASE",
+}
+
 ERC20_METADATA_ABI = {
     "name": "0x06fdde03",
     "symbol": "0x95d89b41",
@@ -29,7 +37,8 @@ class HttpRpcProvider(ChainProviderPort):
         self._log = structlog.get_logger()
 
     def _url_for_chain(self, chain: str) -> str:
-        url = self._urls.get(chain.upper())
+        code = CHAIN_ALIASES.get(chain.upper(), chain.upper())
+        url = self._urls.get(code)
         if not url:
             raise ValueError(f"Unsupported chain: {chain}. Supported: {list(self._urls)}")
         return url
