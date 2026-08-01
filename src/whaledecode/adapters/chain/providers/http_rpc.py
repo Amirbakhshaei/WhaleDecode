@@ -1,3 +1,4 @@
+import sys
 import time
 from typing import Any
 
@@ -49,16 +50,23 @@ class HttpRpcProvider(ChainProviderPort):
     async def rpc_call(self, method: str, params: list[Any] | None = None, chain: str = "ETH") -> Any:
         url = self._url_for_chain(chain)
         payload = {"jsonrpc": "2.0", "method": method, "params": params or [], "id": int(time.time())}
-        resp = await self._client.post(url, json=payload)
-        if resp.status_code != 200:
-            self._raise_with_body(chain, method, resp, "non-200 response")
         try:
-            data = resp.json()
-        except ValueError:
-            self._raise_with_body(chain, method, resp, "non-JSON response")
-        if "error" in data:
-            raise ValueError(f"RPC error on {chain}: {data['error']}")
-        return data.get("result")
+            resp = await self._client.post(url, json=payload)
+            if resp.status_code != 200:
+                self._raise_with_body(chain, method, resp, "non-200 response")
+            try:
+                data = resp.json()
+            except ValueError:
+                self._raise_with_body(chain, method, resp, "non-JSON response")
+            if "error" in data:
+                raise ValueError(f"RPC error on {chain}: {data['error']}")
+            return data.get("result")
+        except Exception as e:
+            import traceback
+
+            self._log.error("rpc_call_failed", chain=chain, method=method, error=str(e))
+            traceback.print_exc(file=sys.stdout)
+            raise
 
     async def get_logs(
         self, chain: str, addresses: list[str], from_block: int, to_block: int, topics: list[str] | None = None
