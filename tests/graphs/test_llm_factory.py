@@ -55,7 +55,11 @@ def test_reasoner_uses_factory_llms(mock_chat_build, mock_invest_build, settings
 
     reasoner = LangGraphReasoner(settings, mock_factory)
 
-    mock_invest_build.assert_called_once_with(heavy_llm)
-    mock_chat_build.assert_called_once_with(fast_llm)
+    assert mock_invest_build.call_count == 1
+    assert mock_chat_build.call_count == 1
+    assert mock_invest_build.call_args.args[0] is heavy_llm
+    assert mock_chat_build.call_args.args[0] is fast_llm
+    assert mock_invest_build.call_args.args[1] is reasoner._chain_provider
+    assert mock_chat_build.call_args.args[1] is reasoner._chain_provider
     assert reasoner._heavy_llm is heavy_llm
     assert reasoner._fast_llm is fast_llm

@@ -29,6 +29,12 @@ class MockChainProvider(ChainProviderPort):
     async def get_block_number(self, chain: str) -> int:
         return 20_000_000
 
+    async def get_balance(self, chain: str, address: str) -> str:
+        return "0x0"
+
+    async def get_transaction_count(self, chain: str, address: str) -> int:
+        return 0
+
     async def get_token_metadata(self, chain: str, address: str) -> dict[str, Any]:
         return {
             "name": "MockToken",

@@ -2,16 +2,19 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.adapters.llm_graph.nodes.consolidated_report import create_consolidated_report_node
 from whaledecode.adapters.llm_graph.nodes.event_analysis import create_analysis_node
 from whaledecode.adapters.llm_graph.state.event_investigation import EventInvestigationState
 from whaledecode.adapters.llm_graph.tools.onchain import create_onchain_tools
+from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
 
-def build_investigation_graph(llm: BaseChatModel):
+def build_investigation_graph(llm: BaseChatModel, provider: ChainProviderPort | None = None):
     workflow = StateGraph(EventInvestigationState)
 
-    tools = create_onchain_tools()
+    provider = provider or MockChainProvider()
+    tools = create_onchain_tools(provider)
     tool_node = ToolNode(tools)
     llm_with_tools = llm.bind_tools(tools)
 

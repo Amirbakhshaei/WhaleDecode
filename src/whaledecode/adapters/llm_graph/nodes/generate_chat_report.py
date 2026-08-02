@@ -11,6 +11,8 @@ REPORT_PROMPT = """Based on the investigation, produce a structured answer with:
 - tool_calls: JSON array of tools used
 - disclaimer: standard crypto disclaimer
 
+DATA GROUNDING: Do NOT invent, hallucinate, or assume wallet addresses, amounts, or USD values. Base every figure ONLY on the analysis provided. Missing data reads "N/A" or "Data Unavailable".
+
 Output as valid JSON with these exact keys."""
 
 

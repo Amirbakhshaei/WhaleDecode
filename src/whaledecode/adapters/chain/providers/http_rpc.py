@@ -94,6 +94,14 @@ class HttpRpcProvider(ChainProviderPort):
         result = await self.rpc_call("eth_blockNumber", chain=chain)
         return int(result, 16) if result else 0
 
+    async def get_balance(self, chain: str, address: str) -> str:
+        result = await self.rpc_call("eth_getBalance", [address, "latest"], chain=chain)
+        return result if isinstance(result, str) else "0x0"
+
+    async def get_transaction_count(self, chain: str, address: str) -> int:
+        result = await self.rpc_call("eth_getTransactionCount", [address, "latest"], chain=chain)
+        return int(result, 16) if isinstance(result, str) and result else 0
+
     async def get_token_metadata(self, chain: str, address: str) -> dict[str, Any]:
         async def _eth_call(data_hex: str) -> str:
             params = [{"to": address, "data": data_hex}, "latest"]

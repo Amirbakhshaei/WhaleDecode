@@ -6,6 +6,7 @@ from typing import Any
 import structlog
 from langchain_core.messages import HumanMessage
 
+from whaledecode.adapters.chain.factory import create_chain_provider
 from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.graphs.chat_investigation import build_chat_investigation_graph
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph
@@ -20,8 +21,9 @@ class LangGraphReasoner(ReasonerPort):
         self._settings = settings
         self._heavy_llm = factory.get_heavy_reasoning_llm()
         self._fast_llm = factory.get_fast_chat_llm()
-        self._investigation_graph = build_investigation_graph(self._heavy_llm)
-        self._chat_graph = build_chat_investigation_graph(self._fast_llm)
+        self._chain_provider = create_chain_provider(settings)
+        self._investigation_graph = build_investigation_graph(self._heavy_llm, self._chain_provider)
+        self._chat_graph = build_chat_investigation_graph(self._fast_llm, self._chain_provider)
 
     async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str) -> dict:
         """Invoke a LangGraph graph with one retry on transient errors."""
