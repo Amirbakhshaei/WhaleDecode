@@ -30,16 +30,16 @@ class _FakeAnalysisModel:
             risk_score=0.92,
             is_safe=False,
             briefing_markdown=(
-                "⚡ **SUSPICIOUS_CONTRACT_CREATION** | `$50000`\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "🔹 **Network**: Ethereum\n"
-                "🔹 **Amount**: `50000 USDC`\n\n"
-                "**🔗 Execution Details**\n"
-                "• **TX**: `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
-                "• **From**: `0x0000000000000000000000000000000000000000`\n"
-                "• **To**: `0xffffffffffffffffffffffffffffffffffffffff`\n\n"
-                "**🧠 Quantitative Assessment**\n"
-                "Extreme holder concentration elevates rug-pull risk."
+                "🚨 **WHALE DECODE: ON-CHAIN ALERT**\n\n"
+                "**Event:** `Suspicious Contract Creation`\n"
+                "**Value:** `$50,000`\n"
+                "**Chain:** `Ethereum`\n\n"
+                "📊 **Execution Details**\n"
+                "├ **Hash:** `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
+                "├ **Sender:** `0x0000000000000000000000000000000000000000`\n"
+                "└ **Receiver:** `0xffffffffffffffffffffffffffffffffffffffff`\n\n"
+                "🧠 **SMC Assessment**\n"
+                "Liquidity is concentrating at contract creation, a classic institutional positioning signal."
             ),
             disclaimer="Not financial advice. HIGH RISK: significant uncertainty.",
         )
@@ -75,7 +75,7 @@ async def test_consolidated_graph_produces_full_result() -> None:
     assert result["evidence"] == [{"fact": "Holder concentration is extreme", "source": "on-chain"}]
     assert result["risk_score"] == 0.92
     assert result["is_safe"] is False
-    assert "SUSPICIOUS_CONTRACT_CREATION" in result["summary"]
-    assert "Execution Details" in result["summary"]
+    assert "SUSPICIOUS_CONTRACT_CREATION" in result["summary"] or "Suspicious Contract Creation" in result["summary"]
+    assert "WHALE DECODE: ON-CHAIN ALERT" in result["summary"]
     assert "`0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`" in result["summary"]
     assert "HIGH RISK" in result["disclaimer"]

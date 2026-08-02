@@ -22,18 +22,21 @@ class InvestigationResult(BaseModel):
     briefing_markdown: str = Field(
         description=(
             "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE. "
-            "Use backticks for hashes and addresses so they are tap-to-copy in Telegram:\n\n"
-            "⚡ **[Event Type]** | `$[USD Value]`\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "🔹 **Network**: [Chain Name]\n"
-            "🔹 **Amount**: `[Amount] [Token]`\n\n"
-            "**🔗 Execution Details**\n"
-            "• **TX**: `[tx_hash]`\n"
-            "• **From**: `[from_address]`\n"
-            "• **To**: `[to_address]`\n\n"
-            "**🧠 Quantitative Assessment**\n"
-            "[Write a concise, 2-3 sentence technical assessment of the event's significance, potential risk, and market impact.]\n\n"
-            "If any data is missing or a tool fails, write 'Data Unavailable'. DO NOT hallucinate addresses or values."
+            "Instructions:\n"
+            "1. Format the USD value with commas and zero decimals (e.g., $150,000).\n"
+            "2. Convert event types to Title Case (e.g., 'High Value Transfer' instead of HIGHVALUETRANSFER).\n"
+            "3. If data is missing, output `[ N/A ]` instead of 'Data Unavailable'.\n"
+            "4. The Assessment MUST be written through the lens of Smart Money Concepts (SMC), analyzing liquidity, market structure, or institutional order flow. Keep it to 2 concise sentences.\n\n"
+            "🚨 **WHALE DECODE: ON-CHAIN ALERT**\n\n"
+            "**Event:** `[Event Type]`\n"
+            "**Value:** `$[USD Value]`\n"
+            "**Chain:** `[Network]`\n\n"
+            "📊 **Execution Details**\n"
+            "├ **Hash:** `[tx_hash]`\n"
+            "├ **Sender:** `[from_address]`\n"
+            "└ **Receiver:** `[to_address]`\n\n"
+            "🧠 **SMC Assessment**\n"
+            "[Your Smart Money analysis here.]"
         )
     )
     disclaimer: str = Field(
