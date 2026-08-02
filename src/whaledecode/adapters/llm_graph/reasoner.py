@@ -43,7 +43,7 @@ class LangGraphReasoner(ReasonerPort):
             self._investigation_graph,
             {
                 "event_data": event_input,
-                "messages": [HumanMessage(content=json.dumps(event_input,`default=str`))],
+                "messages": [HumanMessage(content=json.dumps(event_input,default=str))],
             },
             "investigate_event",
         )
