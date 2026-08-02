@@ -55,7 +55,22 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
                 published += 1
                 log.info("channel_published", event_id=event.id, event_type=event.event_type)
             except Exception as e:
-                log.error("channel_publish_failed", event_id=event.id, error=str(e))
+                log.warning(
+                    "channel_publish_markdown_failed",
+                    event_id=event.id,
+                    error=str(e),
+                )
+                try:
+                    await bot.send_message(
+                        chat_id=channel_id,
+                        text=str(report.get("summary", "")),
+                        reply_markup=keyboard,
+                    )
+                    await uow.candidate_events.mark_published(event.id)
+                    published += 1
+                    log.info("channel_published_plaintext", event_id=event.id)
+                except Exception as e2:
+                    log.error("channel_publish_failed", event_id=event.id, error=str(e2))
         await uow.commit()
     if published:
         log.info("channel_batch_done", count=published)
