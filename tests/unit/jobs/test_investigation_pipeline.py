@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
@@ -137,6 +138,28 @@ async def test_process_event_idempotent_skips_reasoner(session_factory: async_se
 
     assert reasoner.investigate_calls == 1
     assert cached["summary"] == "Whale moved 1M USDC to Binance"
+
+
+@pytest.mark.asyncio
+async def test_process_event_skipped_when_below_gate_threshold(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    wallet_id = await _seed_wallet(session_factory)
+    reasoner = FakeReasoner()
+    service = InvestigationService(lambda: UnitOfWork(session_factory), reasoner)
+
+    event = _candidate_event(wallet_id)
+    event.score = 0.1
+
+    result = await service.process_event(event)
+
+    assert reasoner.investigate_calls == 0
+    assert result == {"status": "skipped", "reason": "Below gate threshold"}
+
+    async with UnitOfWork(session_factory) as uow:
+        persisted = await uow.candidate_events.get_by_dedupe_key("1:test:0")
+        assert persisted is not None
+        assert persisted.status == "skipped"
 
 
 @pytest.mark.asyncio

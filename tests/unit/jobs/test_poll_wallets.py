@@ -1,4 +1,4 @@
-from whaledecode.jobs.poll_wallets import bounded_from_block, max_block_range_for
+from whaledecode.jobs.poll_wallets import _to_candidate_event, bounded_from_block, max_block_range_for
 
 MAX_RANGES = {"Ethereum": 5, "Base": 30, "Arbitrum": 100}
 
@@ -29,3 +29,21 @@ class TestMaxBlockRangeFor:
 
     def test_unknown_chain_falls_back(self) -> None:
         assert max_block_range_for("Solana", MAX_RANGES) == 5
+
+
+def test_to_candidate_event_surfaces_value_usd_in_raw_json() -> None:
+    event = _to_candidate_event(
+        {
+            "wallet_id": 1,
+            "chain": "ETH",
+            "tx_hash": "0x" + "c" * 64,
+            "log_index": 0,
+            "block_number": 100,
+            "event_type": "TRANSFER",
+            "raw_json": {"address": "0x1"},
+            "score": 0.8,
+            "dedupe_key": "1:test",
+            "value_usd": 50_000.0,
+        }
+    )
+    assert event.raw_json["value_usd"] == 50_000.0

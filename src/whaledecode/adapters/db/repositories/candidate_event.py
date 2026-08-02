@@ -87,6 +87,20 @@ class CandidateEventRepository:
         if model:
             model.published_at = datetime.now(UTC)
 
+    async def update(self, event: CandidateEvent) -> CandidateEvent:
+        """Upsert by dedupe key so skipped/updated events can be persisted."""
+        result = await self._session.execute(
+            select(CandidateEventModel).where(CandidateEventModel.dedupe_key == event.dedupe_key)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return await self.create(event)
+        model.status = event.status
+        model.score = event.score
+        model.raw_json = json.dumps(event.raw_json)
+        await self._session.flush()
+        return self._to_domain(model)
+
     def _to_domain(self, model: CandidateEventModel) -> CandidateEvent:
         return CandidateEvent(
             id=model.id,

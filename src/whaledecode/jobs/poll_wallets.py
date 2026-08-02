@@ -100,6 +100,8 @@ async def poll_wallets(
 
 
 def _to_candidate_event(event: dict) -> CandidateEvent:
+    raw_json = dict(event["raw_json"])
+    raw_json["value_usd"] = event.get("value_usd", 0.0)
     return CandidateEvent(
         wallet_id=event["wallet_id"],
         chain=event["chain"],
@@ -107,7 +109,7 @@ def _to_candidate_event(event: dict) -> CandidateEvent:
         log_index=event["log_index"],
         block_number=event["block_number"],
         event_type=event["event_type"],
-        raw_json=event["raw_json"],
+        raw_json=raw_json,
         score=event.get("score", 0.0),
         dedupe_key=event["dedupe_key"],
     )
