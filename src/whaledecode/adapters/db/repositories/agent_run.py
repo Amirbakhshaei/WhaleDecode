@@ -18,6 +18,7 @@ class AgentRunRepository:
             graph_name=run.graph_name,
             status=run.status,
             input_json=json.dumps(run.input_json, default=str),
+            output_json=json.dumps(run.output_json, default=str) if run.output_json else None,
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             cost_usd=run.cost_usd,

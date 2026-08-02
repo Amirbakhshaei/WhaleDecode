@@ -8,6 +8,10 @@ from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from whaledecode.adapters.db.session import create_session_factory
+from whaledecode.adapters.db.uow import UnitOfWork
+from whaledecode.adapters.llm.factory import LLMFactory
+from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
+from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
 
 log = structlog.get_logger()
@@ -41,6 +45,14 @@ async def run_worker(settings: Settings) -> None:
         misfire_grace_time=600,
     )
 
+    llm_factory = LLMFactory(settings)
+    reasoner = LangGraphReasoner(settings, llm_factory)
+
+    def _uow() -> UnitOfWork:
+        return UnitOfWork(session_factory)
+
+    investigation_service = InvestigationService(_uow, reasoner, settings)
+
     log.info("worker_started")
 
     stop_event = asyncio.Event()
@@ -58,7 +70,7 @@ async def run_worker(settings: Settings) -> None:
 
     scheduler.start()
 
-    poll_task = asyncio.create_task(_poll_loop(session_factory, settings))
+    poll_task = asyncio.create_task(_poll_loop(session_factory, settings, investigation_service))
     alert_task = asyncio.create_task(_alert_loop(session_factory, bot, settings))
     channel_task = asyncio.create_task(_channel_loop(session_factory, bot, settings))
 
@@ -72,12 +84,12 @@ async def run_worker(settings: Settings) -> None:
     log.info("worker_stopped")
 
 
-async def _poll_loop(session_factory, settings: Settings) -> None:
+async def _poll_loop(session_factory, settings: Settings, investigation_service: InvestigationService) -> None:
     from whaledecode.jobs.poll_wallets import poll_wallets
 
     while True:
         try:
-            await poll_wallets(session_factory, settings)
+            await poll_wallets(session_factory, settings, investigation_service)
         except Exception as e:
             log.error("poll_loop_error", error=str(e))
         await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)

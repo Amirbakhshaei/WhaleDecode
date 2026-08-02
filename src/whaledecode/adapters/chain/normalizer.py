@@ -5,6 +5,8 @@ from typing import Any
 def normalize_log(raw_log: dict[str, Any], wallet_id: int, chain: str) -> dict[str, Any]:
     tx_hash = raw_log.get("transactionHash", "")
     log_index = raw_log.get("logIndex", 0)
+    if isinstance(log_index, str):
+        log_index = int(log_index, 16)
     block_number = raw_log.get("blockNumber", 0)
     if isinstance(block_number, str):
         block_number = int(block_number, 16)
