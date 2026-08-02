@@ -30,16 +30,15 @@ class _FakeAnalysisModel:
             risk_score=0.92,
             is_safe=False,
             briefing_markdown=(
-                "🚨 **WHALE DECODE: ON-CHAIN ALERT**\n\n"
-                "**Event:** `Suspicious Contract Creation`\n"
-                "**Value:** `$50,000`\n"
-                "**Chain:** `Ethereum`\n\n"
-                "📊 **Execution Details**\n"
-                "├ **Hash:** `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
-                "├ **Sender:** `0x0000000000000000000000000000000000000000`\n"
-                "└ **Receiver:** `0xffffffffffffffffffffffffffffffffffffffff`\n\n"
-                "🧠 **SMC Assessment**\n"
-                "Liquidity is concentrating at contract creation, a classic institutional positioning signal."
+                "✦ **Suspicious Contract Creation**\n"
+                "`$50,000` · `50000 USDC` · Ethereum\n"
+                "Risk Score: 92%\n\n"
+                "**Intelligence**\n"
+                "Smart money seeded a new contract, concentrating liquidity at creation.\n\n"
+                "**Trace**\n"
+                "Tx: `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
+                "From: `0x0000000000000000000000000000000000000000`\n"
+                "To: `0xffffffffffffffffffffffffffffffffffffffff`"
             ),
             disclaimer="Not financial advice. HIGH RISK: significant uncertainty.",
         )
@@ -76,6 +75,7 @@ async def test_consolidated_graph_produces_full_result() -> None:
     assert result["risk_score"] == 0.92
     assert result["is_safe"] is False
     assert "SUSPICIOUS_CONTRACT_CREATION" in result["summary"] or "Suspicious Contract Creation" in result["summary"]
-    assert "WHALE DECODE: ON-CHAIN ALERT" in result["summary"]
+    assert "Risk Score: 92%" in result["summary"]
+    assert "**Trace**" in result["summary"]
     assert "`0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`" in result["summary"]
     assert "HIGH RISK" in result["disclaimer"]

@@ -21,22 +21,20 @@ class InvestigationResult(BaseModel):
     )
     briefing_markdown: str = Field(
         description=(
-            "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE. "
+            "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE.\n"
             "Instructions:\n"
-            "1. Format the USD value with commas and zero decimals (e.g., $150,000).\n"
-            "2. Convert event types to Title Case (e.g., 'High Value Transfer' instead of HIGHVALUETRANSFER).\n"
-            "3. If data is missing, output `[ N/A ]` instead of 'Data Unavailable'.\n"
-            "4. The Assessment MUST be written through the lens of Smart Money Concepts (SMC), analyzing liquidity, market structure, or institutional order flow. Keep it to 2 concise sentences.\n\n"
-            "🚨 **WHALE DECODE: ON-CHAIN ALERT**\n\n"
-            "**Event:** `[Event Type]`\n"
-            "**Value:** `$[USD Value]`\n"
-            "**Chain:** `[Network]`\n\n"
-            "📊 **Execution Details**\n"
-            "├ **Hash:** `[tx_hash]`\n"
-            "├ **Sender:** `[from_address]`\n"
-            "└ **Receiver:** `[to_address]`\n\n"
-            "🧠 **SMC Assessment**\n"
-            "[Your Smart Money analysis here.]"
+            "1. Combine the factual summary and SMC thesis into a SINGLE, dense 2-sentence paragraph.\n"
+            "2. Format numbers with commas (e.g., $150,000).\n"
+            "3. If data is missing, use `[ N/A ]`.\n\n"
+            "✦ **[Event Type]**\n"
+            "`$[USD Value]` · `[Amount] [Token]` · [Chain]\n"
+            "Risk Score: [Score]%\n\n"
+            "**Intelligence**\n"
+            "[Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance (SMC). No filler words.]\n\n"
+            "**Trace**\n"
+            "Tx: `[tx_hash]`\n"
+            "From: `[from_address]`\n"
+            "To: `[to_address]`"
         )
     )
     disclaimer: str = Field(
