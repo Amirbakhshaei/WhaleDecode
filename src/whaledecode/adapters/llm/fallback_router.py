@@ -68,10 +68,7 @@ class FallbackLLMRouter(BaseChatModel):
         """Build the runnable chain with fallbacks."""
         runnable: Runnable = self.primary
         for fallback in self.fallbacks:
-            runnable = runnable.with_fallbacks(
-                [fallback],
-                exception_key="error",
-            )
+            runnable = runnable.with_fallbacks([fallback])
         return runnable
 
     def _generate(
