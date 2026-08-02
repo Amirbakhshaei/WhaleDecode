@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
+from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import IntegrityError
 
 from whaledecode.adapters.db.uow import UnitOfWork
@@ -14,7 +15,13 @@ from whaledecode.domain.services.event_gate import EventGate
 
 
 class InvestigationService:
-    def __init__(self, uow_factory: Callable[[], UnitOfWork], reasoner: ReasonerPort, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        reasoner: ReasonerPort,
+        settings: Settings | None = None,
+        rate_limit_rpm: int = 14,
+    ) -> None:
         self._uow_factory = uow_factory
         self._reasoner = reasoner
         self._relay = RelayFormatter(settings)
@@ -22,6 +29,11 @@ class InvestigationService:
             min_score_threshold=settings.MIN_INVESTIGATION_SCORE if settings else 0.65,
             min_value_usd=settings.MIN_INVESTIGATION_VALUE_USD if settings else 5000.0,
         )
+        # ponytail: per-instance leaky bucket on the investigation path only. Free-tier
+        # quota is 15 RPM (14 + 1 margin) but the limiter is not shared across the
+        # worker/bot processes and chat/briefing calls are ungated — tighten if quota
+        # exhaustion still bites in production.
+        self._rate_limiter = AsyncLimiter(rate_limit_rpm, 60.0)
 
     async def process_event(self, event: CandidateEvent) -> dict[str, Any]:
         # Idempotent fast path: already investigated under this dedupe key → reuse stored analysis.
@@ -45,7 +57,8 @@ class InvestigationService:
         event_dict["raw_json"] = compact_json
 
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
-        result = await self._reasoner.investigate_event(event_dict)
+        async with self._rate_limiter:
+            result = await self._reasoner.investigate_event(event_dict)
 
         async with self._uow_factory() as uow:
             persisted = await self._persist_event(uow, event)

@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from langchain_core.messages import BaseMessage
+
 # ponytail: stripped-down parser — the old fence_match regex missed nested
 # objects and edge cases. This version strips all markdown cruft first,
 # then finds the outermost JSON object boundaries.
@@ -52,3 +54,29 @@ def extract_clean_json(content: Any) -> dict[str, Any]:
         "tool_calls": [],
         "disclaimer": "Not financial advice.",
     }
+
+
+def trim_history(messages: list[BaseMessage], max_tokens: int = 3000) -> list[BaseMessage]:
+    """Cap ReAct loop history to the most recent max_tokens.
+
+    LangGraph's `add_messages` appends every turn to state, so a long tool loop can
+    inflate the context window. The callers prepend the system prompt themselves,
+    so history trimming keeps only the tail. `strategy="last"` keeps tool_call/
+    tool_result pairs together at the cut boundary.
+    """
+    if not messages:
+        return []
+    from langchain_core.messages import ToolMessage, trim_messages
+
+    trimmed = trim_messages(
+        messages,
+        max_tokens=max_tokens,
+        token_counter="approximate",
+        strategy="last",
+        include_system=False,
+    )
+    # trim_messages drops from the front; if that cut lands inside a tool_call/
+    # tool_result pair, a leading ToolMessage survives without its AI call.
+    while trimmed and isinstance(trimmed[0], ToolMessage):
+        trimmed = trimmed[1:]
+    return trimmed

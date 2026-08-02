@@ -1,8 +1,8 @@
+import asyncio
 from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
@@ -184,3 +184,24 @@ async def test_poll_wallets_runs_reasoner_and_persists_agent_run(
         assert run.status == "completed"
         assert run.output_json is not None
         assert run.output_json["summary"] == "Whale moved 1M USDC to Binance"
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_blocks_burst_beyond_rpm(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    wallet_id = await _seed_wallet(session_factory)
+    reasoner = FakeReasoner()
+    service = InvestigationService(
+        lambda: UnitOfWork(session_factory), reasoner, rate_limit_rpm=1
+    )
+
+    first = await service.process_event(_candidate_event(wallet_id))
+    assert reasoner.investigate_calls == 1
+    assert first["summary"] == "Whale moved 1M USDC to Binance"
+
+    second_event = _candidate_event(wallet_id)
+    second_event.dedupe_key = "1:test:1"
+    second_event.raw_json = {"transactionHash": TX_HASH}
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(service.process_event(second_event), timeout=0.5)
+    assert reasoner.investigate_calls == 1

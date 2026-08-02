@@ -1,6 +1,8 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from whaledecode.adapters.llm_graph.utils import trim_history
+
 SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given a user question about wallets, tokens, or transactions:
 1. Understand what the user is asking.
 2. Call on-chain tools to gather relevant data.
@@ -12,6 +14,7 @@ def create_chat_analysis_node(llm: BaseChatModel):
     async def analyze_chat(state: dict) -> dict:
         query = state["query"]
         msg = HumanMessage(content=f"User question: {query}")
-        result = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), msg])
+        history = trim_history(state.get("messages", []))
+        result = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), *history, msg])
         return {"messages": [result], "summary": result.content}
     return analyze_chat
