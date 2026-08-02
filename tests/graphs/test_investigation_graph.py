@@ -1,8 +1,8 @@
+import json
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage
-
+from langchain_core.messages import AIMessage, HumanMessage
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph
 from whaledecode.adapters.llm_graph.state.investigation_result import InvestigationResult
 
@@ -53,7 +53,12 @@ async def test_consolidated_graph_produces_full_result() -> None:
         "tx_hash": "0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000",
         "notes": "Fetch on-chain holder distribution.",
     }
-    result = await graph.ainvoke({"event_data": event})
+    result = await graph.ainvoke(
+        {
+            "event_data": event,
+            "messages": [HumanMessage(content=json.dumps(event))],
+        }
+    )
 
     assert result["thesis"] == "Rug-pull risk elevated"
     assert result["evidence"] == [{"fact": "Holder concentration is extreme", "source": "on-chain"}]

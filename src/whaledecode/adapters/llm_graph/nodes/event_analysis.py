@@ -1,5 +1,5 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 
 from whaledecode.adapters.llm_graph.utils import trim_history
 
@@ -12,9 +12,10 @@ SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given an on-chain 
 
 def create_analysis_node(llm: BaseChatModel):
     async def analyze_event(state: dict) -> dict:
-        event = state["event_data"]
-        msg = HumanMessage(content=f"Investigate this on-chain event:\n\n{event}")
+        # The event was injected into state["messages"] as the opening user turn
+        # before this node ran. Pass the history through as-is so tool calls stay
+        # paired with their tool responses — no manual re-injection of the event.
         history = trim_history(state.get("messages", []))
-        result = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), *history, msg])
+        result = await llm.ainvoke([SystemMessage(content=SYSTEM_PROMPT), *history])
         return {"messages": [result], "summary": result.content}
     return analyze_event

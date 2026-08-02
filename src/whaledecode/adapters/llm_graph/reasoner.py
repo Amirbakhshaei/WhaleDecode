@@ -1,8 +1,10 @@
 import asyncio
+import json
 import time
 from typing import Any
 
 import structlog
+from langchain_core.messages import HumanMessage
 
 from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.graphs.chat_investigation import build_chat_investigation_graph
@@ -35,7 +37,16 @@ class LangGraphReasoner(ReasonerPort):
 
     async def investigate_event(self, event_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
-        state = await self._invoke_graph(self._investigation_graph, {"event_data": event_input}, "investigate_event")
+        # The event enters the graph as the opening user turn — the analysis node must
+        # not re-inject it, or Gemini rejects the message sequence.
+        state = await self._invoke_graph(
+            self._investigation_graph,
+            {
+                "event_data": event_input,
+                "messages": [HumanMessage(content=json.dumps(event_input))],
+            },
+            "investigate_event",
+        )
         tokens_in = self._count_tokens(state.get("messages", []))
         return {
             "summary": state.get("summary", ""),
@@ -53,7 +64,14 @@ class LangGraphReasoner(ReasonerPort):
     async def investigate_chat(self, chat_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
         query = chat_input.get("message", "")
-        state = await self._invoke_graph(self._chat_graph, {"query": query}, "investigate_chat")
+        state = await self._invoke_graph(
+            self._chat_graph,
+            {
+                "query": query,
+                "messages": [HumanMessage(content=f"User question: {query}")],
+            },
+            "investigate_chat",
+        )
         tokens_in = self._count_tokens(state.get("messages", []))
         return {
             "summary": state.get("summary", ""),

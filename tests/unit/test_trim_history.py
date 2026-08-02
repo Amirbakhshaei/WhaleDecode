@@ -1,4 +1,4 @@
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from whaledecode.adapters.llm_graph.utils import trim_history
 
 
@@ -37,3 +37,14 @@ def test_trim_history_never_splits_tool_pair() -> None:
     for j in range(0, len(contents), 2):
         assert contents[j] == "AIMessage"
         assert contents[j + 1] == "ToolMessage"
+
+
+def test_trim_history_preserves_opening_user_turn() -> None:
+    messages = [HumanMessage(content="Investigate this event")]
+    for i in range(8):
+        messages.extend(_pair(i))
+
+    trimmed = trim_history(messages, max_tokens=80)
+
+    assert isinstance(trimmed[0], HumanMessage)
+    assert trimmed[0].content == "Investigate this event"

@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 
 # ponytail: stripped-down parser — the old fence_match regex missed nested
 # objects and edge cases. This version strips all markdown cruft first,
@@ -61,15 +61,19 @@ def trim_history(messages: list[BaseMessage], max_tokens: int = 3000) -> list[Ba
 
     LangGraph's `add_messages` appends every turn to state, so a long tool loop can
     inflate the context window. The callers prepend the system prompt themselves,
-    so history trimming keeps only the tail. `strategy="last"` keeps tool_call/
-    tool_result pairs together at the cut boundary.
+    so history trimming keeps only the tail. The opening user turn is always kept:
+    Gemini rejects a conversation whose first message is a tool call.
     """
     if not messages:
         return []
-    from langchain_core.messages import ToolMessage, trim_messages
+    # Keep the opening user turn separate — it is the seed of the ReAct loop.
+    opening = [messages[0]] if isinstance(messages[0], HumanMessage) else []
+    tail = messages[len(opening):]
+
+    from langchain_core.messages import trim_messages
 
     trimmed = trim_messages(
-        messages,
+        tail,
         max_tokens=max_tokens,
         token_counter="approximate",
         strategy="last",
@@ -79,4 +83,4 @@ def trim_history(messages: list[BaseMessage], max_tokens: int = 3000) -> list[Ba
     # tool_result pair, a leading ToolMessage survives without its AI call.
     while trimmed and isinstance(trimmed[0], ToolMessage):
         trimmed = trimmed[1:]
-    return trimmed
+    return opening + trimmed
