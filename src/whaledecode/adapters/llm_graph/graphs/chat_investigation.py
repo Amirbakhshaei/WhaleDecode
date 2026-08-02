@@ -26,7 +26,7 @@ def build_chat_investigation_graph(llm: BaseChatModel):
 
     workflow.add_edge(START, "analyze")
     workflow.add_conditional_edges("analyze", tools_condition, {"tools": "execute_tools", END: "report"})
-    workflow.add_edge("execute_tools", "report")
+    workflow.add_edge("execute_tools", "analyze")
     workflow.add_edge("report", "guardrails")
     workflow.add_edge("guardrails", END)
 
