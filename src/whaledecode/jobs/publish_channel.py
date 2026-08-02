@@ -1,10 +1,11 @@
 import structlog
 from aiogram import Bot
+from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from whaledecode.adapters.db.session import async_sessionmaker
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
-    format_premium_event_post,
+    escape_markdown_v2,
 )
 from whaledecode.config.settings import Settings
 
@@ -39,13 +40,14 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
             report = run.output_json if run else {}
 
             event_data = event.model_dump()
-            msg = format_premium_event_post(event_data, report)
+            msg = escape_markdown_v2(str(report.get("summary", "")))
             tx_hash = event_data.get("tx_hash", "")
             keyboard = _build_keyboard(tx_hash)
             try:
                 await bot.send_message(
                     chat_id=channel_id,
                     text=msg,
+                    parse_mode=ParseMode.MARKDOWN_V2,
                     reply_markup=keyboard,
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )

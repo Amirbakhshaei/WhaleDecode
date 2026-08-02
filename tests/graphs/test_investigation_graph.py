@@ -30,11 +30,11 @@ class _FakeAnalysisModel:
             risk_score=0.92,
             is_safe=False,
             briefing_markdown=(
-                "✦ **Suspicious Contract Creation**\n"
+                "✦ *Suspicious Contract Creation*\n"
                 "`$50,000` · `50000 USDC` · Ethereum\n"
                 "Risk Score: 92%\n\n"
-                "**Intelligence**\n"
-                "Smart money seeded a new contract, concentrating liquidity at creation.\n\n"
+                "> **Intelligence**\n"
+                "> Smart money seeded a new contract, concentrating liquidity at creation.\n\n"
                 "**Trace**\n"
                 "Tx: `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
                 "From: `0x0000000000000000000000000000000000000000`\n"

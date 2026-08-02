@@ -6,10 +6,35 @@ from typing import Any
 
 _MD_CLEANUP = re.compile(r"```(?:json)?|```|\*\*|__|[*_`]")
 
+_MD2_SPECIAL = set("_[]()~`>#+-=|{}.!")
+
 
 def _strip_md(text: str) -> str:
     """Remove markdown formatting artifacts from LLM output."""
     return _MD_CLEANUP.sub("", text).strip()
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Escape Telegram MarkdownV2 special chars, preserving code spans,
+    blockquote prefixes ('>'), and bold/italic markers ('*')."""
+    out: list[str] = []
+    in_code = False
+    for i, ch in enumerate(text):
+        if ch == "`":
+            in_code = not in_code
+            out.append(ch)
+        elif in_code:
+            out.append(ch)
+        elif ch == ">":
+            line_start = i == 0 or text[i - 1] == "\n"
+            out.append(">" if line_start else "\\>")
+        elif ch == "*":
+            out.append(ch)
+        elif ch in _MD2_SPECIAL:
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def format_premium_event_post(event_data: dict[str, Any], analysis: dict[str, Any]) -> str:

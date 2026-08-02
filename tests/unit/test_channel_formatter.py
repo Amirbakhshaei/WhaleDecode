@@ -1,4 +1,5 @@
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
+    escape_markdown_v2,
     format_premium_event_post,
 )
 
@@ -102,3 +103,40 @@ class TestFormatPremiumEventPost:
         event_zero = {**EVENT, "raw_json": {**EVENT["raw_json"], "value_usd": 0}}
         html = format_premium_event_post(event_zero, {"risk_score": 0.1})
         assert "$0.00" in html
+
+
+class TestEscapeMarkdownV2:
+    def test_escapes_periods_and_hyphens(self):
+        out = escape_markdown_v2("Balance 1.5 ETH - net positive.")
+        assert "1\\.5 ETH \\- net positive\\." in out
+
+    def test_preserves_code_spans(self):
+        out = escape_markdown_v2("Tx: `0xabc-123` end.")
+        assert "`0xabc-123`" in out
+        assert "\\." in out
+
+    def test_preserves_blockquote_prefix(self):
+        out = escape_markdown_v2("> **Intelligence**\n> Liquid pool.")
+        assert out.startswith("> **Intelligence**\n> ")
+        assert "\\." in out
+
+    def test_escapes_brackets_and_parens(self):
+        out = escape_markdown_v2("value (est.) [N/A]")
+        assert "\\(" in out and "\\)" in out
+        assert "\\[" in out and "\\]" in out
+
+    def test_roundtrip_template(self):
+        tpl = (
+            "✦ *High Value Transfer*\n"
+            "`$150,000` · `100 USDC` · Ethereum\n"
+            "Risk Score: 85%\n\n"
+            "> **Intelligence**\n"
+            "> Funds consolidated into a fresh address, hinting at accumulation.\n\n"
+            "**Trace**\n"
+            "Tx: `0x1234`"
+        )
+        out = escape_markdown_v2(tpl)
+        assert "✦ *High Value Transfer*" in out
+        assert "`$150,000`" in out
+        assert "> **Intelligence**" in out
+        assert "accumulation\\." in out
