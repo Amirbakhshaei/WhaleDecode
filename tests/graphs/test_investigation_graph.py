@@ -30,11 +30,16 @@ class _FakeAnalysisModel:
             risk_score=0.92,
             is_safe=False,
             briefing_markdown=(
-                "🚨 HIGH: SUSPICIOUS_CONTRACT_CREATION 🚨\n\n"
-                "**TX:** `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
-                "**Value:** $50000\n\n"
-                "**Analysis:**\n"
-                "- Extreme holder concentration"
+                "⚡ **SUSPICIOUS_CONTRACT_CREATION** | `$50000`\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "🔹 **Network**: Ethereum\n"
+                "🔹 **Amount**: `50000 USDC`\n\n"
+                "**🔗 Execution Details**\n"
+                "• **TX**: `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
+                "• **From**: `0x0000000000000000000000000000000000000000`\n"
+                "• **To**: `0xffffffffffffffffffffffffffffffffffffffff`\n\n"
+                "**🧠 Quantitative Assessment**\n"
+                "Extreme holder concentration elevates rug-pull risk."
             ),
             disclaimer="Not financial advice. HIGH RISK: significant uncertainty.",
         )
@@ -71,5 +76,6 @@ async def test_consolidated_graph_produces_full_result() -> None:
     assert result["risk_score"] == 0.92
     assert result["is_safe"] is False
     assert "SUSPICIOUS_CONTRACT_CREATION" in result["summary"]
-    assert "**TX:**" in result["summary"]
+    assert "Execution Details" in result["summary"]
+    assert "`0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`" in result["summary"]
     assert "HIGH RISK" in result["disclaimer"]

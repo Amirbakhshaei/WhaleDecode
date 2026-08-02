@@ -21,16 +21,19 @@ class InvestigationResult(BaseModel):
     )
     briefing_markdown: str = Field(
         description=(
-            "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE:\n"
-            "🚨 [Risk Level]: [Event Type] 🚨\n\n"
-            "**TX:** `[tx_hash]`\n"
-            "**Value:** $[USD Value]\n\n"
-            "**Analysis:**\n"
-            "- [Bullet 1]\n"
-            "- [Bullet 2]\n\n"
-            "Every placeholder comes from the event payload or tool results ONLY. "
-            "If the tools return no data or fail, write 'DATA UNAVAILABLE'. "
-            "DO NOT hallucinate addresses, amounts, or USD values."
+            "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE. "
+            "Use backticks for hashes and addresses so they are tap-to-copy in Telegram:\n\n"
+            "⚡ **[Event Type]** | `$[USD Value]`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔹 **Network**: [Chain Name]\n"
+            "🔹 **Amount**: `[Amount] [Token]`\n\n"
+            "**🔗 Execution Details**\n"
+            "• **TX**: `[tx_hash]`\n"
+            "• **From**: `[from_address]`\n"
+            "• **To**: `[to_address]`\n\n"
+            "**🧠 Quantitative Assessment**\n"
+            "[Write a concise, 2-3 sentence technical assessment of the event's significance, potential risk, and market impact.]\n\n"
+            "If any data is missing or a tool fails, write 'Data Unavailable'. DO NOT hallucinate addresses or values."
         )
     )
     disclaimer: str = Field(
