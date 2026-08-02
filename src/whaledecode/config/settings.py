@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY: SecretStr
     GROQ_API_KEY_SECONDARY: SecretStr | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-    MODEL_STRUCTURED_DATA: str = "llama-3.3-70b-versatile"
+    MODEL_STRUCTURED_DATA: str = "llama-3.1-70b-versatile"
     MODEL_FAST_CHAT: str = "llama-3.1-8b-instant"
     DEFAULT_CHEAP_MODEL: str = "llama-3.1-8b-instant"
-    DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
+    DEFAULT_STRONG_MODEL: str = "llama-3.1-70b-versatile"
     MAX_COST_PER_RUN_USD: float = 0.03
 
     # Fallback LLMs
