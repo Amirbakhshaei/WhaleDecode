@@ -186,12 +186,16 @@ def create_groq_with_key_fallback(
     primary = ChatGroq(
         model=model,
         groq_api_key=primary_key,
+        max_retries=0,
+        timeout=15,
         **kwargs,
     )
     if secondary_key:
         fallback = ChatGroq(
             model=model,
             groq_api_key=secondary_key,
+            max_retries=0,
+            timeout=15,
             **kwargs,
         )
         return FallbackLLMRouter(primary, [fallback])
@@ -212,11 +216,15 @@ def create_gemini_with_groq_fallback(
     primary = ChatGoogleGenerativeAI(
         model=gemini_model,
         google_api_key=gemini_key,
+        max_retries=0,
+        timeout=15,
         **kwargs,
     )
     fallback = ChatGroq(
         model=groq_model,
         groq_api_key=groq_key,
+        max_retries=0,
+        timeout=15,
         **kwargs,
     )
     return FallbackLLMRouter(primary, [fallback])

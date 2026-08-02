@@ -31,6 +31,8 @@ class LLMFactory:
             model=self._settings.MODEL_HEAVY_REASONING,
             google_api_key=gemini_key,
             temperature=0.2,
+            max_retries=0,
+            timeout=15,
         )
 
     def get_structured_data_llm(self) -> BaseChatModel:

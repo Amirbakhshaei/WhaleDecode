@@ -40,6 +40,7 @@ class LangGraphReasoner(ReasonerPort):
         return {
             "summary": state.get("summary", ""),
             "risk_score": state.get("risk_score", 0.0),
+            "is_safe": state.get("is_safe", True),
             "thesis": state.get("thesis", ""),
             "evidence": state.get("evidence", []),
             "tool_calls": state.get("tool_calls", []),
@@ -57,6 +58,7 @@ class LangGraphReasoner(ReasonerPort):
         return {
             "summary": state.get("summary", ""),
             "risk_score": state.get("risk_score", 0.0),
+            "is_safe": state.get("is_safe", True),
             "thesis": state.get("thesis", ""),
             "evidence": state.get("evidence", []),
             "tool_calls": state.get("tool_calls", []),
