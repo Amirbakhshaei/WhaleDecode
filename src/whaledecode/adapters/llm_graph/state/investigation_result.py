@@ -20,9 +20,18 @@ class InvestigationResult(BaseModel):
         description="True if the event passes all safety guardrails."
     )
     briefing_markdown: str = Field(
-        description="The final formatted Telegram briefing in Markdown. MUST strictly follow the "
-        "On-Chain Analysis Template given in the analysis prompt and contain NO hallucinated data. "
-        "Any value not returned by a tool must read 'N/A' or 'Data Unavailable'."
+        description=(
+            "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE:\n"
+            "🚨 [Risk Level]: [Event Type] 🚨\n\n"
+            "**TX:** `[tx_hash]`\n"
+            "**Value:** $[USD Value]\n\n"
+            "**Analysis:**\n"
+            "- [Bullet 1]\n"
+            "- [Bullet 2]\n\n"
+            "Every placeholder comes from the event payload or tool results ONLY. "
+            "If the tools return no data or fail, write 'DATA UNAVAILABLE'. "
+            "DO NOT hallucinate addresses, amounts, or USD values."
+        )
     )
     disclaimer: str = Field(
         description="Standard crypto disclaimer with risk-specific notes."

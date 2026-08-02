@@ -29,7 +29,13 @@ class _FakeAnalysisModel:
             evidence=[{"fact": "Holder concentration is extreme", "source": "on-chain"}],
             risk_score=0.92,
             is_safe=False,
-            briefing_markdown="**Investigation Report**\n\nExtreme holder concentration.",
+            briefing_markdown=(
+                "🚨 HIGH: SUSPICIOUS_CONTRACT_CREATION 🚨\n\n"
+                "**TX:** `0x9999da747864ed70dcb76e27a659ccfde383320c2738221b65b6f00845a90000`\n"
+                "**Value:** $50000\n\n"
+                "**Analysis:**\n"
+                "- Extreme holder concentration"
+            ),
             disclaimer="Not financial advice. HIGH RISK: significant uncertainty.",
         )
         self._structured = _FakeStructuredOutput(result)
@@ -64,5 +70,6 @@ async def test_consolidated_graph_produces_full_result() -> None:
     assert result["evidence"] == [{"fact": "Holder concentration is extreme", "source": "on-chain"}]
     assert result["risk_score"] == 0.92
     assert result["is_safe"] is False
-    assert "**Investigation Report**" in result["summary"]
+    assert "SUSPICIOUS_CONTRACT_CREATION" in result["summary"]
+    assert "**TX:**" in result["summary"]
     assert "HIGH RISK" in result["disclaimer"]

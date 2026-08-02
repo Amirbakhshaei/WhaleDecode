@@ -9,14 +9,23 @@ SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given the analysis
 - evidence: JSON array of supporting facts (each: {"fact": "...", "source": "..."})
 - risk_score: float 0.0-1.0
 - is_safe: true if the event passes all safety guardrails, false otherwise
-- briefing_markdown: the final formatted Telegram briefing in Markdown, strictly following the On-Chain Analysis Template from the analysis prompt (Network, Transaction, Block, Involved Addresses, Token, Amount, USD Value, Assessment)
+- briefing_markdown: the final Telegram briefing, MUST strictly follow the EXACT template below
 - disclaimer: standard crypto disclaimer, extended with a HIGH RISK warning if risk_score > 0.95
 
+briefing_markdown template (fill placeholders with event/tool data ONLY):
+🚨 [Risk Level]: [Event Type] 🚨
+
+**TX:** `[tx_hash]`
+**Value:** $[USD Value]
+
+**Analysis:**
+- [Bullet 1]
+- [Bullet 2]
+
 DATA GROUNDING:
+- Every placeholder comes from the event payload or tool results ONLY.
 - Do NOT invent, hallucinate, or assume any wallet addresses, token amounts, or USD values.
-- Base every figure ONLY on the tool results and analysis data provided below.
-- If a piece of data is not provided, write "N/A" or "Data Unavailable" — never a made-up number.
-- If a tool returned an ERROR, report the data as unavailable.
+- If a piece of data is not provided or a tool returned an ERROR, write "DATA UNAVAILABLE" — never a made-up number.
 
 Output strictly as JSON matching the schema exactly."""
 
