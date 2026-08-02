@@ -41,16 +41,16 @@ class FallbackLLMRouter(BaseChatModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    primary: BaseChatModel
-    fallbacks: list[BaseChatModel] = []
+    primary: Runnable
+    fallbacks: list[Runnable] = []
 
     _should_fallback: Callable[[Exception], bool]
     _runnable: Runnable
 
     def __init__(
         self,
-        primary: BaseChatModel,
-        fallbacks: list[BaseChatModel] | None = None,
+        primary: Runnable,
+        fallbacks: list[Runnable] | None = None,
         *,
         should_fallback: Callable[[Exception], bool] | None = None,
         **kwargs: Any,
