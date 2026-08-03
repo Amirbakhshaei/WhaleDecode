@@ -52,7 +52,7 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
 
     await message.answer("🧠 Thinking...")
     try:
-        result = await investigation_service.chat(question)
+        result = await investigation_service.chat(question, thread_id=str(message.from_user.id))
         await message.answer(result[:4000])
     except ConnectionError as e:
         log.error("ask_connection_error", user_id=message.from_user.id, error=str(e))
@@ -83,7 +83,10 @@ async def cmd_decode(message: Message, investigation_service, uow_factory, **kwa
     target = args[1]
     await message.answer("🔍 Decoding...")
     try:
-        response = await investigation_service.chat(f"Decode and analyze this address or transaction: {target}")
+        response = await investigation_service.chat(
+            f"Decode and analyze this address or transaction: {target}",
+            thread_id=str(message.from_user.id),
+        )
         await message.answer(response[:4000])
     except ConnectionError as e:
         log.error("decode_connection_error", user_id=message.from_user.id, error=str(e))

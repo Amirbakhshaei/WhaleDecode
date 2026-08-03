@@ -11,7 +11,11 @@ from whaledecode.adapters.llm_graph.tools.onchain import create_onchain_tools
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
 
-def build_chat_investigation_graph(llm: BaseChatModel, provider: ChainProviderPort | None = None):
+def build_chat_investigation_graph(
+    llm: BaseChatModel,
+    provider: ChainProviderPort | None = None,
+    checkpointer=None,
+):
     workflow = StateGraph(ChatInvestigationState)
 
     provider = provider or MockChainProvider()
@@ -33,4 +37,4 @@ def build_chat_investigation_graph(llm: BaseChatModel, provider: ChainProviderPo
     workflow.add_edge("report", "guardrails")
     workflow.add_edge("guardrails", END)
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=checkpointer)

@@ -24,12 +24,13 @@ class LangGraphReasoner(ReasonerPort):
         self._chain_provider = create_chain_provider(settings)
         self._investigation_graph = build_investigation_graph(self._heavy_llm, self._chain_provider)
         self._chat_graph = build_chat_investigation_graph(self._fast_llm, self._chain_provider)
+        self._chat_memory_setup = False
 
-    async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str) -> dict:
+    async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str, config: dict | None = None) -> dict:
         """Invoke a LangGraph graph with one retry on transient errors."""
         for attempt in range(2):
             try:
-                return await graph.ainvoke(inputs)
+                return await graph.ainvoke(inputs, config=config)
             except (ConnectionError, TimeoutError, OSError) as exc:
                 if attempt == 0:
                     log.warning("llm_retry", attempt=1, label=label, error=str(exc)[:120])
@@ -66,14 +67,15 @@ class LangGraphReasoner(ReasonerPort):
     async def investigate_chat(self, chat_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
         query = chat_input.get("message", "")
-        state = await self._invoke_graph(
-            self._chat_graph,
-            {
-                "query": query,
-                "messages": [HumanMessage(content=f"User question: {query}")],
-            },
-            "investigate_chat",
-        )
+        inputs = {
+            "query": query,
+            "messages": [HumanMessage(content=f"User question: {query}")],
+        }
+        thread_id = chat_input.get("thread_id")
+        if thread_id and self._settings.DATABASE_URL:
+            state = await self._invoke_chat_with_memory(inputs, thread_id)
+        else:
+            state = await self._invoke_graph(self._chat_graph, inputs, "investigate_chat")
         tokens_in = self._count_tokens(state.get("messages", []))
         return {
             "summary": state.get("summary", ""),
@@ -87,6 +89,31 @@ class LangGraphReasoner(ReasonerPort):
             "tokens_in": tokens_in,
             "tokens_out": self._count_tokens(state.get("messages", [])),
         }
+
+    async def _invoke_chat_with_memory(self, inputs: dict[str, Any], thread_id: str) -> dict:
+        """Run the chat graph with a Postgres checkpointer for per-user multi-turn memory.
+
+        Each user's Telegram id becomes a LangGraph thread_id, so the graph state
+        (the conversation) is persisted between /ask calls. On any DB failure the
+        stateless graph is used instead — memory degrades, the bot never dies.
+        """
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        try:
+            async with AsyncPostgresSaver.from_conn_string(self._settings.DATABASE_URL) as saver:
+                if not self._chat_memory_setup:
+                    await saver.setup()
+                    self._chat_memory_setup = True
+                graph = build_chat_investigation_graph(self._fast_llm, self._chain_provider, checkpointer=saver)
+                return await self._invoke_graph(
+                    graph,
+                    inputs,
+                    "investigate_chat",
+                    config={"configurable": {"thread_id": thread_id}},
+                )
+        except Exception as exc:
+            log.warning("chat_memory_unavailable", thread_id=thread_id, error=str(exc)[:120])
+            return await self._invoke_graph(self._chat_graph, inputs, "investigate_chat")
 
     async def generate_briefing(self, briefing_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()
