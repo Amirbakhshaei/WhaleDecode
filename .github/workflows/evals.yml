@@ -1,0 +1,43 @@
+name: LangSmith Evaluations
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  evaluate-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LANGCHAIN_TRACING: "true"
+      LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+      LANGCHAIN_PROJECT: pr-evaluations
+      # Required Settings fields (SecretStr without defaults).
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      # Model provider for the judge and the heavy-reasoning LLM.
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry-core
+          pip install -e .
+
+      - name: Push golden dataset
+        # run_evals reads the dataset by name; ensure it exists (ignore "already exists").
+        run: python -m whaledecode.evals.create_dataset || true
+
+      - name: Run evaluations
+        # Strict gate: run_evals exits 1 on any evaluator score below 1.0.
+        run: python -m whaledecode.evals.run_evals

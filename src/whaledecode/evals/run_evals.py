@@ -79,8 +79,23 @@ def build_target(llm: BaseChatModel, provider: ChainProviderPort | None = None):
     return target
 
 
-def run_evals(client: Client | None = None, llm: BaseChatModel | None = None) -> str:
-    """Run the golden dataset against the compiled reasoner, returning the experiment URL."""
+def collect_failures(results) -> list[dict[str, Any]]:
+    """Return every evaluator score below the full-mark threshold (1.0)."""
+    failures = []
+    for row in results:
+        for r in row["evaluation_results"]["results"]:
+            score = r.score
+            if score is not None and score < 1.0:
+                failures.append({"key": r.key, "score": score})
+    return failures
+
+
+def run_evals(client: Client | None = None, llm: BaseChatModel | None = None) -> tuple[str, list[dict[str, Any]]]:
+    """Run the golden dataset against the compiled reasoner.
+
+    Returns the experiment URL and any evaluator scores below the full-mark
+    threshold, so callers can strictly block on a 100% pass.
+    """
     client = client or Client()
     llm = llm or LLMFactory(Settings()).get_heavy_reasoning_llm()
     results = evaluate(
@@ -94,16 +109,21 @@ def run_evals(client: Client | None = None, llm: BaseChatModel | None = None) ->
         experiment_prefix="smc-golden",
     )
     url = results.url
+    failures = collect_failures(results)
     print(f"Experiment URL: {url}")
-    return url
+    if failures:
+        print("Evaluation FAILED — scores below threshold:")
+        for f in failures:
+            print(f"  - {f['key']}: {f['score']}")
+    return url, failures
 
 
 def main() -> None:
-    """CLI entrypoint for running the evals."""
+    """CLI entrypoint for running the evals. Exits non-zero on any sub-100% score."""
     settings = Settings()
     settings.inject_langsmith_env()
-    url = run_evals()
-    sys.exit(0 if url else 1)
+    _, failures = run_evals()
+    sys.exit(1 if failures else 0)
 
 
 if __name__ == "__main__":

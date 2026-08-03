@@ -5,7 +5,12 @@ import pytest
 from langchain_core.messages import AIMessage
 from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.adapters.llm_graph.state.investigation_result import InvestigationResult
-from whaledecode.evals.run_evals import ScriptedChainProvider, build_target, run_evals
+from whaledecode.evals.run_evals import (
+    ScriptedChainProvider,
+    build_target,
+    collect_failures,
+    run_evals,
+)
 
 
 class _FakeStructuredOutput:
@@ -106,6 +111,7 @@ def test_run_evals_applies_both_evaluators(mock_evaluate: MagicMock) -> None:
     client = MagicMock()
     llm = MagicMock()
     mock_evaluate.return_value.url = "https://smith.example/exp/1"
+    mock_evaluate.return_value.__iter__.return_value = []
 
     run_evals(client=client, llm=llm)
 
@@ -120,7 +126,30 @@ def test_run_evals_returns_experiment_url(mock_evaluate: MagicMock) -> None:
     client = MagicMock()
     llm = MagicMock()
     mock_evaluate.return_value.url = "https://smith.example/exp/42"
+    mock_evaluate.return_value.__iter__.return_value = []
 
-    url = run_evals(client=client, llm=llm)
+    url, failures = run_evals(client=client, llm=llm)
 
     assert url == "https://smith.example/exp/42"
+    assert failures == []
+
+
+def _row(eval_key: str, score: float) -> dict:
+    return {
+        "example": MagicMock(inputs={}, outputs={}),
+        "run": MagicMock(error=None),
+        "evaluation_results": {"results": [MagicMock(key=eval_key, score=score)]},
+    }
+
+
+def test_collect_failures_returns_empty_when_all_scores_full() -> None:
+    rows = [_row("formatting", 1.0), _row("smc_soundness", 1.0)]
+    assert collect_failures(rows) == []
+
+
+def test_collect_failures_flags_below_threshold() -> None:
+    rows = [_row("formatting", 1.0), _row("smc_soundness", 0.0)]
+    failures = collect_failures(rows)
+    assert len(failures) == 1
+    assert failures[0]["key"] == "smc_soundness"
+    assert failures[0]["score"] == 0.0
