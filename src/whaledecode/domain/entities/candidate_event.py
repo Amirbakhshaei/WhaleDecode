@@ -17,5 +17,7 @@ class CandidateEvent(BaseModel):
     score: float = 0.0
     dedupe_key: str = ""
     status: str = "NEW"
+    attempt_count: int = 0
     published_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime | None = None

@@ -138,6 +138,78 @@ async def test_process_pending_reverts_to_pending_on_failure(session_factory) ->
         claimed = await uow.candidate_events.get(1)
     assert claimed is not None
     assert claimed.status == "pending"
+    assert claimed.attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_process_pending_dead_letters_after_max_attempts(session_factory) -> None:
+    await _seed_pending(session_factory, "worker:dlq")
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(error=RuntimeError("llm down")),
+        _settings(),
+        bot=FakeBot(),
+        channel_id="-100",
+    )
+
+    await worker.process_pending()
+    await worker.process_pending()
+
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status == "pending"
+    assert claimed.attempt_count == 2
+
+    await worker.process_pending()
+
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status == "dead_letter"
+    assert claimed.attempt_count == 3
+
+
+@pytest.mark.asyncio
+async def test_run_reaps_zombie_events_once_at_startup(session_factory) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+    from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
+
+    await _seed_pending(session_factory, "worker:zombie")
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.claim_next_pending()
+        await uow.candidate_events.set_status(claimed[0].id, "processing")
+        await uow.commit()
+
+    async with session_factory() as session:
+        await session.execute(
+            update(CandidateEventModel)
+            .where(CandidateEventModel.id == 1)
+            .values(updated_at=datetime.now(UTC) - timedelta(minutes=15))
+        )
+        await session.commit()
+
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(error=RuntimeError("llm down")),
+        _settings(),
+        bot=FakeBot(),
+        channel_id="-100",
+    )
+
+    stop = asyncio.Event()
+    task = asyncio.create_task(worker.run(stop))
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    stop.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status != "processing"
 
 
 @pytest.mark.asyncio

@@ -23,6 +23,8 @@ log = structlog.get_logger()
 
 _SPOILER_CODE_RE = re.compile(r"\|\|`([^`\n]+)`\|\|")
 
+MAX_ATTEMPTS = 3
+
 
 def normalize_spoilers(text: str) -> str:
     """telegramify-markdown drops ``||spoiler||`` when it wraps an inline code
@@ -48,7 +50,19 @@ class BackgroundAIWorker:
         self._channel_id = channel_id or settings.CHANNEL_CHAT_ID or settings.TELEGRAM_CHANNEL_ID or ""
 
     async def run(self, stop_event: asyncio.Event | None = None) -> None:
-        """Main loop: never crashes silently, backs off with a sleep on failure."""
+        """Reap stale claims from a previously crashed run, then poll forever.
+
+        Never crashes silently; backs off with a sleep on failure.
+        """
+        try:
+            async with UnitOfWork(self._session_factory) as uow:
+                reaped = await uow.candidate_events.reap_zombie_events()
+                await uow.commit()
+        except Exception as e:
+            log.error("worker_reap_failed", error=str(e), exc_info=True)
+        else:
+            (log.warning if reaped else log.info)("worker_reaped_zombie_events", count=reaped)
+
         while not (stop_event and stop_event.is_set()):
             try:
                 await self.process_pending()
@@ -95,8 +109,10 @@ class BackgroundAIWorker:
         except Exception as e:
             log.error("worker_event_failed", dedupe_key=event.dedupe_key, error=str(e), exc_info=True)
             async with UnitOfWork(self._session_factory) as uow:
-                await uow.candidate_events.set_status(event.id, "pending")
+                next_status = await uow.candidate_events.record_failure(event.id, max_attempts=MAX_ATTEMPTS)
                 await uow.commit()
+            if next_status == "dead_letter":
+                log.warning("worker_event_dead_lettered", dedupe_key=event.dedupe_key)
 
     async def _dispatch(self, event: CandidateEvent, result: dict[str, Any]) -> bool:
         """Send the alert; return True only if a message was actually dispatched."""

@@ -1,6 +1,7 @@
 import json
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,10 +58,47 @@ class CandidateEventRepository:
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars()]
 
-    async def set_status(self, event_id: int, status: str) -> None:
+    async def set_status(self, event_id: int, status: str, *, attempt_count: int | None = None) -> None:
+        values = {"status": status, "updated_at": func.now()}
+        if attempt_count is not None:
+            values["attempt_count"] = attempt_count
         await self._session.execute(
-            update(CandidateEventModel).where(CandidateEventModel.id == event_id).values(status=status)
+            update(CandidateEventModel).where(CandidateEventModel.id == event_id).values(**values)
         )
+
+    async def record_failure(self, event_id: int, *, max_attempts: int = 3) -> str:
+        """Atomically increment ``attempt_count`` and route the row to ``pending``
+        (retry) or ``dead_letter`` (given up). Returns the new status."""
+        next_attempt = CandidateEventModel.attempt_count + 1
+        new_status = case(
+            (next_attempt >= max_attempts, "dead_letter"),
+            else_="pending",
+        )
+        await self._session.execute(
+            update(CandidateEventModel)
+            .where(CandidateEventModel.id == event_id)
+            .values(
+                status=new_status,
+                attempt_count=next_attempt,
+                updated_at=func.now(),
+            )
+        )
+        row = await self._session.execute(
+            select(CandidateEventModel.status).where(CandidateEventModel.id == event_id)
+        )
+        return row.scalar_one()
+
+    async def reap_zombie_events(self, *, minutes: int = 10) -> int:
+        """Reset stale ``processing`` rows back to ``pending`` so a crashed worker's
+        claims are reclaimed. Returns the number of rows reset."""
+        cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+        result = await self._session.execute(
+            update(CandidateEventModel)
+            .where(CandidateEventModel.status == "processing")
+            .where(CandidateEventModel.updated_at < cutoff)
+            .values(status="pending", updated_at=func.now())
+        )
+        return result.rowcount or 0
 
     def _supports_row_lock(self) -> bool:
         bind = getattr(self._session.sync_session, "bind", None)
@@ -175,6 +213,8 @@ class CandidateEventRepository:
             score=model.score,
             dedupe_key=model.dedupe_key,
             status=model.status,
+            attempt_count=model.attempt_count,
             published_at=model.published_at,
             created_at=model.created_at,
+            updated_at=model.updated_at,
         )

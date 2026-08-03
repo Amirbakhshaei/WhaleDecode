@@ -150,3 +150,145 @@ def test_pending_events_statement_locks_skipped_rows_for_postgres() -> None:
 
     plain = str(pending_events_statement(1, for_update=False).compile(dialect=postgresql.dialect()))
     assert "FOR UPDATE" not in plain
+
+
+@pytest.mark.asyncio
+async def test_create_pending_defaults_attempt_count_zero(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:attempts"))
+    await db_session.commit()
+
+    events = await repo.claim_next_pending()
+    assert len(events) == 1
+    assert events[0].attempt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_set_status_updates_attempt_count(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:attempts:set"))
+    await db_session.commit()
+
+    claimed = await repo.claim_next_pending()
+    await repo.set_status(claimed[0].id, "pending", attempt_count=2)
+    await db_session.commit()
+
+    event = await repo.get(claimed[0].id)
+    assert event is not None
+    assert event.attempt_count == 2
+
+
+@pytest.mark.asyncio
+async def test_set_status_stamps_updated_at(db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+    from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:touch"))
+    await db_session.commit()
+    claimed = await repo.claim_next_pending()
+
+    await db_session.execute(
+        update(CandidateEventModel)
+        .where(CandidateEventModel.id == claimed[0].id)
+        .values(updated_at=datetime.now(UTC) - timedelta(minutes=30))
+    )
+    await db_session.commit()
+
+    await repo.set_status(claimed[0].id, "processing")
+    await db_session.commit()
+
+    event = await repo.get(claimed[0].id)
+    assert event is not None
+    assert event.updated_at is not None
+    assert event.updated_at > datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+
+
+@pytest.mark.asyncio
+async def test_record_failure_routes_to_pending_then_dead_letter(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:dlq"))
+    await db_session.commit()
+    claimed = await repo.claim_next_pending()
+
+    status = await repo.record_failure(claimed[0].id, max_attempts=3)
+    await db_session.commit()
+    event = await repo.get(claimed[0].id)
+    assert status == "pending"
+    assert event is not None and event.attempt_count == 1
+
+    status = await repo.record_failure(claimed[0].id, max_attempts=3)
+    await db_session.commit()
+    event = await repo.get(claimed[0].id)
+    assert status == "pending"
+    assert event is not None and event.attempt_count == 2
+
+    status = await repo.record_failure(claimed[0].id, max_attempts=3)
+    await db_session.commit()
+    event = await repo.get(claimed[0].id)
+    assert status == "dead_letter"
+    assert event is not None and event.attempt_count == 3
+
+
+@pytest.mark.asyncio
+async def test_reap_zombie_events_resets_stale_processing(db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+    from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("reap:stale"))
+    await db_session.commit()
+    claimed = await repo.claim_next_pending()
+    await repo.set_status(claimed[0].id, "processing")
+    await db_session.commit()
+
+    await db_session.execute(
+        update(CandidateEventModel)
+        .where(CandidateEventModel.id == claimed[0].id)
+        .values(updated_at=datetime.now(UTC) - timedelta(minutes=15))
+    )
+    await db_session.commit()
+
+    reaped = await repo.reap_zombie_events(minutes=10)
+    await db_session.commit()
+
+    assert reaped == 1
+    row = await db_session.execute(
+        select(CandidateEventModel).where(CandidateEventModel.id == claimed[0].id)
+    )
+    assert row.scalar_one().status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_reap_zombie_events_keeps_fresh_processing(db_session):
+    from sqlalchemy import select
+    from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("reap:fresh"))
+    await db_session.commit()
+    claimed = await repo.claim_next_pending()
+    await repo.set_status(claimed[0].id, "processing")
+    await db_session.commit()
+
+    reaped = await repo.reap_zombie_events(minutes=10)
+    await db_session.commit()
+
+    assert reaped == 0
+    row = await db_session.execute(
+        select(CandidateEventModel).where(CandidateEventModel.id == claimed[0].id)
+    )
+    assert row.scalar_one().status == "processing"

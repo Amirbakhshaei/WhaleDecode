@@ -23,5 +23,9 @@ class CandidateEventModel(Base):
     score: Mapped[float] = mapped_column(Float, default=0.0)
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="NEW")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
