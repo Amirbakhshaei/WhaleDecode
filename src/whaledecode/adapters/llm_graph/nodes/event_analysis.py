@@ -9,6 +9,8 @@ SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given an on-chain 
 3. Call on-chain tools to gather more context if needed.
 4. Output your analysis concisely.
 
+You operate under strict rate limits. DO NOT use tools more than twice per analysis. Base your SMC thesis on the provided blockchain event if tools fail.
+
 # OUTPUT FORMAT (STRICT)
 You MUST return the `summary` field formatted exactly like this:
 

@@ -30,6 +30,7 @@ langgraph-checkpoint-postgres = ">=2.0"
 langsmith = ">=0.2.0"
 apscheduler = "^3.11.3"
 aiolimiter = "^1.2.1"
+cachetools = "^6.0"
 python-telegram-bot = "^22.8"
 telegramify-markdown = "^1.2.0"
 

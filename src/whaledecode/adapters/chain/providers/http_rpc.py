@@ -1,10 +1,11 @@
-import sys
+import asyncio
 import time
 from typing import Any
 
 import httpx
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential
+from aiolimiter import AsyncLimiter
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
@@ -13,6 +14,12 @@ DEFAULT_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json",
 }
+
+# Hard ceiling on outbound RPC traffic: 15 requests per 60 seconds across the
+# whole process. Every worker shares this one limiter, so bursts are impossible.
+RATE_LIMIT_MAX_RATE = 15
+RATE_LIMIT_PERIOD_SECONDS = 60
+RATE_LIMIT_WAIT_SECONDS = 5
 
 CHAIN_ALIASES: dict[str, str] = {
     "ETH": "ETH",
@@ -29,11 +36,17 @@ ERC20_METADATA_ABI = {
 }
 
 
+class RateLimitError(Exception):
+    """Raised when the shared rate limiter cannot be acquired in time."""
+
+
 class HttpRpcProvider(ChainProviderPort):
     def __init__(self, chain_urls: dict[str, str], timeout: int = 30) -> None:
         self._urls = {chain.upper(): url for chain, url in chain_urls.items()}
         self._client = httpx.AsyncClient(timeout=timeout, headers=DEFAULT_HEADERS)
         self._timeout = timeout
+        self._limiter = AsyncLimiter(max_rate=RATE_LIMIT_MAX_RATE, time_period=RATE_LIMIT_PERIOD_SECONDS)
+        self._rate_limit_wait = RATE_LIMIT_WAIT_SECONDS
         self._log = structlog.get_logger()
 
     def _url_for_chain(self, chain: str) -> str:
@@ -55,27 +68,29 @@ class HttpRpcProvider(ChainProviderPort):
         )
         raise ValueError(f"RPC {reason} from {chain} (status {resp.status_code}): {body}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        retry=retry_if_not_exception_type(RateLimitError),
+    )
     async def rpc_call(self, method: str, params: list[Any] | None = None, chain: str = "ETH") -> Any:
         url = self._url_for_chain(chain)
         payload = {"jsonrpc": "2.0", "method": method, "params": params or [], "id": int(time.time())}
         try:
-            resp = await self._client.post(url, json=payload)
-            if resp.status_code != 200:
-                self._raise_with_body(chain, method, resp, "non-200 response")
-            try:
-                data = resp.json()
-            except ValueError:
-                self._raise_with_body(chain, method, resp, "non-JSON response")
-            if "error" in data:
-                raise ValueError(f"RPC error on {chain}: {data['error']}")
-            return data.get("result")
-        except Exception as e:
-            import traceback
-
-            self._log.error("rpc_call_failed", chain=chain, method=method, error=str(e))
-            traceback.print_exc(file=sys.stdout)
-            raise
+            await asyncio.wait_for(self._limiter.acquire(), timeout=self._rate_limit_wait)
+        except TimeoutError as e:
+            self._log.warning("rpc_rate_limited", chain=chain, method=method)
+            raise RateLimitError(f"Rate limit reached on {chain} for {method}") from e
+        resp = await self._client.post(url, json=payload)
+        if resp.status_code != 200:
+            self._raise_with_body(chain, method, resp, "non-200 response")
+        try:
+            data = resp.json()
+        except ValueError:
+            self._raise_with_body(chain, method, resp, "non-JSON response")
+        if "error" in data:
+            raise ValueError(f"RPC error on {chain}: {data['error']}")
+        return data.get("result")
 
     async def get_logs(
         self, chain: str, addresses: list[str], from_block: int, to_block: int, topics: list[str] | None = None

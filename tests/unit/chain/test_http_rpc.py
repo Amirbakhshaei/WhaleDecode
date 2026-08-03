@@ -2,7 +2,8 @@ import json
 
 import httpx
 import pytest
-from whaledecode.adapters.chain.providers.http_rpc import HttpRpcProvider
+from aiolimiter import AsyncLimiter
+from whaledecode.adapters.chain.providers.http_rpc import HttpRpcProvider, RateLimitError
 
 
 def _provider(handler: httpx.MockTransport) -> HttpRpcProvider:
@@ -63,3 +64,30 @@ class TestHttpRpcProvider:
         assert params["address"] == ["0xabc", "0xdef"]
         assert int(params["fromBlock"], 16) == 1
         assert int(params["toBlock"], 16) == 2
+
+    async def test_rpc_call_waits_for_limiter_capacity(self) -> None:
+        acquired = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            acquired.append("http")
+            return httpx.Response(200, json={"jsonrpc": "2.0", "result": "0x1"})
+
+        p = _provider(httpx.MockTransport(handler))
+        p._limiter = AsyncLimiter(max_rate=1000, time_period=60)
+
+        await p.rpc_call.__wrapped__(p, "eth_blockNumber")
+        await p.rpc_call.__wrapped__(p, "eth_blockNumber")
+
+        assert len(acquired) == 2
+
+    async def test_rate_limit_wait_times_out_raises_rate_limit_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "result": "0x1"})
+
+        p = _provider(httpx.MockTransport(handler))
+        p._limiter = AsyncLimiter(max_rate=1, time_period=60)
+        await p._limiter.acquire()  # exhaust the only token
+        p._rate_limit_wait = 0.05
+
+        with pytest.raises(RateLimitError):
+            await p.rpc_call.__wrapped__(p, "eth_blockNumber")

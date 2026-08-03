@@ -1,39 +1,76 @@
 from typing import Any
 
+from cachetools import TTLCache
 from langchain_core.tools import tool
 
+from whaledecode.adapters.chain.providers.http_rpc import RateLimitError
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
+
+CACHE_SIZE = 1000
+CACHE_TTL_SECONDS = 300
+
+RATE_LIMIT_MSG = "Rate limit reached. Proceed with existing context."
 
 
 def create_onchain_tools(provider: ChainProviderPort) -> list:
     # Bind the provider via closures so each graph gets its own tool instances.
+    # Defensive caching: dedupe identical queries within TTL so we never burn
+    # RPM on the same address twice. Only successful results are cached —
+    # errors pass through so a transient RPC failure isn't frozen for 5 min.
+    cache: TTLCache[tuple, str] = TTLCache(maxsize=CACHE_SIZE, ttl=CACHE_TTL_SECONDS)
+
+    def _cache_key(tool_name: str, kwargs: dict) -> tuple:
+        args = (kwargs.get("address") or kwargs.get("token_address") or kwargs.get("tx_hash"), kwargs.get("chain", "ETH"))
+        return (tool_name, *args)
+
     async def get_wallet_info(address: str, chain: str = "ETH") -> str:
         """Get basic info about a wallet: ETH balance and total transaction count."""
+        key = _cache_key("get_wallet_info", {"address": address, "chain": chain})
+        if key in cache:
+            return cache[key]
         try:
             balance = await provider.get_balance(chain, address)
             tx_count = await provider.get_transaction_count(chain, address)
-            return f"Wallet {address} on {chain}: balance={_wei_to_eth(balance)} ETH, tx_count={tx_count}"
+            result = f"Wallet {address} on {chain}: balance={_wei_to_eth(balance)} ETH, tx_count={tx_count}"
+        except RateLimitError:
+            return RATE_LIMIT_MSG
         except Exception as exc:
             return f"ERROR: could not fetch wallet info for {address} on {chain}: {exc}"
+        cache[key] = result
+        return result
 
     async def get_token_info(token_address: str, chain: str = "ETH") -> str:
         """Get token metadata: name, symbol, decimals."""
+        key = _cache_key("get_token_info", {"token_address": token_address, "chain": chain})
+        if key in cache:
+            return cache[key]
         try:
             meta = await provider.get_token_metadata(chain, token_address)
-            return (
+            result = (
                 f"Token {token_address} on {chain}: name={meta.get('name')}, "
                 f"symbol={meta.get('symbol')}, decimals={meta.get('decimals')}"
             )
+        except RateLimitError:
+            return RATE_LIMIT_MSG
         except Exception as exc:
             return f"ERROR: could not fetch token info for {token_address} on {chain}: {exc}"
+        cache[key] = result
+        return result
 
     async def trace_transaction(tx_hash: str, chain: str = "ETH") -> str:
         """Trace a transaction to see internal calls and value flow."""
+        key = _cache_key("trace_transaction", {"tx_hash": tx_hash, "chain": chain})
+        if key in cache:
+            return cache[key]
         try:
             trace = await provider.trace_call(chain, tx_hash)
-            return f"Tx {tx_hash} on {chain}: {_format_trace(trace)}"
+            result = f"Tx {tx_hash} on {chain}: {_format_trace(trace)}"
+        except RateLimitError:
+            return RATE_LIMIT_MSG
         except Exception as exc:
             return f"ERROR: could not trace {tx_hash} on {chain}: {exc}"
+        cache[key] = result
+        return result
 
     return [
         tool(get_wallet_info),
