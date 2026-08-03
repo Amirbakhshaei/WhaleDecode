@@ -12,23 +12,24 @@ SYSTEM_PROMPT = """You are a blockchain intelligence analyst. Given the analysis
 - briefing_markdown: the final Telegram briefing, MUST strictly follow the EXACT template below
 - disclaimer: standard crypto disclaimer, extended with a HIGH RISK warning if risk_score > 0.95
 
-briefing_markdown template (fill placeholders with event/tool data ONLY, backticks for hashes/addresses so they are tap-to-copy, '>' for the Intelligence blockquote):
-✦ *[Event Type]*
-`$[USD Value]` · `[Amount] [Token]` · [Chain]
-Risk Score: [Score]%
+briefing_markdown template (fill placeholders with event/tool data ONLY, wrap every hash/address in ||...|| spoiler tags so they are hidden, '>' for the Intelligence blockquote):
+🫧 **[Event Type]**
+💎 **Value:** `$[USD Value]` [Token]
+🌐 **Chain:** [Chain]
+🎯 **Risk:** [Score]%
 
-> **Intelligence**
+> **🧠 SMC Intelligence**
 > [Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance (SMC). No filler words.]
 
-**Trace**
-Tx: `[tx_hash]`
-From: `[from_address]`
-To: `[to_address]`
+**Trace Metrics**
+Tx: ||`[tx_hash]`||
+From: ||`[from_address]`||
+To: ||`[to_address]`||
 
 FORMATTING RULES:
-1. Combine the factual summary and SMC thesis into a SINGLE, dense 2-sentence paragraph.
-2. Format numbers with commas (e.g., $150,000).
-3. If data is missing, use `[ N/A ]`.
+1. Combine the SMC thesis into a SINGLE, dense paragraph.
+2. Format numbers with commas.
+3. Enclose all transaction hashes and addresses inside Telegram spoiler tags exactly like this: ||`0x...`|| so they are hidden.
 4. Use the `>` character at the beginning of the line to create a blockquote for the Intelligence section.
 
 DATA GROUNDING:

@@ -125,6 +125,15 @@ class TestEscapeMarkdownV2:
         assert "\\(" in out and "\\)" in out
         assert "\\[" in out and "\\]" in out
 
+    def test_preserves_spoiler_tags(self):
+        out = escape_markdown_v2("Tx: ||`0xabc-123`|| end.")
+        assert "||`0xabc-123`||" in out
+        assert "\\|" not in out
+
+    def test_escapes_lone_pipe(self):
+        out = escape_markdown_v2("a | b")
+        assert "a \\| b" in out
+
     def test_roundtrip_template(self):
         tpl = (
             "✦ *High Value Transfer*\n"

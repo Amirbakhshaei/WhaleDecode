@@ -16,15 +16,21 @@ def _strip_md(text: str) -> str:
 
 def escape_markdown_v2(text: str) -> str:
     """Escape Telegram MarkdownV2 special chars, preserving code spans,
-    blockquote prefixes ('>'), and bold/italic markers ('*')."""
+    blockquote prefixes ('>'), bold/italic markers ('*'), and ||spoiler|| tags."""
     out: list[str] = []
     in_code = False
-    for i, ch in enumerate(text):
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
         if ch == "`":
             in_code = not in_code
             out.append(ch)
         elif in_code:
             out.append(ch)
+        elif ch == "|" and i + 1 < n and text[i + 1] == "|":
+            out.append("||")
+            i += 1
         elif ch == ">":
             line_start = i == 0 or text[i - 1] == "\n"
             out.append(">" if line_start else "\\>")
@@ -34,6 +40,7 @@ def escape_markdown_v2(text: str) -> str:
             out.append("\\" + ch)
         else:
             out.append(ch)
+        i += 1
     return "".join(out)
 
 

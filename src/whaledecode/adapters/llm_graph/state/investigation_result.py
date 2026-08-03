@@ -21,21 +21,21 @@ class InvestigationResult(BaseModel):
     )
     briefing_markdown: str = Field(
         description=(
-            "The final Telegram briefing. YOU MUST STRICTLY USE THIS EXACT MARKDOWN TEMPLATE.\n"
+            "The final briefing in standard Markdown.\n"
             "Instructions:\n"
-            "1. Combine the factual summary and SMC thesis into a SINGLE, dense 2-sentence paragraph.\n"
-            "2. Format numbers with commas (e.g., $150,000).\n"
-            "3. If data is missing, use `[ N/A ]`.\n"
-            "4. Use the `>` character at the beginning of the line to create a blockquote for the Intelligence section.\n\n"
-            "✦ *[Event Type]*\n"
-            "`$[USD Value]` · `[Amount] [Token]` · [Chain]\n"
-            "Risk Score: [Score]%\n\n"
-            "> **Intelligence**\n"
-            "> [Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance (SMC). No filler words.]\n\n"
-            "**Trace**\n"
-            "Tx: `[tx_hash]`\n"
-            "From: `[from_address]`\n"
-            "To: `[to_address]`"
+            "1. Combine the SMC thesis into a SINGLE, dense paragraph.\n"
+            "2. Format numbers with commas.\n"
+            "3. Enclose all transaction hashes and addresses inside Telegram spoiler tags exactly like this: ||`0x...`|| so they are hidden.\n\n"
+            "🫧 **[Event Type]**\n"
+            "💎 **Value:** `$[USD Value]` [Token]\n"
+            "🌐 **Chain:** [Chain]\n"
+            "🎯 **Risk:** [Score]%\n\n"
+            "> **🧠 SMC Intelligence**\n"
+            "> [Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance. No filler words.]\n\n"
+            "**Trace Metrics**\n"
+            "Tx: ||`[tx_hash]`||\n"
+            "From: ||`[from_address]`||\n"
+            "To: ||`[to_address]`||"
         )
     )
     disclaimer: str = Field(
