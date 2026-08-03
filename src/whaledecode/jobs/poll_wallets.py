@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from whaledecode.adapters.chain.factory import create_chain_provider
 from whaledecode.adapters.chain.normalizer import normalize_log
+from whaledecode.application.fetcher import bounded_from_block, max_block_range_for
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.candidate_event import CandidateEvent
@@ -10,21 +11,6 @@ from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.value_objects.hash import Hash
 
 log = structlog.get_logger()
-
-
-DEFAULT_MAX_GET_LOGS_BLOCK_RANGE = 5
-
-
-def bounded_from_block(from_block: int, to_block: int, max_block_range: int) -> int:
-    """Clamp from_block so the requested range never exceeds max_block_range."""
-    if to_block - from_block > max_block_range:
-        return to_block - max_block_range
-    return from_block
-
-
-def max_block_range_for(chain: str, ranges: dict[str, int]) -> int:
-    """Per-chain eth_getLogs range limit, falling back to a safe default."""
-    return ranges.get(chain, DEFAULT_MAX_GET_LOGS_BLOCK_RANGE)
 
 
 async def poll_wallets(

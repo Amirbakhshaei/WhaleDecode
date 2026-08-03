@@ -35,9 +35,9 @@ def test_escape_roundtrip_premium_briefing() -> None:
 
 
 def test_cta_keyboard_deep_links() -> None:
-    from whaledecode.jobs.publish_channel import _build_keyboard
+    from whaledecode.adapters.telegram.keyboards import build_keyboard
 
-    kb = _build_keyboard("0xabc123")
+    kb = build_keyboard("0xabc123")
     rows = kb.inline_keyboard
     assert rows[0][0].url == "https://t.me/whaledecodebot?start=0xabc123"
     assert rows[1][0].url == "https://etherscan.io/tx/0xabc123"

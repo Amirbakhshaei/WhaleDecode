@@ -1,4 +1,5 @@
-from whaledecode.jobs.poll_wallets import _to_candidate_event, bounded_from_block, max_block_range_for
+from whaledecode.application.fetcher import bounded_from_block, max_block_range_for
+from whaledecode.jobs.poll_wallets import _to_candidate_event
 
 MAX_RANGES = {"Ethereum": 5, "Base": 30, "Arbitrum": 100}
 

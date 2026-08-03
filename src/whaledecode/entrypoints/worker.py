@@ -11,7 +11,9 @@ from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
+from whaledecode.application.fetcher import LiveBlockchainFetcher
 from whaledecode.application.services.investigation import InvestigationService
+from whaledecode.application.worker import BackgroundAIWorker
 from whaledecode.config.settings import Settings
 
 log = structlog.get_logger()
@@ -70,29 +72,21 @@ async def run_worker(settings: Settings) -> None:
 
     scheduler.start()
 
-    poll_task = asyncio.create_task(_poll_loop(session_factory, settings, investigation_service))
+    fetcher = LiveBlockchainFetcher(session_factory, settings)
+    worker = BackgroundAIWorker(session_factory, investigation_service, settings, bot=bot)
+
+    fetcher_task = asyncio.create_task(fetcher.run(stop_event))
+    worker_task = asyncio.create_task(worker.run(stop_event))
     alert_task = asyncio.create_task(_alert_loop(session_factory, bot, settings))
-    channel_task = asyncio.create_task(_channel_loop(session_factory, bot, settings))
 
     await stop_event.wait()
 
-    poll_task.cancel()
+    fetcher_task.cancel()
+    worker_task.cancel()
     alert_task.cancel()
-    channel_task.cancel()
     scheduler.shutdown(wait=False)
     await bot.session.close()
     log.info("worker_stopped")
-
-
-async def _poll_loop(session_factory, settings: Settings, investigation_service: InvestigationService) -> None:
-    from whaledecode.jobs.poll_wallets import poll_wallets
-
-    while True:
-        try:
-            await poll_wallets(session_factory, settings, investigation_service)
-        except Exception as e:
-            log.error("poll_loop_error", error=str(e))
-        await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
 
 
 async def _alert_loop(session_factory, bot: Bot, settings: Settings) -> None:
@@ -105,17 +99,6 @@ async def _alert_loop(session_factory, bot: Bot, settings: Settings) -> None:
         except Exception as e:
             log.error("alert_loop_error", error=str(e))
         await asyncio.sleep(interval)
-
-
-async def _channel_loop(session_factory, bot: Bot, settings: Settings) -> None:
-    from whaledecode.jobs.publish_channel import publish_channel
-
-    while True:
-        try:
-            await publish_channel(session_factory, bot, settings)
-        except Exception as e:
-            log.error("channel_loop_error", error=str(e))
-        await asyncio.sleep(60)
 
 
 async def _run_briefing(session_factory, bot: Bot, settings: Settings) -> None:

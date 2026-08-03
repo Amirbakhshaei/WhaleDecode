@@ -1,24 +1,16 @@
 import structlog
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+from aiogram.types import LinkPreviewOptions
 
 from whaledecode.adapters.db.session import async_sessionmaker
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
     escape_markdown_v2,
 )
+from whaledecode.adapters.telegram.keyboards import build_keyboard
 from whaledecode.config.settings import Settings
 
 log = structlog.get_logger()
-
-
-def _build_keyboard(tx_hash: str) -> InlineKeyboardMarkup:
-    deep_link = f"https://t.me/whaledecodebot?start={tx_hash}" if tx_hash else "https://t.me/whaledecodebot"
-    explorer = f"https://etherscan.io/tx/{tx_hash}" if tx_hash else "https://etherscan.io"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✦ Deep Dive with AI", url=deep_link)],
-        [InlineKeyboardButton(text="⚲ View on Explorer", url=explorer)],
-    ])
 
 
 async def publish_channel(session_factory: async_sessionmaker, bot: Bot, settings: Settings) -> None:
@@ -42,7 +34,7 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
             event_data = event.model_dump()
             msg = escape_markdown_v2(str(report.get("summary", "")))
             tx_hash = event_data.get("tx_hash", "")
-            keyboard = _build_keyboard(tx_hash)
+            keyboard = build_keyboard(tx_hash)
             try:
                 await bot.send_message(
                     chat_id=channel_id,

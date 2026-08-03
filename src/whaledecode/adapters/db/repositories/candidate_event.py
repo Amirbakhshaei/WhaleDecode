@@ -1,6 +1,8 @@
 import json
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
@@ -8,9 +10,68 @@ from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.value_objects.hash import Hash
 
 
+def pending_events_statement(limit: int = 1, *, for_update: bool = True):
+    """Select the oldest pending candidate events, optionally row-locking for claim.
+
+    `FOR UPDATE SKIP LOCKED` makes concurrent workers claim disjoint rows instead
+    of racing on the same one.
+    """
+    stmt = (
+        select(CandidateEventModel)
+        .where(CandidateEventModel.status == "pending")
+        .order_by(CandidateEventModel.created_at.asc(), CandidateEventModel.id.asc())
+        .limit(limit)
+    )
+    if for_update:
+        stmt = stmt.with_for_update(skip_locked=True)
+    return stmt
+
+
 class CandidateEventRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def create_pending(self, data: dict) -> None:
+        """Insert a candidate event with status='pending'; no-op on duplicate dedupe_key."""
+        values = {
+            "wallet_id": data["wallet_id"],
+            "chain": data["chain"],
+            "tx_hash": data["tx_hash"],
+            "log_index": data["log_index"],
+            "block_number": data["block_number"],
+            "event_type": data["event_type"],
+            "raw_json": json.dumps(data.get("raw_json", {})),
+            "score": data.get("score", 0.0),
+            "dedupe_key": data["dedupe_key"],
+            "status": "pending",
+        }
+        await self._session.execute(
+            self._conflict_ignore_insert()
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["dedupe_key"])
+        )
+
+    async def claim_next_pending(self, limit: int = 1) -> list[CandidateEvent]:
+        """Atomically claim the oldest pending rows (FOR UPDATE SKIP LOCKED on PostgreSQL)."""
+        stmt = pending_events_statement(limit, for_update=self._supports_row_lock())
+        result = await self._session.execute(stmt)
+        return [self._to_domain(row) for row in result.scalars()]
+
+    async def set_status(self, event_id: int, status: str) -> None:
+        await self._session.execute(
+            update(CandidateEventModel).where(CandidateEventModel.id == event_id).values(status=status)
+        )
+
+    def _supports_row_lock(self) -> bool:
+        bind = getattr(self._session.sync_session, "bind", None)
+        return bind is not None and bind.dialect.name == "postgresql"
+
+    def _conflict_ignore_insert(self):
+        # SQLite and PostgreSQL both support ON CONFLICT DO NOTHING, but only via
+        # their dialect-specific Insert construct in SQLAlchemy 2.0.
+        if self._supports_row_lock():
+            return postgres_insert(CandidateEventModel)
+        return sqlite_insert(CandidateEventModel)
 
     async def create_raw(self, data: dict) -> None:
         model = CandidateEventModel(

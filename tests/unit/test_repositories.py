@@ -1,5 +1,6 @@
 import pytest
-
+from sqlalchemy.dialects import postgresql
+from whaledecode.adapters.db.repositories.candidate_event import pending_events_statement
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.entities.user import User
 from whaledecode.domain.value_objects.chain import Chain
@@ -63,3 +64,89 @@ async def test_candidate_event_dedupe(db_session):
     dup = await repo.get_by_dedupe_key("test:dedupe:1")
     assert dup is not None
     assert dup.dedupe_key == "test:dedupe:1"
+
+
+def _pending_data(dedupe_key: str, block_number: int = 100) -> dict:
+    return {
+        "wallet_id": 1,
+        "chain": "ETH",
+        "tx_hash": "0x" + "a" * 64,
+        "log_index": 0,
+        "block_number": block_number,
+        "event_type": "TRANSFER",
+        "raw_json": {"value_usd": 100.0},
+        "score": 80.0,
+        "dedupe_key": dedupe_key,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_pending_inserts_pending_status(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:1"))
+    await db_session.commit()
+
+    events = await repo.claim_next_pending()
+    assert len(events) == 1
+    assert events[0].status == "pending"
+    assert events[0].score == 80.0
+    assert events[0].dedupe_key == "pending:1"
+
+
+@pytest.mark.asyncio
+async def test_create_pending_idempotent_on_dedupe(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:dup"))
+    await db_session.commit()
+    await repo.create_pending(_pending_data("pending:dup"))
+    await db_session.commit()
+
+    events = await repo.claim_next_pending(limit=10)
+    assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_next_pending_oldest_first(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    for i in range(3):
+        await repo.create_pending(_pending_data(f"pending:seq:{i}", block_number=100 + i))
+    await db_session.commit()
+
+    first = await repo.claim_next_pending(limit=1)
+    assert first[0].dedupe_key == "pending:seq:0"
+
+    all_events = await repo.claim_next_pending(limit=10)
+    assert [e.dedupe_key for e in all_events] == ["pending:seq:0", "pending:seq:1", "pending:seq:2"]
+
+
+@pytest.mark.asyncio
+async def test_set_status_updates_pending_row(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:status"))
+    await db_session.commit()
+
+    claimed = await repo.claim_next_pending()
+    await repo.set_status(claimed[0].id, "processing")
+    await db_session.commit()
+
+    events = await repo.claim_next_pending()
+    assert events == []
+
+
+def test_pending_events_statement_locks_skipped_rows_for_postgres() -> None:
+    sql = str(pending_events_statement(1, for_update=True).compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE SKIP LOCKED" in sql
+    assert 'candidate_events.status = %(status_1)s' in sql
+    assert "ORDER BY candidate_events.created_at ASC" in sql
+    assert " LIMIT %(param_1)s" in sql
+
+    plain = str(pending_events_statement(1, for_update=False).compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" not in plain
