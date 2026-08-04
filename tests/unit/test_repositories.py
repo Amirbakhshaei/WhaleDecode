@@ -240,6 +240,24 @@ async def test_record_failure_routes_to_pending_then_dead_letter(db_session):
 
 
 @pytest.mark.asyncio
+async def test_claim_next_pending_excludes_dead_letter_events(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("dlq:poison"))
+    await db_session.commit()
+    claimed = await repo.claim_next_pending()
+    await repo.record_failure(claimed[0].id, max_attempts=1)
+    await db_session.commit()
+
+    await repo.create_pending(_pending_data("dlq:healthy"))
+    await db_session.commit()
+
+    polled = await repo.claim_next_pending(limit=10)
+    assert [e.dedupe_key for e in polled] == ["dlq:healthy"]
+
+
+@pytest.mark.asyncio
 async def test_reap_zombie_events_resets_stale_processing(db_session):
     from datetime import UTC, datetime, timedelta
 

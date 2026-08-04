@@ -85,6 +85,7 @@ async def run_worker(settings: Settings) -> None:
     worker_task.cancel()
     alert_task.cancel()
     scheduler.shutdown(wait=False)
+    await reasoner.close()
     await bot.session.close()
     log.info("worker_stopped")
 

@@ -61,6 +61,30 @@ async def test_memory_path_invokes_graph_with_thread_config(mock_build) -> None:
 
 @patch("whaledecode.adapters.llm_graph.reasoner.build_chat_investigation_graph")
 @pytest.mark.asyncio
+async def test_memory_saver_is_reused_across_calls(mock_build) -> None:
+    graph = AsyncMock()
+    graph.ainvoke.return_value = _state()
+    mock_build.return_value = graph
+
+    cm = AsyncMock()
+    saver = AsyncMock()
+    cm.__aenter__.return_value = saver
+    reasoner = _make_reasoner(_settings("postgresql://u:p@h:5432/db"))
+
+    with patch(
+        "langgraph.checkpoint.postgres.aio.AsyncPostgresSaver.from_conn_string",
+        new=MagicMock(return_value=cm),
+    ) as from_conn:
+        await reasoner.investigate_chat({"message": "hi", "thread_id": "42"})
+        await reasoner.investigate_chat({"message": "again", "thread_id": "43"})
+
+    assert from_conn.call_count == 1
+    assert graph.ainvoke.call_count == 2
+    assert graph.ainvoke.call_args.kwargs["config"] == {"configurable": {"thread_id": "43"}}
+
+
+@patch("whaledecode.adapters.llm_graph.reasoner.build_chat_investigation_graph")
+@pytest.mark.asyncio
 async def test_memory_path_falls_back_to_stateless_graph_on_db_error(mock_build) -> None:
     stateless = AsyncMock()
     stateless.ainvoke.return_value = _state()

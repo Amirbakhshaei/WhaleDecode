@@ -61,6 +61,7 @@ async def run_bot(settings: Settings) -> None:
 
     @dp.shutdown()
     async def on_shutdown():
+        await reasoner.close()
         log.info("bot_stopped")
 
     log.info("bot_polling_start")

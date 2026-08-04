@@ -6,6 +6,7 @@ Decoupled from the fetcher: it only reads the database and talks to Telegram.
 """
 import asyncio
 import re
+import traceback
 from typing import Any
 
 import structlog
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
+from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 
 log = structlog.get_logger()
@@ -110,9 +112,31 @@ class BackgroundAIWorker:
             log.error("worker_event_failed", dedupe_key=event.dedupe_key, error=str(e), exc_info=True)
             async with UnitOfWork(self._session_factory) as uow:
                 next_status = await uow.candidate_events.record_failure(event.id, max_attempts=MAX_ATTEMPTS)
+                if next_status == "dead_letter":
+                    await uow.admin_audit_logs.create(self._dead_letter_audit(event, e))
                 await uow.commit()
             if next_status == "dead_letter":
                 log.warning("worker_event_dead_lettered", dedupe_key=event.dedupe_key)
+
+    @staticmethod
+    def _dead_letter_audit(event: CandidateEvent, exc: Exception) -> AdminAuditLog:
+        """Capture the toxic event payload and exception trace for forensics."""
+        return AdminAuditLog(
+            admin_id=0,
+            action="candidate_event_dead_lettered",
+            target_type="candidate_event",
+            target_id=event.id,
+            diff_json={
+                "dedupe_key": event.dedupe_key,
+                "tx_hash": str(event.tx_hash),
+                "chain": event.chain,
+                "event_type": event.event_type,
+                "raw_json": event.raw_json,
+                "attempt_count": event.attempt_count,
+                "error": f"{type(exc).__name__}: {exc}",
+                "trace": traceback.format_exc(),
+            },
+        )
 
     async def _dispatch(self, event: CandidateEvent, result: dict[str, Any]) -> bool:
         """Send the alert; return True only if a message was actually dispatched."""

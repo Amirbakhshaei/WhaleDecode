@@ -24,7 +24,8 @@ class LangGraphReasoner(ReasonerPort):
         self._chain_provider = create_chain_provider(settings)
         self._investigation_graph = build_investigation_graph(self._heavy_llm, self._chain_provider)
         self._chat_graph = build_chat_investigation_graph(self._fast_llm, self._chain_provider)
-        self._chat_memory_setup = False
+        self._memory_cm: Any | None = None
+        self._memory_graph: Any | None = None
 
     async def _invoke_graph(self, graph, inputs: dict[str, Any], label: str, config: dict | None = None) -> dict:
         """Invoke a LangGraph graph with one retry on transient errors."""
@@ -94,26 +95,54 @@ class LangGraphReasoner(ReasonerPort):
         """Run the chat graph with a Postgres checkpointer for per-user multi-turn memory.
 
         Each user's Telegram id becomes a LangGraph thread_id, so the graph state
-        (the conversation) is persisted between /ask calls. On any DB failure the
-        stateless graph is used instead — memory degrades, the bot never dies.
+        (the conversation) is persisted between /ask calls. The checkpointer
+        connection is opened once and reused across calls; on any DB failure it is
+        torn down and the stateless graph is used instead — memory degrades, the bot
+        never dies, and no pool is opened per request.
         """
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
         try:
-            async with AsyncPostgresSaver.from_conn_string(self._settings.DATABASE_URL) as saver:
-                if not self._chat_memory_setup:
-                    await saver.setup()
-                    self._chat_memory_setup = True
-                graph = build_chat_investigation_graph(self._fast_llm, self._chain_provider, checkpointer=saver)
-                return await self._invoke_graph(
-                    graph,
-                    inputs,
-                    "investigate_chat",
-                    config={"configurable": {"thread_id": thread_id}},
-                )
+            return await self._invoke_graph(
+                await self._get_memory_graph(),
+                inputs,
+                "investigate_chat",
+                config={"configurable": {"thread_id": thread_id}},
+            )
         except Exception as exc:
             log.warning("chat_memory_unavailable", thread_id=thread_id, error=str(exc)[:120])
+            await self._reset_memory()
             return await self._invoke_graph(self._chat_graph, inputs, "investigate_chat")
+
+    async def _get_memory_graph(self):
+        """Return the chat graph wired to a shared checkpointer, opening it on first use.
+
+        ``from_conn_string`` is an async context manager, so the saver is entered
+        here and kept alive (not exited) until ``close`` or a failure resets it.
+        """
+        if self._memory_graph is not None:
+            return self._memory_graph
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        cm = AsyncPostgresSaver.from_conn_string(self._settings.DATABASE_URL)
+        saver = await cm.__aenter__()
+        try:
+            await saver.setup()
+        except BaseException:
+            await cm.__aexit__(None, None, None)
+            raise
+        self._memory_cm = cm
+        self._memory_graph = build_chat_investigation_graph(self._fast_llm, self._chain_provider, checkpointer=saver)
+        return self._memory_graph
+
+    async def _reset_memory(self) -> None:
+        """Drop the shared checkpointer so the next call retries with a fresh connection."""
+        if self._memory_cm is not None:
+            await self._memory_cm.__aexit__(None, None, None)
+            self._memory_cm = None
+            self._memory_graph = None
+
+    async def close(self) -> None:
+        """Release the shared chat-memory checkpointer connection."""
+        await self._reset_memory()
 
     async def generate_briefing(self, briefing_input: dict[str, Any]) -> dict[str, Any]:
         start = time.monotonic()

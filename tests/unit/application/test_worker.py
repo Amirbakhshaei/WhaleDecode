@@ -171,6 +171,38 @@ async def test_process_pending_dead_letters_after_max_attempts(session_factory) 
 
 
 @pytest.mark.asyncio
+async def test_process_pending_dead_letter_writes_audit_log(session_factory) -> None:
+    import json
+
+    from sqlalchemy import select
+    from whaledecode.adapters.db.models.admin_audit_log import AdminAuditLogModel
+
+    await _seed_pending(session_factory, "worker:dlqaudit")
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(error=RuntimeError("llm down")),
+        _settings(),
+        bot=FakeBot(),
+        channel_id="-100",
+    )
+
+    for _ in range(3):
+        await worker.process_pending()
+
+    async with session_factory() as session:
+        logs = (await session.execute(select(AdminAuditLogModel))).scalars().all()
+    assert len(logs) == 1
+    audit = logs[0]
+    assert audit.action == "candidate_event_dead_lettered"
+    assert audit.target_type == "candidate_event"
+    assert audit.target_id == 1
+    diff = json.loads(audit.diff_json)
+    assert diff["dedupe_key"] == "worker:dlqaudit"
+    assert "RuntimeError: llm down" in diff["error"]
+    assert "Traceback" in diff["trace"]
+
+
+@pytest.mark.asyncio
 async def test_run_reaps_zombie_events_once_at_startup(session_factory) -> None:
     from datetime import UTC, datetime, timedelta
 
