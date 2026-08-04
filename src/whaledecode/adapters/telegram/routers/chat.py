@@ -6,7 +6,12 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from whaledecode.adapters.telegram.user_access import get_or_create_user
+from whaledecode.application.services.user_service import (
+    UPGRADE_CTA_MESSAGE,
+    check_and_decrement_quota,
+)
 from whaledecode.config.tiers import get_limits
+from whaledecode.domain.exceptions import QuotaExceededError
 
 log = structlog.get_logger()
 
@@ -18,6 +23,18 @@ _GREETINGS = {"hi", "hello", "hey", "help"}
 def is_greeting(query: str) -> bool:
     q = query.strip().lower()
     return len(q) < 10 or q in _GREETINGS
+
+
+async def _spend_quota(message: Message, uow_factory) -> bool:
+    """Spend one free-tier query. False when quota is exhausted (CTA sent)."""
+    async with uow_factory() as uow:
+        try:
+            await check_and_decrement_quota(uow, message.from_user.id)
+            await uow.commit()
+            return True
+        except QuotaExceededError:
+            await message.answer(UPGRADE_CTA_MESSAGE)
+            return False
 
 
 @chat_router.message(Command("ask"))
@@ -48,6 +65,9 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
             "• <code>/ask what did 0x742d... do recently?</code>\n"
             "• <code>/decode 0x1234...</code>"
         )
+        return
+
+    if not await _spend_quota(message, uow_factory):
         return
 
     await message.answer("🧠 Thinking...")
@@ -81,6 +101,8 @@ async def cmd_decode(message: Message, investigation_service, uow_factory, **kwa
         await uow.commit()
 
     target = args[1]
+    if not await _spend_quota(message, uow_factory):
+        return
     await message.answer("🔍 Decoding...")
     try:
         response = await investigation_service.chat(

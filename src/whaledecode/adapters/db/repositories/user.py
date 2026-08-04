@@ -24,9 +24,11 @@ class UserRepository:
             tg_id=user.tg_id,
             username=user.username,
             plan=user.plan,
+            tier=user.tier,
             plan_expires_at=user.plan_expires_at,
             daily_chat_count=user.daily_chat_count,
             daily_alert_count=user.daily_alert_count,
+            queries_remaining=user.queries_remaining,
             is_admin=user.is_admin,
             alerts_enabled=user.alerts_enabled,
         )
@@ -41,9 +43,11 @@ class UserRepository:
             return
         model.username = user.username
         model.plan = user.plan
+        model.tier = user.tier
         model.plan_expires_at = user.plan_expires_at
         model.daily_chat_count = user.daily_chat_count
         model.daily_alert_count = user.daily_alert_count
+        model.queries_remaining = user.queries_remaining
         model.is_admin = user.is_admin
         model.alerts_enabled = user.alerts_enabled
 
@@ -57,9 +61,11 @@ class UserRepository:
             tg_id=model.tg_id,
             username=model.username,
             plan=model.plan,
+            tier=model.tier,
             plan_expires_at=model.plan_expires_at,
             daily_chat_count=model.daily_chat_count,
             daily_alert_count=model.daily_alert_count,
+            queries_remaining=model.queries_remaining,
             is_admin=model.is_admin,
             alerts_enabled=model.alerts_enabled,
             created_at=model.created_at,

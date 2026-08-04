@@ -3,15 +3,45 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from whaledecode.adapters.telegram.user_access import get_or_create_user
+from whaledecode.application.services.user_service import (
+    UPGRADE_CTA_MESSAGE,
+    check_and_decrement_quota,
+)
 from whaledecode.config.tiers import PLAN_LIMITS, PlanTier, get_limits
+from whaledecode.domain.exceptions import QuotaExceededError
 
 common_router = Router(name="common")
 
 
 @common_router.message(Command("start"))
-async def cmd_start(message: Message, uow_factory, **kwargs) -> None:
+async def cmd_start(message: Message, uow_factory, investigation_service=None, **kwargs) -> None:
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
+        await uow.commit()
+
+    payload = (message.get_args() or "").strip()
+    if payload:
+        if investigation_service is None:
+            await message.answer("Investigation service unavailable.")
+            return
+        try:
+            async with uow_factory() as uow:
+                await check_and_decrement_quota(uow, message.from_user.id)
+                await uow.commit()
+        except QuotaExceededError:
+            await message.answer(UPGRADE_CTA_MESSAGE)
+            return
+        await message.answer("🧠 Investigating the on-chain event...")
+        try:
+            result = await investigation_service.chat(
+                f"Deep dive into this on-chain event: {payload}",
+                thread_id=str(message.from_user.id),
+            )
+            await message.answer(result[:4000])
+        except Exception as e:  # noqa: BLE001
+            await message.answer(f"Sorry, I encountered an error: {e}")
+        return
+
     plan_badge = "⭐ FREE" if user.plan == "free" else "💎 PAID"
     await message.answer(
         f"🐋 <b>WhaleDecode</b>\n\n"

@@ -6,6 +6,10 @@ class PlanLimitError(WhaleDecodeError):
     """User has exceeded their plan limit for this action."""
 
 
+class QuotaExceededError(WhaleDecodeError):
+    """User has exhausted their free-tier daily intelligence quota."""
+
+
 class AlertSuppressedError(WhaleDecodeError):
     """Alert was suppressed due to user preference or policy."""
 
