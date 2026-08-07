@@ -3,7 +3,7 @@ from typing import Any, Protocol
 
 class ChainProviderPort(Protocol):
     async def get_logs(
-        self, chain: str, addresses: list[str], from_block: int, to_block: int, topics: list[str] | None = None
+        self, chain: str, addresses: list[str], from_block: int, to_block: int, topics: list[Any] | None = None
     ) -> list[dict[str, Any]]: ...
 
     async def get_block_number(self, chain: str) -> int: ...

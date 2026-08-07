@@ -1,6 +1,29 @@
 from datetime import UTC, datetime
 from typing import Any
 
+# Standard ERC-20 Transfer(address indexed from, address indexed to, uint256 value)
+TRANSFER_EVENT_SIGNATURE = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+
+def pad_address_to_topic(address: str) -> str:
+    """Pad a 20-byte address to the 32-byte padded form used in log topics.
+
+    ``0x123...`` → ``0x000000000000000000000000123...`` (64 hex chars).
+    """
+    body = address[2:] if address.lower().startswith("0x") else address
+    return "0x" + body.lower().zfill(64)
+
+
+def wallet_id_from_transfer_topics(topics: list[str], padded_to_wallet_id: dict[str, int]) -> int | None:
+    """Map a Transfer log's topics back to a tracked wallet, if either the
+    ``from`` (topics[1]) or ``to`` (topics[2]) side is one of our wallets."""
+    for idx in (1, 2):
+        if idx < len(topics) and topics[idx]:
+            wallet_id = padded_to_wallet_id.get(topics[idx].lower())
+            if wallet_id is not None:
+                return wallet_id
+    return None
+
 
 def normalize_log(raw_log: dict[str, Any], wallet_id: int, chain: str) -> dict[str, Any]:
     tx_hash = raw_log.get("transactionHash", "")
@@ -39,10 +62,9 @@ def _classify_event(topics: list[str], address: str) -> str:
     if not topics:
         return "CONTRACT_INTERACTION"
     sig = topics[0] if topics else ""
-    transfer_sig = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
     swap_sig = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
     approval_sig = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
-    if sig == transfer_sig:
+    if sig == TRANSFER_EVENT_SIGNATURE:
         return "TRANSFER"
     if sig == swap_sig:
         return "SWAP"

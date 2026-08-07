@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from whaledecode.adapters.chain.normalizer import TRANSFER_EVENT_SIGNATURE, pad_address_to_topic
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
@@ -12,6 +13,7 @@ from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 
 WALLET_ADDRESS = "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+TOKEN_ADDRESS = "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503"
 TX_HASH = "0x" + "a" * 64
 
 
@@ -48,12 +50,16 @@ class FakeProvider:
         addresses: list[str],
         from_block: int,
         to_block: int,
-        topics: list[str] | None = None,
+        topics: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         return [
             {
-                "address": WALLET_ADDRESS,
-                "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
+                "address": TOKEN_ADDRESS,
+                "topics": [
+                    TRANSFER_EVENT_SIGNATURE,
+                    pad_address_to_topic(WALLET_ADDRESS),
+                    None,
+                ],
                 "data": hex(200_000 * 10**18),
                 "blockNumber": hex(from_block + 1),
                 "transactionHash": TX_HASH,

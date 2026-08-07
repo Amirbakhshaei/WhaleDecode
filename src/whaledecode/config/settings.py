@@ -60,6 +60,7 @@ class Settings(BaseSettings):
 
     # Alert Pipeline
     ALERT_SCORE_THRESHOLD: float = 0.50
+    ACCUMULATION_WINDOW_SECONDS: int = 86400
     FREE_ALERT_BATCH_INTERVAL_MINUTES: int = 60
     PAID_ALERT_BATCH_INTERVAL_SECONDS: int = 5
     MIN_INVESTIGATION_SCORE: float = 0.65

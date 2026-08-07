@@ -6,13 +6,19 @@ the database only — it must not import or call the investigation service or an
 LangChain/LLM component.
 """
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from whaledecode.adapters.chain.factory import create_chain_provider
-from whaledecode.adapters.chain.normalizer import normalize_log
+from whaledecode.adapters.chain.normalizer import (
+    TRANSFER_EVENT_SIGNATURE,
+    normalize_log,
+    pad_address_to_topic,
+    wallet_id_from_transfer_topics,
+)
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
@@ -32,6 +38,18 @@ def bounded_from_block(from_block: int, to_block: int, max_block_range: int) -> 
 def max_block_range_for(chain: str, ranges: dict[str, int]) -> int:
     """Per-chain eth_getLogs range limit, falling back to a safe default."""
     return ranges.get(chain, DEFAULT_MAX_GET_LOGS_BLOCK_RANGE)
+
+
+def _transfer_topic_queries(padded_wallets: list[str]) -> list[list[Any]]:
+    """Two eth_getLogs topic filters, one per transfer direction.
+
+    ``[SIG, [wallets], null]`` = outgoing (any of our wallets is the ``from``).
+    ``[SIG, null, [wallets]]`` = incoming (any of our wallets is the ``to``).
+    """
+    return [
+        [TRANSFER_EVENT_SIGNATURE, padded_wallets, None],
+        [TRANSFER_EVENT_SIGNATURE, None, padded_wallets],
+    ]
 
 
 class LiveBlockchainFetcher:
@@ -75,31 +93,40 @@ class LiveBlockchainFetcher:
                 continue
 
             on_chain = [w for w in wallets if w.chain.label() == chain]
+            padded_to_wallet = {
+                pad_address_to_topic(w.address): w.id for w in on_chain if w.id is not None
+            }
             addresses = [w.address for w in on_chain]
-            addr_map = {w.address: w.id for w in on_chain}
+            from_block = self._from_block(chain, block)
 
             for i in range(0, len(addresses), self._settings.POLL_BATCH_SIZE):
                 batch = addresses[i : i + self._settings.POLL_BATCH_SIZE]
-                from_block = self._from_block(chain, block)
-                try:
-                    logs = await self._provider.get_logs(
-                        chain=chain,
-                        addresses=batch,
-                        from_block=from_block,
-                        to_block=block,
-                        topics=[],
-                    )
-                except Exception as e:
-                    log.error("fetcher_logs_failed", chain=chain, batch=i, error=str(e))
-                    continue
-
-                pending = [
-                    self._to_pending_data(event)
-                    for raw_log in logs
-                    if (wallet_id := addr_map.get(raw_log.get("address", ""))) is not None
-                    for event in [normalize_log(raw_log, wallet_id, chain)]
-                    if self._above_threshold(event)
-                ]
+                padded = [pad_address_to_topic(addr) for addr in batch]
+                pending: list[dict[str, Any]] = []
+                recent_cache: dict[int, list[dict[str, Any]]] = {}
+                for topics in _transfer_topic_queries(padded):
+                    try:
+                        logs = await self._provider.get_logs(
+                            chain=chain,
+                            addresses=[],
+                            from_block=from_block,
+                            to_block=block,
+                            topics=topics,
+                        )
+                    except Exception as e:
+                        log.error("fetcher_logs_failed", chain=chain, batch=i, error=str(e))
+                        continue
+                    for raw_log in logs:
+                        wallet_id = wallet_id_from_transfer_topics(raw_log.get("topics", []), padded_to_wallet)
+                        if wallet_id is None:
+                            continue
+                        event = normalize_log(raw_log, wallet_id, chain)
+                        recent = recent_cache.get(wallet_id)
+                        if recent is None:
+                            recent = await self._recent_events(wallet_id)
+                            recent_cache[wallet_id] = recent
+                        if self._above_threshold(event, recent):
+                            pending.append(self._to_pending_data(event))
                 if pending:
                     await self._insert_pending(pending)
                     log.info("fetcher_inserted", chain=chain, count=len(pending))
@@ -120,8 +147,15 @@ class LiveBlockchainFetcher:
             )
         return from_block
 
-    def _above_threshold(self, event: dict[str, Any]) -> bool:
-        event["score"] = self._sentinel.score(event)
+    async def _recent_events(self, wallet_id: int) -> list[dict[str, Any]]:
+        """Fetch this wallet's recent events so scoring can reward accumulation/confluence."""
+        since = datetime.now(UTC) - timedelta(seconds=self._settings.ACCUMULATION_WINDOW_SECONDS)
+        async with UnitOfWork(self._session_factory) as uow:
+            events = await uow.candidate_events.recent_for_wallet(wallet_id, since)
+        return [{"wallet_id": e.wallet_id, "tx_hash": str(e.tx_hash)} for e in events]
+
+    def _above_threshold(self, event: dict[str, Any], recent_events: list[dict[str, Any]] | None = None) -> bool:
+        event["score"] = self._sentinel.score(event, recent_events=recent_events)
         return bool(event["score"] >= self._settings.ALERT_SCORE_THRESHOLD * 100)
 
     async def _insert_pending(self, events: list[dict[str, Any]]) -> None:

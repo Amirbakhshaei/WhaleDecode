@@ -4,13 +4,14 @@ from typing import Any
 
 import pytest
 from pydantic import SecretStr
+from whaledecode.adapters.chain.normalizer import TRANSFER_EVENT_SIGNATURE, pad_address_to_topic
 from whaledecode.application import fetcher as fetcher_module
 from whaledecode.application.fetcher import LiveBlockchainFetcher
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
 
-TRANSFER_SIG = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+TOKEN_ADDRESS = "0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503"
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -26,8 +27,12 @@ def _settings(**overrides: Any) -> Settings:
 
 def _log(wallet_address: str) -> dict:
     return {
-        "address": wallet_address,
-        "topics": [TRANSFER_SIG],
+        "address": TOKEN_ADDRESS,
+        "topics": [
+            TRANSFER_EVENT_SIGNATURE,
+            pad_address_to_topic(wallet_address),
+            None,
+        ],
         "data": hex(200_000 * 10**18),
         "blockNumber": hex(100),
         "transactionHash": "0x" + "b" * 64,

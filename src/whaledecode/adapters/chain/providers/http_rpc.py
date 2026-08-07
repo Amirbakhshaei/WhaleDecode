@@ -93,13 +93,21 @@ class HttpRpcProvider(ChainProviderPort):
         return data.get("result")
 
     async def get_logs(
-        self, chain: str, addresses: list[str], from_block: int, to_block: int, topics: list[str] | None = None
+        self,
+        chain: str,
+        addresses: list[str],
+        from_block: int,
+        to_block: int,
+        topics: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
-            "address": addresses,
             "fromBlock": hex(from_block),
             "toBlock": hex(to_block),
         }
+        # Topic-scoped search (ERC-20 Transfer) needs no address filter; the
+        # wallet appears inside the topic array, not as a log emitter.
+        if addresses:
+            params["address"] = addresses
         if topics:
             params["topics"] = topics
         result = await self.rpc_call("eth_getLogs", [params], chain=chain)

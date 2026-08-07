@@ -3,6 +3,7 @@ from typing import Any
 WHALE_TRANSFER_THRESHOLD_USD = 100_000
 WHALE_SWAP_THRESHOLD_USD = 50_000
 ACCUMULATION_WINDOW_SECONDS = 300
+SUPER_WHALE_TRANSFER_THRESHOLD_USD = 50_000_000
 
 
 class SentinelEngine:
@@ -19,6 +20,11 @@ class SentinelEngine:
 
     def _whale_transfer(self, event: dict[str, Any]) -> float:
         if event.get("event_type") == "TRANSFER" and event.get("value_usd", 0) >= WHALE_TRANSFER_THRESHOLD_USD:
+            # Ultra-massive transfers base-score above the 50% gate on their own,
+            # so a single trade that must cross the on-chain reporting limit is
+            # not silently swallowed for want of accumulation history.
+            if event.get("value_usd", 0) >= SUPER_WHALE_TRANSFER_THRESHOLD_USD:
+                return 60.0
             return 40.0
         return 0.0
 

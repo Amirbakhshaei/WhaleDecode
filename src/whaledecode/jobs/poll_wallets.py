@@ -1,9 +1,18 @@
 import structlog
+from typing import Any
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from whaledecode.adapters.chain.factory import create_chain_provider
-from whaledecode.adapters.chain.normalizer import normalize_log
-from whaledecode.application.fetcher import bounded_from_block, max_block_range_for
+from whaledecode.adapters.chain.normalizer import (
+    normalize_log,
+    pad_address_to_topic,
+    wallet_id_from_transfer_topics,
+)
+from whaledecode.application.fetcher import (
+    _transfer_topic_queries,
+    bounded_from_block,
+    max_block_range_for,
+)
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.candidate_event import CandidateEvent
@@ -41,48 +50,71 @@ async def poll_wallets(
 
         curated_on_chain = [w for w in wallets if w.chain.label() == chain]
         addresses = [w.address for w in curated_on_chain]
+        padded_to_wallet = {
+            pad_address_to_topic(w.address): w.id for w in curated_on_chain if w.id is not None
+        }
 
-        for i in range(0, len(addresses), settings.POLL_BATCH_SIZE):
-            batch = addresses[i : i + settings.POLL_BATCH_SIZE]
-            requested_from = block - settings.REORG_SAFE_BLOCKS
-            max_block_range = max_block_range_for(chain, settings.MAX_GET_LOGS_BLOCK_RANGE)
-            from_block = bounded_from_block(requested_from, block, max_block_range)
-            if from_block != requested_from:
-                log.warning(
-                    "block_range_clamped",
-                    chain=chain,
-                    from_block=from_block,
-                    to_block=block,
-                    max_block_range=max_block_range,
-                )
-            try:
-                logs = await provider.get_logs(
-                    chain=chain,
-                    addresses=batch,
-                    from_block=from_block,
-                    to_block=block,
-                    topics=[],
-                )
-            except Exception as e:
-                log.error("poll_logs_failed", chain=chain, batch=i, error=str(e))
-                continue
-
-            addr_map = {w.address: w.id for w in curated_on_chain}
-            for raw_log in logs:
-                log_addr = raw_log.get("address", "")
-                wallet_id = addr_map.get(log_addr)
-                if wallet_id is None:
-                    continue
-                event = normalize_log(raw_log, wallet_id, chain)
-                event["score"] = sentinel.score(event)
-                if event["score"] >= settings.ALERT_SCORE_THRESHOLD * 100:
+for i in range(0, len(addresses), settings.POLL_BATCH_SIZE):
+                batch = addresses[i : i + settings.POLL_BATCH_SIZE]
+                requested_from = block - settings.REORG_SAFE_BLOCKS
+                max_block_range = max_block_range_for(chain, settings.MAX_GET_LOGS_BLOCK_RANGE)
+                from_block = bounded_from_block(requested_from, block, max_block_range)
+                if from_block != requested_from:
+                    log.warning(
+                        "block_range_clamped",
+                        chain=chain,
+                        from_block=from_block,
+                        to_block=block,
+                        max_block_range=max_block_range,
+                    )
+                padded = [pad_address_to_topic(addr) for addr in batch]
+                recent_cache: dict[int, list[dict[str, Any]]] = {}
+                for topics in _transfer_topic_queries(padded):
                     try:
-                        await investigation_service.process_event(_to_candidate_event(event))
-                        log.info("candidate_investigated", dedupe_key=event["dedupe_key"], score=event["score"])
+                        logs = await provider.get_logs(
+                            chain=chain,
+                            addresses=[],
+                            from_block=from_block,
+                            to_block=block,
+                            topics=topics,
+                        )
                     except Exception as e:
-                        log.warning("candidate_failed", dedupe_key=event["dedupe_key"], error=str(e))
+                        log.error("poll_logs_failed", chain=chain, batch=i, error=str(e))
+                        continue
+
+                    for raw_log in logs:
+                        wallet_id = wallet_id_from_transfer_topics(raw_log.get("topics", []), padded_to_wallet)
+                        if wallet_id is None:
+                            continue
+                        event = normalize_log(raw_log, wallet_id, chain)
+                        recent = recent_cache.get(wallet_id)
+                        if recent is None:
+                            recent = await recent_for_wallet(session_factory, settings, wallet_id)
+                            recent_cache[wallet_id] = recent
+                        event["score"] = sentinel.score(event, recent_events=recent)
+                        if event["score"] >= settings.ALERT_SCORE_THRESHOLD * 100:
+                            try:
+                                await investigation_service.process_event(_to_candidate_event(event))
+                                log.info("candidate_investigated", dedupe_key=event["dedupe_key"], score=event["score"])
+                            except Exception as e:
+                                log.warning("candidate_failed", dedupe_key=event["dedupe_key"], error=str(e))
 
     log.info("poll_complete", wallet_count=len(wallets))
+
+
+async def recent_for_wallet(
+    session_factory: async_sessionmaker,
+    settings: Settings,
+    wallet_id: int,
+) -> list[dict[str, Any]]:
+    from datetime import UTC, datetime, timedelta
+
+    from whaledecode.adapters.db.uow import UnitOfWork
+
+    since = datetime.now(UTC) - timedelta(seconds=settings.ACCUMULATION_WINDOW_SECONDS)
+    async with UnitOfWork(session_factory) as uow:
+        events = await uow.candidate_events.recent_for_wallet(wallet_id, since)
+    return [{"wallet_id": e.wallet_id, "tx_hash": str(e.tx_hash)} for e in events]
 
 
 def _to_candidate_event(event: dict) -> CandidateEvent:

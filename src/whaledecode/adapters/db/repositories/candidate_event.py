@@ -167,6 +167,17 @@ class CandidateEventRepository:
         )
         return [self._to_domain(row) for row in result.scalars()]
 
+    async def recent_for_wallet(self, wallet_id: int, since: datetime, limit: int = 50) -> list[CandidateEvent]:
+        """Recent events for one wallet within the accumulation window, newest first."""
+        result = await self._session.execute(
+            select(CandidateEventModel)
+            .where(CandidateEventModel.wallet_id == wallet_id)
+            .where(CandidateEventModel.created_at >= since)
+            .order_by(CandidateEventModel.created_at.desc())
+            .limit(limit)
+        )
+        return [self._to_domain(row) for row in result.scalars()]
+
     async def list_unpublished(self, limit: int = 20) -> list[CandidateEvent]:
         result = await self._session.execute(
             select(CandidateEventModel)
