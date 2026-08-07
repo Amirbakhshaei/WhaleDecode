@@ -18,17 +18,18 @@ log = structlog.get_logger()
 
 payments_router = Router(name="payments")
 
-TEST_PROVIDER_TOKEN = "1877036958:TEST:da731ea804b7fe337e5f2ed53930a9d7f54ee3a9"
-PREMIUM_TITLE = "WhaleDecode Premium (Test)"
-PREMIUM_DESCRIPTION = "Simulated Smart Glocal payment to test tier upgrade webhooks."
-PREMIUM_PRICE = LabeledPrice(label="Premium Tier Test", amount=100)
+PROVIDER_TOKEN = ""
+PREMIUM_TITLE = "WhaleDecode Premium"
+PREMIUM_DESCRIPTION = (
+    "Unlock unlimited agent queries, real-time memory, and priority SMC alerting."
+)
+PREMIUM_PRICE = LabeledPrice(label="Premium Tier", amount=500)
 PAYLOAD_PREFIX = "upgrade_tier_"
 
 UPGRADE_CONFIRMATION = (
     "⚡ <b>Payment Successful!</b>\n\n"
     "Your account has been upgraded to WhaleDecode Premium.\n"
-    "Transaction ID: <code>{charge_id}</code>\n\n"
-    "This was a simulated Smart Glocal test transaction — no real money was charged."
+    "Transaction ID: <code>{charge_id}</code>"
 )
 
 
@@ -37,7 +38,7 @@ def subscribe_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🧪 Subscribe for $1.00 (Test)",
+                    text="⭐ Subscribe for 500 Stars",
                     callback_data="subscribe:premium",
                 )
             ]
@@ -51,8 +52,8 @@ async def cmd_subscribe(message: Message, **kwargs) -> None:
         title=PREMIUM_TITLE,
         description=PREMIUM_DESCRIPTION,
         payload=f"{PAYLOAD_PREFIX}{message.from_user.id}",
-        currency="USD",
-        provider_token=TEST_PROVIDER_TOKEN,
+        currency="XTR",
+        provider_token=PROVIDER_TOKEN,
         prices=[PREMIUM_PRICE],
     )
 
@@ -64,8 +65,8 @@ async def on_subscribe_callback(callback: CallbackQuery, **kwargs) -> None:
         title=PREMIUM_TITLE,
         description=PREMIUM_DESCRIPTION,
         payload=f"{PAYLOAD_PREFIX}{callback.from_user.id}",
-        currency="USD",
-        provider_token=TEST_PROVIDER_TOKEN,
+        currency="XTR",
+        provider_token=PROVIDER_TOKEN,
         prices=[PREMIUM_PRICE],
     )
 
