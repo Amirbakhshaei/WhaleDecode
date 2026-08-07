@@ -16,8 +16,11 @@ Produce a Telegram-ready markdown brief following this EXACT template:
 🎯 **Risk:** [Score]%
 
 > **🧠 SMC Intelligence**
-> [A dense 1-2 sentence paragraph on what moved and its structural/liquidity significance.
-> No filler words.]
+> Emit exactly three punchy bullet lines, each starting with a keyword and colon:
+> • *Action:* [one line: what moved, from where to where, approximate USD flow]
+> • *Context:* [one line: structural/liquidity significance of the move]
+> • *Bias:* [one line: short/neutral/long read on market structure implications]
+> No filler words, no preamble, no trailing prose.
 
 **Trace Metrics**
 Tx: ||`[tx_hash]`||

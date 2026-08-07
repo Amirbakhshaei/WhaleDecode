@@ -1,6 +1,8 @@
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
     escape_markdown_v2,
+    format_channel_post_markdown,
     format_premium_event_post,
+    truncate_hash,
 )
 
 EVENT = {
@@ -149,3 +151,70 @@ class TestEscapeMarkdownV2:
         assert "`$150,000`" in out
         assert "> **Intelligence**" in out
         assert "accumulation\\." in out
+
+
+TRACE_EVENT = {
+    "chain": "ethereum",
+    "event_type": "TRANSFER",
+    "tx_hash": "0xf4a93fa84fef68a2daf2fcf02211c01a8d87338b26e402c14fc1be3d51cdb15a",
+    "raw_json": {
+        "token": "USDC",
+        "amount": "124901",
+        "value_usd": 124900.99,
+        "from": "0xdfd5293d8e347dfe59e90efd55b2956a1343963d",
+        "to": "0xd862cdcfeb856c32b3c4f7563f4811d8ddfd42e2",
+    },
+}
+
+TRACE_ANALYSIS = {
+    "risk_score": 0.72,
+    "summary": (
+        "**Action:** whale swept USDC toward a Binance-linked addr\n"
+        "**Context:** consolidation of a liquidity node\n"
+        "**Bias:** neutral, likely accumulation"
+    ),
+}
+
+
+class TestTruncateHash:
+    def test_long_hash_truncated(self):
+        out = truncate_hash("0xf4a93fa84fef68a2daf2fcfb49")
+        assert out == "0xf4a9…fb49"
+        assert len(out) < 15
+
+    def test_short_string_unchanged(self):
+        assert truncate_hash("0x1234") == "0x1234"
+
+
+class TestFormatChannelPostMarkdown:
+    def test_hyperlinked_trace(self):
+        md = format_channel_post_markdown(TRACE_EVENT, TRACE_ANALYSIS)
+        from_addr = TRACE_EVENT["raw_json"]["from"]
+        tx = TRACE_EVENT["tx_hash"]
+        from_label = truncate_hash(from_addr)
+        tx_label = truncate_hash(tx)
+        assert f"[{from_label}](https://etherscan.io/address/{from_addr})" in md
+        assert f"[{tx_label}](https://etherscan.io/tx/{tx})" in md
+
+    def test_trace_no_full_hashes_in_plain_text(self):
+        md = format_channel_post_markdown(TRACE_EVENT, TRACE_ANALYSIS)
+        full = "0xf4a93fa84fef68a2daf2fcf02211c01a8d87338b26e4029fc1be3d51cdb15a"
+        assert full not in md
+
+    def test_smc_bullets_per_line(self):
+        md = format_channel_post_markdown(TRACE_EVENT, TRACE_ANALYSIS)
+        assert "• Action:" in md
+        assert "• Context:" in md
+        assert "• Bias:" in md
+
+    def test_risk_badge_present(self):
+        md = format_channel_post_markdown(TRACE_EVENT, {"risk_score": 0.85})
+        assert "🔴 HIGH" in md
+
+    def test_msg_valid_markdown_v2_escape(self):
+        # Reconstitute a message with a dot and hyphen in a bullet body; assert they're escaped.
+        md = format_channel_post_markdown(
+            TRACE_EVENT,
+            {"risk_score": 0.5, "summary": "**Bias:** neutral. - Not shaken."},
+        )
+        assert "neutral\\. \\- Not shaken\\." in md

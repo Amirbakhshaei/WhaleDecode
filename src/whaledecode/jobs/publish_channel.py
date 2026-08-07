@@ -5,7 +5,7 @@ from aiogram.types import LinkPreviewOptions
 
 from whaledecode.adapters.db.session import async_sessionmaker
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
-    escape_markdown_v2,
+    format_channel_post_markdown,
 )
 from whaledecode.adapters.telegram.keyboards import build_keyboard
 from whaledecode.config.settings import Settings
@@ -32,7 +32,7 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
             report = run.output_json if run else {}
 
             event_data = event.model_dump()
-            msg = escape_markdown_v2(str(report.get("summary", "")))
+            msg = format_channel_post_markdown(event_data, report)
             tx_hash = event_data.get("tx_hash", "")
             keyboard = build_keyboard(tx_hash)
             try:

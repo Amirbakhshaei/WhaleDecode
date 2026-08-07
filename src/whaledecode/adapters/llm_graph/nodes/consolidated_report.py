@@ -19,7 +19,11 @@ briefing_markdown template (fill placeholders with event/tool data ONLY, wrap ev
 🎯 **Risk:** [Score]%
 
 > **🧠 SMC Intelligence**
-> [Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance (SMC). No filler words.]
+> Emit short, punchy bullet points, each one per line with a keyword and ':' —
+> • **Action:** [what moved and the flow direction]
+> • **Context:** [structural/liquidity significance]
+> • **Bias:** [market-structure read: short/neutral/long]
+> No filler words, no preamble, no trailing prose.
 
 **Trace Metrics**
 Tx: ||`[tx_hash]`||
@@ -27,7 +31,7 @@ From: ||`[from_address]`||
 To: ||`[to_address]`||
 
 FORMATTING RULES:
-1. Combine the SMC thesis into a SINGLE, dense paragraph.
+1. Combine the SMC thesis into SHORT, punchy bullets (Action/Context/Bias), one per line.
 2. Format numbers with commas.
 3. Enclose all transaction hashes and addresses inside Telegram spoiler tags exactly like this: ||`0x...`|| so they are hidden.
 4. Use the `>` character at the beginning of the line to create a blockquote for the Intelligence section.
