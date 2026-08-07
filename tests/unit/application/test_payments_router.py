@@ -6,8 +6,8 @@ from whaledecode.adapters.telegram.routers.payments import (
     PAYLOAD_PREFIX,
     PREMIUM_DESCRIPTION,
     PREMIUM_TITLE,
-    on_pre_checkout,
-    on_successful_payment,
+    precheckout_callback,
+    successful_payment_callback,
 )
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 from whaledecode.domain.entities.user import User
@@ -97,14 +97,14 @@ class FakeMessage:
 @pytest.mark.asyncio
 async def test_pre_checkout_valid_payload_answers_ok() -> None:
     query = FakeQuery(payload=f"{PAYLOAD_PREFIX}42")
-    await on_pre_checkout(query, uow_factory=lambda: FakeUow(User(tg_id=42)))
+    await precheckout_callback(query, uow_factory=lambda: FakeUow(User(tg_id=42)))
     assert query.answer_calls == [{"ok": True, "error_message": None}]
 
 
 @pytest.mark.asyncio
 async def test_pre_checkout_bad_payload_answers_fail() -> None:
     query = FakeQuery(payload="garbage")
-    await on_pre_checkout(query, uow_factory=lambda: FakeUow(User(tg_id=42)))
+    await precheckout_callback(query, uow_factory=lambda: FakeUow(User(tg_id=42)))
     assert query.answer_calls[0]["ok"] is False
 
 
@@ -112,7 +112,7 @@ async def test_pre_checkout_bad_payload_answers_fail() -> None:
 async def test_successful_payment_upgrades_and_audits() -> None:
     message = FakeMessage(from_user=FakeFrom(42), successful_payment=FakePayment())
     uow = FakeUow(User(id=7, tg_id=42, tier="free"))
-    await on_successful_payment(message, uow_factory=lambda: uow)
+    await successful_payment_callback(message, uow_factory=lambda: uow)
 
     assert uow.users.updates[0].tier == "paid"
     assert uow.committed == 1
@@ -122,7 +122,8 @@ async def test_successful_payment_upgrades_and_audits() -> None:
     assert entry.target_id == 7
     assert entry.diff_json["telegram_payment_charge_id"] == "charge_123"
     assert len(message.answers) == 1
-    assert "Payment received" in message.answers[0]
+    assert message.answers[0].count("⚡") and "Payment Successful" in message.answers[0]
+    assert "charge_123" in message.answers[0]
 
 
 def test_router_exports_expected_constants() -> None:

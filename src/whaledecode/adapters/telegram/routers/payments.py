@@ -25,10 +25,10 @@ PREMIUM_PRICE = LabeledPrice(label="Premium Tier Test", amount=100)
 PAYLOAD_PREFIX = "upgrade_tier_"
 
 UPGRADE_CONFIRMATION = (
-    "🧪 <b>WhaleDecode Premium (Test) — Payment received!</b>\n\n"
-    "This was a simulated Smart Glocal transaction. "
-    "Your database tier has been upgraded to Premium (paid). "
-    "No real money was charged."
+    "⚡ <b>Payment Successful!</b>\n\n"
+    "Your account has been upgraded to WhaleDecode Premium.\n"
+    "Transaction ID: <code>{charge_id}</code>\n\n"
+    "This was a simulated Smart Glocal test transaction — no real money was charged."
 )
 
 
@@ -71,26 +71,26 @@ async def on_subscribe_callback(callback: CallbackQuery, **kwargs) -> None:
 
 
 @payments_router.pre_checkout_query()
-async def on_pre_checkout(query: PreCheckoutQuery, uow_factory, **kwargs) -> None:
-    payload = query.invoice_payload or ""
+async def precheckout_callback(pre_checkout_query: PreCheckoutQuery, uow_factory, **kwargs) -> None:
+    payload = pre_checkout_query.invoice_payload or ""
     if not payload.startswith(PAYLOAD_PREFIX):
-        await query.answer(ok=False, error_message="Invalid payment payload.")
+        await pre_checkout_query.answer(ok=False, error_message="Invalid payment payload.")
         return
     try:
         tg_id = int(payload[len(PAYLOAD_PREFIX) :])
     except ValueError:
-        await query.answer(ok=False, error_message="Invalid payment payload.")
+        await pre_checkout_query.answer(ok=False, error_message="Invalid payment payload.")
         return
     async with uow_factory() as uow:
-        user = await get_or_create_user(tg_id, query.from_user.username, uow)
+        user = await get_or_create_user(tg_id, pre_checkout_query.from_user.username, uow)
     if user is None:
-        await query.answer(ok=False, error_message="Account not found. Press /start to register.")
+        await pre_checkout_query.answer(ok=False, error_message="Account not found. Press /start to register.")
         return
-    await query.answer(ok=True)
+    await pre_checkout_query.answer(ok=True)
 
 
 @payments_router.message(F.successful_payment)
-async def on_successful_payment(message: Message, uow_factory, **kwargs) -> None:
+async def successful_payment_callback(message: Message, uow_factory, **kwargs) -> None:
     payment = message.successful_payment
     tg_id = message.from_user.id
     async with uow_factory() as uow:
@@ -115,4 +115,7 @@ async def on_successful_payment(message: Message, uow_factory, **kwargs) -> None
         charge_id=payment.telegram_payment_charge_id,
         amount=payment.total_amount,
     )
-    await message.answer(UPGRADE_CONFIRMATION)
+    await message.answer(
+        UPGRADE_CONFIRMATION.format(charge_id=payment.telegram_payment_charge_id),
+        parse_mode="HTML",
+    )
