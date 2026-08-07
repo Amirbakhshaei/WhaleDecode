@@ -35,3 +35,19 @@ async def check_and_decrement_quota(
         account.queries_remaining -= 1
         await uow.users.update(account)
     return account
+
+
+async def upgrade_to_paid(uow: UnitOfWork, tg_id: int) -> tuple[User, bool]:
+    """Promote a user to the PAID tier. Returns ``(user, was_upgrade)``.
+
+    Caller is responsible for ``uow.commit()``.
+    """
+    account = await uow.users.get_by_tg_id(tg_id)
+    if account is None:
+        raise ValueError(f"User {tg_id} not found")
+    if account.tier == "paid":
+        return account, False
+    account.plan = "paid"
+    account.tier = "paid"
+    await uow.users.update(account)
+    return account, True

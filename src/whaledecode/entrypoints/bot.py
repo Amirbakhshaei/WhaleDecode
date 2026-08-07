@@ -14,6 +14,7 @@ from whaledecode.adapters.telegram.routers import (
     callback_router,
     chat_router,
     common_router,
+    payments_router,
     wallet_router,
 )
 from whaledecode.application.services.investigation import InvestigationService
@@ -50,7 +51,7 @@ async def run_bot(settings: Settings) -> None:
     dp["bot"] = bot
     dp["settings"] = settings
 
-    dp.include_routers(common_router, wallet_router, chat_router, admin_router, callback_router)
+    dp.include_routers(common_router, wallet_router, chat_router, admin_router, callback_router, payments_router)
     dp.message.middleware(ThrottlingMiddleware())
 
     @dp.startup()
