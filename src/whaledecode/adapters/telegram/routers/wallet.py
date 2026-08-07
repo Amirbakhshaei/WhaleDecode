@@ -1,7 +1,7 @@
 from html import escape
 
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from whaledecode.adapters.telegram.user_access import get_or_create_user
@@ -24,12 +24,8 @@ async def cmd_wallets(message: Message, uow_factory, **kwargs) -> None:
 
 
 @wallet_router.message(Command("track"))
-async def cmd_track(message: Message, uow_factory, wallet_service, **kwargs) -> None:
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("Usage: <code>/track &lt;wallet_id&gt;</code>")
-        return
-    wallet_id_str = args[1].strip()
+async def cmd_track(message: Message, command: CommandObject, uow_factory, wallet_service, **kwargs) -> None:
+    wallet_id_str = (command.args or "").strip()
     if not wallet_id_str.isdigit():
         await message.answer("Usage: <code>/track &lt;wallet_id&gt;</code> — wallet_id must be a number.")
         return
@@ -45,12 +41,8 @@ async def cmd_track(message: Message, uow_factory, wallet_service, **kwargs) -> 
 
 
 @wallet_router.message(Command("untrack"))
-async def cmd_untrack(message: Message, wallet_service, uow_factory, **kwargs) -> None:
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("Usage: <code>/untrack &lt;wallet_id&gt;</code>")
-        return
-    wallet_id_str = args[1].strip()
+async def cmd_untrack(message: Message, command: CommandObject, wallet_service, uow_factory, **kwargs) -> None:
+    wallet_id_str = (command.args or "").strip()
     if not wallet_id_str.isdigit():
         await message.answer("Usage: <code>/untrack &lt;wallet_id&gt;</code> — wallet_id must be a number.")
         return

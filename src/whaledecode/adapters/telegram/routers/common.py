@@ -1,5 +1,5 @@
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from whaledecode.adapters.telegram.user_access import get_or_create_user
@@ -14,12 +14,12 @@ common_router = Router(name="common")
 
 
 @common_router.message(Command("start"))
-async def cmd_start(message: Message, uow_factory, investigation_service=None, **kwargs) -> None:
+async def cmd_start(message: Message, command: CommandObject, uow_factory, investigation_service=None, **kwargs) -> None:
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         await uow.commit()
 
-    payload = (message.get_args() or "").strip()
+    payload = (command.args or "").strip()
     if payload:
         if investigation_service is None:
             await message.answer("Investigation service unavailable.")

@@ -1,7 +1,7 @@
 from html import escape
 
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
@@ -14,13 +14,13 @@ def _is_admin(message: Message, settings) -> bool:
 
 
 @admin_router.message(Command("admin"))
-async def cmd_admin(message: Message, uow_factory, settings, **kwargs) -> None:
+async def cmd_admin(message: Message, command: CommandObject, uow_factory, settings, **kwargs) -> None:
     if not _is_admin(message, settings):
         await message.answer("Access denied.")
         return
 
-    parts = message.text.split(maxsplit=2)
-    if len(parts) == 1:
+    parts = (command.args or "").split(maxsplit=1)
+    if not parts:
         async with uow_factory() as uow:
             free = await uow.users.list_by_plan("free")
             paid = await uow.users.list_by_plan("paid")
@@ -40,8 +40,8 @@ async def cmd_admin(message: Message, uow_factory, settings, **kwargs) -> None:
         )
         return
 
-    subcmd = parts[1]
-    args = parts[2] if len(parts) > 2 else ""
+    subcmd = parts[0]
+    args = parts[1] if len(parts) > 1 else ""
 
     if subcmd == "stats":
         await _cmd_admin_stats(message, uow_factory)

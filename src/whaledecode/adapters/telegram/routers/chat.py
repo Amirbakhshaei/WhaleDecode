@@ -2,7 +2,7 @@ from html import escape
 
 import structlog
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from whaledecode.adapters.telegram.user_access import get_or_create_user
@@ -38,10 +38,10 @@ async def _spend_quota(message: Message, uow_factory) -> bool:
 
 
 @chat_router.message(Command("ask"))
-async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs) -> None:
+async def cmd_ask(message: Message, command: CommandObject, investigation_service, uow_factory, **kwargs) -> None:
     log.info("ask_command_received", user_id=message.from_user.id, text=message.text)
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
+    question = (command.args or "").strip()
+    if not question:
         await message.answer("Usage: <code>/ask &lt;your question&gt;</code>\nExample: <code>/ask what did 0x742d... do recently?</code>")
         return
 
@@ -54,8 +54,6 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
         user.daily_chat_count += 1
         await uow.users.update(user)
         await uow.commit()
-
-    question = args[1]
 
     if is_greeting(question):
         await message.answer(
@@ -83,10 +81,10 @@ async def cmd_ask(message: Message, investigation_service, uow_factory, **kwargs
 
 
 @chat_router.message(Command("decode"))
-async def cmd_decode(message: Message, investigation_service, uow_factory, **kwargs) -> None:
+async def cmd_decode(message: Message, command: CommandObject, investigation_service, uow_factory, **kwargs) -> None:
     log.info("decode_command_received", user_id=message.from_user.id, text=message.text)
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
+    target = (command.args or "").strip()
+    if not target:
         await message.answer("Usage: <code>/decode &lt;tx_hash or address&gt;</code>\nExample: <code>/decode 0x1234...</code>")
         return
 
@@ -100,7 +98,6 @@ async def cmd_decode(message: Message, investigation_service, uow_factory, **kwa
         await uow.users.update(user)
         await uow.commit()
 
-    target = args[1]
     if not await _spend_quota(message, uow_factory):
         return
     await message.answer("🔍 Decoding...")
@@ -119,18 +116,18 @@ async def cmd_decode(message: Message, investigation_service, uow_factory, **kwa
 
 
 @chat_router.message(Command("alerts"))
-async def cmd_alerts(message: Message, uow_factory, **kwargs) -> None:
+async def cmd_alerts(message: Message, command: CommandObject, uow_factory, **kwargs) -> None:
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
-        parts = message.text.split()
-        if len(parts) == 2:
-            if parts[1].lower() in ("on", "enable", "yes"):
+        setting = (command.args or "").strip().lower()
+        if setting:
+            if setting in ("on", "enable", "yes"):
                 user.alerts_enabled = True
                 await uow.users.update(user)
                 await uow.commit()
                 await message.answer("✅ Alerts enabled.")
                 return
-            if parts[1].lower() in ("off", "disable", "no"):
+            if setting in ("off", "disable", "no"):
                 user.alerts_enabled = False
                 await uow.users.update(user)
                 await uow.commit()
