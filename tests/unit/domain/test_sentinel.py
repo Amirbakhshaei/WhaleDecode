@@ -1,4 +1,8 @@
-from whaledecode.domain.policies.sentinel import SUPER_WHALE_TRANSFER_THRESHOLD_USD, SentinelEngine
+from whaledecode.domain.policies.sentinel import (
+    CURATED_WALLET_BONUS,
+    SUPER_WHALE_TRANSFER_THRESHOLD_USD,
+    SentinelEngine,
+)
 
 
 def _transfer(usd: float, wallet_id: int | None = 10, tx_hash: str | None = "0xtx") -> dict:
@@ -11,10 +15,19 @@ def _transfer(usd: float, wallet_id: int | None = 10, tx_hash: str | None = "0xt
     return event
 
 
-def test_whale_transfer_alone_below_50_gate() -> None:
+def test_untracked_lone_whale_transfer_stays_below_50() -> None:
+    """A lone 200k transfer from a non-curated wallet scores 40, below the gate."""
     score = SentinelEngine().score(_transfer(200_000))
     assert score == 40.0
     assert score < 50.0
+
+
+def test_curated_bonus_lifts_lone_whale_transfer_to_50() -> None:
+    score = SentinelEngine().score(
+        _transfer(200_000, wallet_id=1), curated_wallet_ids={1}
+    )
+    assert score == 40.0 + CURATED_WALLET_BONUS
+    assert score >= 50.0
 
 
 def test_accumulation_burst_breaches_50() -> None:

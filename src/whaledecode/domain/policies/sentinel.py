@@ -4,15 +4,25 @@ WHALE_TRANSFER_THRESHOLD_USD = 100_000
 WHALE_SWAP_THRESHOLD_USD = 50_000
 ACCUMULATION_WINDOW_SECONDS = 300
 SUPER_WHALE_TRANSFER_THRESHOLD_USD = 50_000_000
+CURATED_WALLET_BONUS = 10
 
 
 class SentinelEngine:
-    def score(self, event: dict[str, Any], recent_events: list[dict[str, Any]] | None = None) -> float:
+    def score(
+        self,
+        event: dict[str, Any],
+        recent_events: list[dict[str, Any]] | None = None,
+        curated_wallet_ids: set[int] | None = None,
+    ) -> float:
         score = 0.0
         score += self._whale_transfer(event)
         score += self._whale_swap(event)
         score += self._new_contract_interaction(event)
         score += self._large_approval(event)
+        if curated_wallet_ids and event.get("wallet_id") in curated_wallet_ids:
+            # Tracked wallets get a small boost so a lone whale transfer (40) can
+            # cross the 50 gate even without accumulation history nearby.
+            score += CURATED_WALLET_BONUS
         if recent_events:
             score += self._accumulation_burst(event, recent_events)
             score += self._multi_wallet_confluence(event, recent_events)

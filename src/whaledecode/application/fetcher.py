@@ -84,6 +84,7 @@ class LiveBlockchainFetcher:
             log.info("fetcher_no_wallets")
             return
 
+        curated_ids = {w.id for w in wallets if w.id is not None}
         chains = {w.chain.label() for w in wallets}
         for chain in chains:
             try:
@@ -125,7 +126,7 @@ class LiveBlockchainFetcher:
                         if recent is None:
                             recent = await self._recent_events(wallet_id)
                             recent_cache[wallet_id] = recent
-                        if self._above_threshold(event, recent):
+                        if self._above_threshold(event, recent, curated_ids):
                             pending.append(self._to_pending_data(event))
                 if pending:
                     await self._insert_pending(pending)
@@ -154,8 +155,15 @@ class LiveBlockchainFetcher:
             events = await uow.candidate_events.recent_for_wallet(wallet_id, since)
         return [{"wallet_id": e.wallet_id, "tx_hash": str(e.tx_hash)} for e in events]
 
-    def _above_threshold(self, event: dict[str, Any], recent_events: list[dict[str, Any]] | None = None) -> bool:
-        event["score"] = self._sentinel.score(event, recent_events=recent_events)
+    def _above_threshold(
+        self,
+        event: dict[str, Any],
+        recent_events: list[dict[str, Any]] | None = None,
+        curated_wallet_ids: set[int] | None = None,
+    ) -> bool:
+        event["score"] = self._sentinel.score(
+            event, recent_events=recent_events, curated_wallet_ids=curated_wallet_ids
+        )
         return bool(event["score"] >= self._settings.ALERT_SCORE_THRESHOLD * 100)
 
     async def _insert_pending(self, events: list[dict[str, Any]]) -> None:

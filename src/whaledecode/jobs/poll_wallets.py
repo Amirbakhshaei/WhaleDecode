@@ -40,6 +40,7 @@ async def poll_wallets(
         log.info("poll_no_wallets")
         return
 
+    curated_ids = {w.id for w in wallets if w.id is not None}
     chains = set(w.chain.label() for w in wallets)
 
     for chain in chains:
@@ -92,7 +93,7 @@ async def poll_wallets(
                         if recent is None:
                             recent = await recent_for_wallet(session_factory, settings, wallet_id)
                             recent_cache[wallet_id] = recent
-                        event["score"] = sentinel.score(event, recent_events=recent)
+                        event["score"] = sentinel.score(event, recent_events=recent, curated_wallet_ids=curated_ids)
                         if event["score"] >= settings.ALERT_SCORE_THRESHOLD * 100:
                             try:
                                 await investigation_service.process_event(_to_candidate_event(event))
