@@ -72,21 +72,26 @@ async def on_subscribe_callback(callback: CallbackQuery, **kwargs) -> None:
 
 @payments_router.pre_checkout_query()
 async def precheckout_callback(pre_checkout_query: PreCheckoutQuery, uow_factory, **kwargs) -> None:
+    log.info("pre_checkout_received", user_id=pre_checkout_query.from_user.id)
     payload = pre_checkout_query.invoice_payload or ""
     if not payload.startswith(PAYLOAD_PREFIX):
+        log.warning("pre_checkout_rejected_payload", user_id=pre_checkout_query.from_user.id, payload=payload[:20])
         await pre_checkout_query.answer(ok=False, error_message="Invalid payment payload.")
         return
     try:
         tg_id = int(payload[len(PAYLOAD_PREFIX) :])
     except ValueError:
+        log.warning("pre_checkout_rejected_payload", user_id=pre_checkout_query.from_user.id, payload=payload[:20])
         await pre_checkout_query.answer(ok=False, error_message="Invalid payment payload.")
         return
     async with uow_factory() as uow:
         user = await get_or_create_user(tg_id, pre_checkout_query.from_user.username, uow)
     if user is None:
+        log.warning("pre_checkout_rejected_no_user", user_id=pre_checkout_query.from_user.id)
         await pre_checkout_query.answer(ok=False, error_message="Account not found. Press /start to register.")
         return
     await pre_checkout_query.answer(ok=True)
+    log.info("pre_checkout_answered_ok", user_id=pre_checkout_query.from_user.id)
 
 
 @payments_router.message(F.successful_payment)
