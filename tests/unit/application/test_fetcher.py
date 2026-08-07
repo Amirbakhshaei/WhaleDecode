@@ -110,6 +110,41 @@ async def test_poll_once_drops_below_threshold_logs(session_factory, sample_addr
 
 
 @pytest.mark.asyncio
+async def test_poll_once_accumulation_breaches_threshold(session_factory, sample_address) -> None:
+    """A whale transfer that alone scores 40 crosses the 50 gate once a like transfer
+    from the same wallet is already in the DB (accumulation burst → +10)."""
+    from whaledecode.adapters.chain.normalizer import normalize_log
+    from whaledecode.adapters.db.uow import UnitOfWork
+
+    async with UnitOfWork(session_factory) as uow:
+        await uow.curated_wallets.create(
+            CuratedWallet(address=sample_address, chain=Chain.ETH, label="Whale")
+        )
+        await uow.commit()
+
+    first = normalize_log(_log(sample_address), 1, "Ethereum")
+    first_data = LiveBlockchainFetcher._to_pending_data(first)
+    first_data["wallet_id"] = 1
+    async with UnitOfWork(session_factory) as uow:
+        await uow.candidate_events.create_pending(first_data)
+
+    # Second log, distinct tx, same wallet.
+    second = _log(sample_address)
+    second["transactionHash"] = "0x" + "c" * 64
+    second["logIndex"] = "0x0"
+
+    fetcher = LiveBlockchainFetcher(session_factory, _settings())
+    fetcher._provider = FakeProvider([second])
+
+    await fetcher.poll_once()
+
+    async with UnitOfWork(session_factory) as uow:
+        events = await uow.candidate_events.claim_next_pending(limit=10)
+    assert len(events) == 1
+    assert events[0].dedupe_key == f"1:{'0x' + 'c' * 64}:0"
+
+
+@pytest.mark.asyncio
 async def test_poll_once_skips_when_no_wallets(session_factory) -> None:
     fetcher = LiveBlockchainFetcher(session_factory, _settings())
     fetcher._provider = FakeProvider([_log("0x")])

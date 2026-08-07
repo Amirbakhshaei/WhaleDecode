@@ -1,5 +1,6 @@
-import structlog
 from typing import Any
+
+import structlog
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from whaledecode.adapters.chain.factory import create_chain_provider
@@ -54,7 +55,7 @@ async def poll_wallets(
             pad_address_to_topic(w.address): w.id for w in curated_on_chain if w.id is not None
         }
 
-for i in range(0, len(addresses), settings.POLL_BATCH_SIZE):
+        for i in range(0, len(addresses), settings.POLL_BATCH_SIZE):
                 batch = addresses[i : i + settings.POLL_BATCH_SIZE]
                 requested_from = block - settings.REORG_SAFE_BLOCKS
                 max_block_range = max_block_range_for(chain, settings.MAX_GET_LOGS_BLOCK_RANGE)
