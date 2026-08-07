@@ -18,18 +18,17 @@ log = structlog.get_logger()
 
 payments_router = Router(name="payments")
 
-PREMIUM_TITLE = "WhaleDecode Premium"
-PREMIUM_DESCRIPTION = (
-    "Unlock unlimited agent queries, real-time memory, and priority SMC alerting."
-)
-PREMIUM_PRICE_STARS = 500
-PREMIUM_PRICE = LabeledPrice(label="Premium Tier", amount=PREMIUM_PRICE_STARS)
+TEST_PROVIDER_TOKEN = "1877036958:TEST:da731ea804b7fe337e5f2ed53930a9d7f54ee3a9"
+PREMIUM_TITLE = "WhaleDecode Premium (Test)"
+PREMIUM_DESCRIPTION = "Simulated Smart Glocal payment to test tier upgrade webhooks."
+PREMIUM_PRICE = LabeledPrice(label="Premium Tier Test", amount=100)
 PAYLOAD_PREFIX = "upgrade_tier_"
 
 UPGRADE_CONFIRMATION = (
-    "💎 <b>WhaleDecode Premium activated!</b>\n\n"
-    "Unlimited agent queries, real-time memory, and priority SMC alerting are now yours. "
-    "Thanks for supporting WhaleDecode."
+    "🧪 <b>WhaleDecode Premium (Test) — Payment received!</b>\n\n"
+    "This was a simulated Smart Glocal transaction. "
+    "Your database tier has been upgraded to Premium (paid). "
+    "No real money was charged."
 )
 
 
@@ -38,7 +37,7 @@ def subscribe_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="⭐ Subscribe for 500 Stars",
+                    text="🧪 Subscribe for $1.00 (Test)",
                     callback_data="subscribe:premium",
                 )
             ]
@@ -52,8 +51,8 @@ async def cmd_subscribe(message: Message, **kwargs) -> None:
         title=PREMIUM_TITLE,
         description=PREMIUM_DESCRIPTION,
         payload=f"{PAYLOAD_PREFIX}{message.from_user.id}",
-        currency="XTR",
-        provider_token="",
+        currency="USD",
+        provider_token=TEST_PROVIDER_TOKEN,
         prices=[PREMIUM_PRICE],
     )
 
@@ -65,8 +64,8 @@ async def on_subscribe_callback(callback: CallbackQuery, **kwargs) -> None:
         title=PREMIUM_TITLE,
         description=PREMIUM_DESCRIPTION,
         payload=f"{PAYLOAD_PREFIX}{callback.from_user.id}",
-        currency="XTR",
-        provider_token="",
+        currency="USD",
+        provider_token=TEST_PROVIDER_TOKEN,
         prices=[PREMIUM_PRICE],
     )
 
@@ -98,7 +97,7 @@ async def on_successful_payment(message: Message, uow_factory, **kwargs) -> None
         user, _ = await upgrade_to_paid(uow, tg_id)
         audit = AdminAuditLog(
             admin_id=tg_id,
-            action="stars_payment",
+            action="payment_received",
             target_type="user",
             target_id=user.id,
             diff_json={
@@ -111,7 +110,7 @@ async def on_successful_payment(message: Message, uow_factory, **kwargs) -> None
         await uow.admin_audit_logs.create(audit)
         await uow.commit()
     log.info(
-        "stars_payment_success",
+        "payment_success",
         tg_id=tg_id,
         charge_id=payment.telegram_payment_charge_id,
         amount=payment.total_amount,

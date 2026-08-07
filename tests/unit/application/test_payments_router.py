@@ -118,13 +118,13 @@ async def test_successful_payment_upgrades_and_audits() -> None:
     assert uow.committed == 1
     assert len(uow.admin_audit_logs.entries) == 1
     entry = uow.admin_audit_logs.entries[0]
-    assert entry.action == "stars_payment"
+    assert entry.action == "payment_received"
     assert entry.target_id == 7
     assert entry.diff_json["telegram_payment_charge_id"] == "charge_123"
     assert len(message.answers) == 1
-    assert "Premium activated" in message.answers[0]
+    assert "Payment received" in message.answers[0]
 
 
 def test_router_exports_expected_constants() -> None:
-    assert PREMIUM_TITLE == "WhaleDecode Premium"
-    assert "unlimited agent queries" in PREMIUM_DESCRIPTION
+    assert PREMIUM_TITLE == "WhaleDecode Premium (Test)"
+    assert "Smart Glocal" in PREMIUM_DESCRIPTION
