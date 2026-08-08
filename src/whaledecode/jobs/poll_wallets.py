@@ -1,4 +1,6 @@
 import asyncio
+import signal
+import sys
 from typing import Any
 
 import structlog
@@ -29,6 +31,7 @@ async def poll_wallets(
     settings: Settings,
     investigation_service: InvestigationService,
 ) -> None:
+    """Single polling pass over active curated wallets."""
     from whaledecode.adapters.db.uow import UnitOfWork
 
     sentinel = SentinelEngine()
@@ -182,29 +185,79 @@ def _to_candidate_event(event: dict[str, Any]) -> CandidateEvent:
         score=event.get("score", 0.0),
         dedupe_key=event["dedupe_key"],
     )
-    async def run_worker() -> None:
-    import asyncio
+
+
+async def run_poll_loop(
+    session_factory: async_sessionmaker,
+    settings: Settings,
+    investigation_service: InvestigationService,
+    stop_event: asyncio.Event | None = None,
+) -> None:
+    """Persistent ingestion loop. Never crashes silently: on any error it logs
+    and backs off with a short sleep, so a transient RPC/network blip does not
+    kill the process or drop the batch."""
+    while not (stop_event and stop_event.is_set()):
+        try:
+            await poll_wallets(session_factory, settings, investigation_service)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("poll_worker_iteration_failed", error=str(e), exc_info=True)
+        try:
+            await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+
+
+def build_investigation_service(
+    settings: Settings,
+) -> tuple[async_sessionmaker, InvestigationService]:
+    """Wire DB session + LLM graph into an InvestigationService."""
     from whaledecode.adapters.db.session import create_session_factory
-    from whaledecode.application.services.investigation import InvestigationService
-    from whaledecode.config.settings import Settings
+    from whaledecode.adapters.db.uow import UnitOfWork
+    from whaledecode.adapters.llm.factory import LLMFactory
+    from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
+
+    session_factory = create_session_factory(settings)
+    llm_factory = LLMFactory(settings)
+    reasoner = LangGraphReasoner(settings, llm_factory)
+
+    def _uow() -> UnitOfWork:
+        return UnitOfWork(session_factory)
+
+    return session_factory, InvestigationService(_uow, reasoner, settings)
+
+
+async def run_worker() -> None:
+    """Entrypoint bootstrap: load settings, wire deps, run the poll loop until signal."""
+    from whaledecode.config.logging import setup_logging
 
     settings = Settings()
-    session_factory = create_session_factory(settings.DATABASE_URL)
-    # Instantiate investigation service with required dependencies
-    investigation_service = InvestigationService(session_factory=session_factory, settings=settings)
+    setup_logging(settings)
+    settings.inject_langsmith_env()
+
+    session_factory, investigation_service = build_investigation_service(settings)
 
     log.info("ingestion_worker_started", interval=settings.POLL_INTERVAL_SECONDS)
 
-    while True:
-        try:
-            await poll_wallets(session_factory, settings, investigation_service)
-        except Exception as e:
-            log.error("poll_worker_iteration_failed", error=str(e))
+    stop_event = asyncio.Event()
 
-        await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
+    def shutdown(sig: int) -> None:
+        log.info("ingestion_worker_shutdown_signal", signal=sig)
+        stop_event.set()
+
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, lambda s=sig: shutdown(s))
+        except NotImplementedError:
+            pass
+
+    try:
+        await run_poll_loop(session_factory, settings, investigation_service, stop_event)
+    finally:
+        log.info("ingestion_worker_stopped")
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(run_worker())
+    sys.exit(asyncio.run(run_worker()))
