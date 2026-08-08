@@ -182,3 +182,7 @@ def _to_candidate_event(event: dict[str, Any]) -> CandidateEvent:
         score=event.get("score", 0.0),
         dedupe_key=event["dedupe_key"],
     )
+    if __name__ == "__main__":
+    import asyncio
+    logger.info("Launching Ingestion Worker Process...")
+    asyncio.run(run_polling_loop())
