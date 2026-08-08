@@ -12,6 +12,7 @@ from typing import Any
 import structlog
 import telegramify_markdown
 from aiogram import Bot
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -108,6 +109,11 @@ class BackgroundAIWorker:
                     await uow.candidate_events.mark_published(event.id)
                 await uow.commit()
             log.info("worker_event_done", dedupe_key=event.dedupe_key, status="completed")
+        except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter):
+            log.warning("Telegram API unreachable, deferring alert.", dedupe_key=event.dedupe_key)
+            async with UnitOfWork(self._session_factory) as uow:
+                await uow.candidate_events.set_status(event.id, "pending")
+                await uow.commit()
         except Exception as e:
             log.error("worker_event_failed", dedupe_key=event.dedupe_key, error=str(e), exc_info=True)
             async with UnitOfWork(self._session_factory) as uow:

@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.application.worker import BackgroundAIWorker, normalize_spoilers
+from whaledecode.application.worker import MAX_ATTEMPTS, BackgroundAIWorker, normalize_spoilers
 from whaledecode.config.settings import Settings
 
 GLASS_WHALE_SUMMARY = (
@@ -43,10 +43,13 @@ class FakeInvestigation:
 
 
 class FakeBot:
-    def __init__(self) -> None:
+    def __init__(self, error: Exception | None = None) -> None:
         self.sent: list[dict] = []
+        self._error = error
 
     async def send_message(self, **kwargs: Any) -> None:
+        if self._error:
+            raise self._error
         self.sent.append(kwargs)
 
 
@@ -306,3 +309,60 @@ async def test_run_survives_errors_and_stops(session_factory) -> None:
     stop.set()
     await asyncio.wait_for(task, timeout=1)
     assert task.done()
+
+
+@pytest.mark.asyncio
+async def test_network_error_defers_alert_keeps_pending_no_attempt(session_factory) -> None:
+    """A transient Telegram outage must not burn a dead-letter attempt while the
+    network is down; the event stays pending and is retried next pass."""
+    from aiogram.exceptions import TelegramNetworkError
+
+    await _seed_pending(session_factory, "worker:network")
+    bot = FakeBot(error=TelegramNetworkError(method="sendMessage", message="502 Bad Gateway"))
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(),
+        _settings(),
+        bot=bot,
+        channel_id="-100",
+    )
+
+    await worker.process_pending()
+
+    assert bot.sent == []
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status == "pending"
+    assert claimed.attempt_count == 0
+    assert claimed.published_at is None
+
+
+@pytest.mark.asyncio
+async def test_network_error_never_dead_letters_after_many_attempts(session_factory) -> None:
+    """Even repeated outages leave the event pending and retryable, never dead-lettered."""
+    from aiogram.exceptions import TelegramServerError
+
+    await _seed_pending(session_factory, "worker:network2")
+    bot = FakeBot(error=TelegramServerError(method="sendMessage", message="503 Service Unavailable"))
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(),
+        _settings(),
+        bot=bot,
+        channel_id="-100",
+    )
+
+    for _ in range(MAX_ATTEMPTS * 2):
+        await worker.process_pending()
+
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status == "pending"
+    assert claimed.attempt_count == 0
+    assert claimed.published_at is None
+
+    async with UnitOfWork(session_factory) as uow:
+        claimable = await uow.candidate_events.claim_next_pending(limit=1)
+    assert len(claimable) == 1

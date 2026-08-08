@@ -1,5 +1,6 @@
 import structlog
 from aiogram import Bot
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 
 from whaledecode.adapters.db.session import async_sessionmaker
 from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
@@ -40,6 +41,8 @@ async def send_alerts(session_factory: async_sessionmaker, bot: Bot, settings: S
                 await bot.send_message(chat_id=user.tg_id, text=msg)
                 alert.status = "sent"
                 log.info("alert_sent", alert_id=alert.id, user_id=user.id)
+            except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter):
+                log.warning("Telegram API unreachable, deferring alert.", alert_id=alert.id, user_id=user.id)
             except Exception as e:
                 log.error("alert_send_failed", alert_id=alert.id, error=str(e))
                 alert.status = "failed"
