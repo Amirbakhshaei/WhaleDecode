@@ -7,6 +7,19 @@ SUPER_WHALE_TRANSFER_THRESHOLD_USD = 50_000_000
 CURATED_WALLET_BONUS = 10
 
 
+def score_base_value(usd_value: float) -> float:
+    """Base score from raw transfer value, on a granular tiered matrix."""
+    if usd_value >= SUPER_WHALE_TRANSFER_THRESHOLD_USD:
+        return 60.0
+    if usd_value >= 10_000_000:
+        return 50.0  # Instant pass
+    if usd_value >= 1_000_000:
+        return 45.0  # Passes if curated or accumulated
+    if usd_value >= WHALE_TRANSFER_THRESHOLD_USD:
+        return 35.0
+    return 0.0
+
+
 class SentinelEngine:
     def score(
         self,
@@ -29,13 +42,8 @@ class SentinelEngine:
         return min(score, 100.0)
 
     def _whale_transfer(self, event: dict[str, Any]) -> float:
-        if event.get("event_type") == "TRANSFER" and event.get("value_usd", 0) >= WHALE_TRANSFER_THRESHOLD_USD:
-            # Ultra-massive transfers base-score above the 50% gate on their own,
-            # so a single trade that must cross the on-chain reporting limit is
-            # not silently swallowed for want of accumulation history.
-            if event.get("value_usd", 0) >= SUPER_WHALE_TRANSFER_THRESHOLD_USD:
-                return 60.0
-            return 40.0
+        if event.get("event_type") == "TRANSFER":
+            return score_base_value(event.get("value_usd", 0))
         return 0.0
 
     def _whale_swap(self, event: dict[str, Any]) -> float:
