@@ -182,7 +182,29 @@ def _to_candidate_event(event: dict[str, Any]) -> CandidateEvent:
         score=event.get("score", 0.0),
         dedupe_key=event["dedupe_key"],
     )
-    if __name__ == "__main__":
+    async def run_worker() -> None:
     import asyncio
-    logger.info("Launching Ingestion Worker Process...")
-    asyncio.run(run_polling_loop())
+    from whaledecode.adapters.db.session import create_session_factory
+    from whaledecode.application.services.investigation import InvestigationService
+    from whaledecode.config.settings import Settings
+
+    settings = Settings()
+    session_factory = create_session_factory(settings.DATABASE_URL)
+    # Instantiate investigation service with required dependencies
+    investigation_service = InvestigationService(session_factory=session_factory, settings=settings)
+
+    log.info("ingestion_worker_started", interval=settings.POLL_INTERVAL_SECONDS)
+
+    while True:
+        try:
+            await poll_wallets(session_factory, settings, investigation_service)
+        except Exception as e:
+            log.error("poll_worker_iteration_failed", error=str(e))
+
+        await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(run_worker())
