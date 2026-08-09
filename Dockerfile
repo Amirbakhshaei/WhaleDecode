@@ -18,4 +18,4 @@ RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --without dev
 
 ENTRYPOINT ["whaledecode"]
-CMD ["bot"]
+CMD ["serve"]
