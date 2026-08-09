@@ -32,26 +32,21 @@ def _load_settings() -> Settings:
 
 
 @cli.command()
-def bot():
-    """Run the Telegram bot and Alchemy webhook server concurrently."""
+def serve():
+    """Run FastAPI app (Telegram bot + webhook server) via Uvicorn."""
     settings = _load_settings()
     setup_logging(settings)
-
-    import structlog
-
-    log = structlog.get_logger()
-    log.info("starting_bot", env=settings.ENV)
 
     if not settings.BOT_TOKEN.get_secret_value():
         raise click.ClickException("BOT_TOKEN is not set in .env")
 
-    from whaledecode.entrypoints.bot import start_bot
-    from whaledecode.entrypoints.webhook import run_webhook
-
-    async def _combined() -> None:
-        await asyncio.gather(start_bot(settings), run_webhook(settings))
-
-    asyncio.run(_combined())
+    import uvicorn
+    uvicorn.run(
+        "whaledecode.entrypoints.webhook:app",
+        host="0.0.0.0",
+        port=settings.PORT,
+        log_level=settings.LOG_LEVEL.lower(),
+    )
 
 
 @cli.command()
@@ -93,9 +88,8 @@ def migrate():
     settings = _load_settings()
     setup_logging(settings)
 
-    from alembic.config import Config
-
     from alembic import command
+    from alembic.config import Config
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))

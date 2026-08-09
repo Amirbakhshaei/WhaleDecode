@@ -20,7 +20,8 @@ from whaledecode.config.settings import Settings
 from whaledecode.entrypoints.seed import ensure_curated_wallets_seeded
 
 
-async def start_bot(settings: Settings) -> None:
+def build_telegram_app(settings: Settings) -> tuple[Bot, Dispatcher]:
+    """Build and configure the Telegram bot and dispatcher. Does NOT start polling."""
     log = structlog.get_logger()
 
     session_factory, investigation_service, reasoner = build_investigation_service(settings)
@@ -44,6 +45,7 @@ async def start_bot(settings: Settings) -> None:
     dp["alert_dispatcher"] = alert_dispatcher
     dp["bot"] = bot
     dp["settings"] = settings
+    dp["reasoner"] = reasoner
 
     dp.include_routers(common_router, wallet_router, chat_router, admin_router, callback_router, payments_router)
     dp.message.middleware(ThrottlingMiddleware())
@@ -59,6 +61,13 @@ async def start_bot(settings: Settings) -> None:
         await reasoner.close()
         log.info("bot_stopped")
 
+    return bot, dp
+
+
+async def start_bot(settings: Settings) -> None:
+    """Legacy entrypoint for standalone polling mode (kept for compatibility)."""
+    bot, dp = build_telegram_app(settings)
+    log = structlog.get_logger()
     log.info("bot_polling_start")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)

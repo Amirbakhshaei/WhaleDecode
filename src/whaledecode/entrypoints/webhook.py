@@ -1,17 +1,10 @@
-"""Alchemy Address Activity webhook receiver.
-
-Replaces the RPC pull loop: Alchemy pushes address activity for tracked wallets,
-we HMAC-verify the delivery, re-shape each activity into a CandidateEvent, score
-it with the SentinelEngine, and route qualifying events straight to the
-investigation service (which dedupes + gates internally).
-"""
+"""FastAPI app with Telegram bot lifespan + Alchemy webhook endpoint."""
 import asyncio
-import hashlib
-import hmac
+import logging
+from contextlib import asynccontextmanager
 from typing import Any
 
-import structlog
-from aiohttp import web
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from whaledecode.adapters.chain.normalizer import _classify_event
@@ -26,8 +19,9 @@ from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
+from whaledecode.entrypoints.bot import build_telegram_app
 
-log = structlog.get_logger()
+logger = logging.getLogger(__name__)
 
 _NETWORK_TO_CHAIN: dict[str, Chain] = {
     "ETH_MAINNET": Chain.ETH,
@@ -38,12 +32,17 @@ _NETWORK_TO_CHAIN: dict[str, Chain] = {
 _sentinel = SentinelEngine()
 
 
-def verify_alchemy_signature(signing_key: str, body: bytes, signature: str | None) -> bool:
-    """Hex HMAC-SHA256 of the raw request body signed with the webhook signing key."""
-    if not signature:
+def verify_alchemy_signature(body: bytes, signature: str | None, keys: list[str]) -> bool:
+    """Hex HMAC-SHA256 of the raw request body signed with any of the webhook signing keys."""
+    if not signature or not keys:
         return False
-    digest = hmac.new(signing_key.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(digest.encode(), signature.encode())
+    import hashlib
+    import hmac
+    for k in keys:
+        digest = hmac.new(k.encode(), body, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(digest.encode(), signature.encode()):
+            return True
+    return False
 
 
 def _hex_int(value: Any, default: int = 0) -> int:
@@ -63,9 +62,6 @@ def _activity_candidate(
     wallet: CuratedWallet,
 ) -> CandidateEvent:
     """Shape one Alchemy Address Activity into our internal candidate event."""
-    # ponytail: Alchemy's `value` is the human-readable amount in the asset's own
-    # unit (token count / ETH), not USD-priced. We reuse it as the existing
-    # un-priced `value_usd` estimate; add a price feed if USD gating matters.
     value_usd = float(activity.get("value") or 0.0)
     log_obj = activity.get("log") or {}
     topics = log_obj.get("topics") or []
@@ -89,8 +85,6 @@ def _activity_candidate(
 
 
 def _score_candidate(candidate: CandidateEvent) -> float:
-    # ponytail: no accumulation/confluence terms — those need a recent-events DB
-    # fetch per activity. Curated-wallet bonus keeps cherry files above the gate.
     return _sentinel.score(
         {
             "event_type": candidate.event_type,
@@ -107,42 +101,31 @@ async def _safe_process(
 ) -> None:
     try:
         await investigation_service.process_event(candidate)
-        log.info(
+        logger.info(
             "webhook_candidate_investigated",
             dedupe_key=candidate.dedupe_key,
             score=candidate.score,
         )
     except Exception as e:
-        log.warning(
+        logger.warning(
             "webhook_candidate_failed", dedupe_key=candidate.dedupe_key, error=str(e)
         )
 
 
-async def _handle_alchemy(request: web.Request) -> web.Response:
-    settings: Settings = request.app["settings"]
-    investigation_service: InvestigationService = request.app["investigation_service"]
-    session_factory: async_sessionmaker[AsyncSession] = request.app["session_factory"]
-
-    signing_keys = settings.webhook_signing_keys
-    body = await request.read()
-    signature = request.headers.get("x-alchemy-signature")
-    if not signing_keys or not any(verify_alchemy_signature(k, body, signature) for k in signing_keys):
-        log.warning("webhook_invalid_signature", keys_configured=len(signing_keys), header_present=bool(signature))
-        return web.Response(status=401, text="Invalid signature")
-
-    try:
-        payload = await request.json()
-    except (ValueError, TypeError):
-        return web.Response(status=400, text="Invalid JSON body")
-
+async def _process_webhook_payload(
+    payload: dict[str, Any],
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    investigation_service: InvestigationService,
+) -> None:
+    """Process webhook payload in background."""
     if payload.get("type") != "ADDRESS_ACTIVITY":
-        return web.Response(status=200, text="ignored")
-
+        return
     event = payload.get("event") or {}
     chain = _NETWORK_TO_CHAIN.get(event.get("network"))
     if chain is None:
-        log.warning("webhook_unknown_network", network=event.get("network"))
-        return web.Response(status=200, text="ignored")
+        logger.warning("webhook_unknown_network", network=event.get("network"))
+        return
 
     async with UnitOfWork(session_factory) as uow:
         wallets = await uow.curated_wallets.list_active(chain=chain.name)
@@ -152,7 +135,12 @@ async def _handle_alchemy(request: web.Request) -> web.Response:
     for activity in event.get("activity") or []:
         if not activity.get("hash"):
             continue
-        wallet = _match_wallet(activity, wallet_map)
+        wallet = None
+        for side in ("fromAddress", "toAddress"):
+            addr = activity.get(side)
+            if addr and addr.lower() in wallet_map:
+                wallet = wallet_map[addr.lower()]
+                break
         if wallet is None:
             continue
 
@@ -161,43 +149,63 @@ async def _handle_alchemy(request: web.Request) -> web.Response:
         if candidate.score < threshold:
             continue
 
-        asyncio.create_task(_safe_process(investigation_service, candidate))
-
-    return web.Response(status=200, text="ok")
+        await _safe_process(investigation_service, candidate)
 
 
-def _match_wallet(
-    activity: dict[str, Any], wallet_map: dict[str, CuratedWallet]
-) -> CuratedWallet | None:
-    for side in ("fromAddress", "toAddress"):
-        address = activity.get(side)
-        if address and address.lower() in wallet_map:
-            return wallet_map[address.lower()]
-    return None
-
-
-def _build_app(
-    settings: Settings,
-    session_factory: async_sessionmaker[AsyncSession],
-    investigation_service: InvestigationService,
-) -> web.Application:
-    app = web.Application()
-    app["settings"] = settings
-    app["session_factory"] = session_factory
-    app["investigation_service"] = investigation_service
-    app.router.add_post("/webhook/alchemy", _handle_alchemy)
-    return app
-
-
-async def run_webhook(settings: Settings) -> None:
-    """Run the webhook HTTP server until cancelled. To be gathered alongside the bot."""
-    session_factory, investigation_service, _ = build_investigation_service(settings)
-    runner = web.AppRunner(_build_app(settings, session_factory, investigation_service))
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=settings.PORT)
-    await site.start()
-    log.info("webhook_server_started", port=settings.PORT)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: start bot polling on startup, stop on shutdown."""
+    settings = app.state.settings
+    logger.info("Starting Telegram Bot in the background...")
+    bot, dp = build_telegram_app(settings)
+    await dp.emit_startup()
+    await bot.delete_webhook(drop_pending_updates=True)
+    app.state.bot = bot
+    app.state.dp = dp
+    app.state.polling_task = dp.start_polling(bot)
+    logger.info("Bot polling started")
+    yield
+    logger.info("Shutting down Telegram Bot...")
+    app.state.polling_task.cancel()
     try:
-        await asyncio.Event().wait()
-    finally:
-        await runner.cleanup()
+        await app.state.polling_task
+    except asyncio.CancelledError:
+        pass
+    await dp.emit_shutdown()
+    await bot.session.close()
+
+
+# Initialize settings and deps once at module load
+settings = Settings()
+session_factory, investigation_service, _ = build_investigation_service(settings)
+
+app = FastAPI(lifespan=lifespan)
+app.state.settings = settings
+app.state.session_factory = session_factory
+app.state.investigation_service = investigation_service
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "WhaleDecode Webhook Receiver"}
+
+
+@app.post("/webhook/alchemy")
+async def alchemy_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_alchemy_signature: str = Header(None),
+):
+    raw_body = await request.body()
+    if not verify_alchemy_signature(raw_body, x_alchemy_signature, settings.webhook_signing_keys):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    payload = await request.json()
+    background_tasks.add_task(
+        _process_webhook_payload,
+        payload,
+        settings,
+        session_factory,
+        investigation_service,
+    )
+    return {"status": "accepted"}

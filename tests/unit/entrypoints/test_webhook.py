@@ -1,6 +1,8 @@
-"""Unit tests for the Alchemy webhook entrypoint."""
+"""Unit tests for the Alchemy webhook entrypoint (FastAPI version)."""
 import hashlib
 import hmac
+
+from fastapi.testclient import TestClient
 
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
@@ -8,9 +10,9 @@ from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.entrypoints.webhook import (
     _NETWORK_TO_CHAIN,
     _activity_candidate,
-    _build_app,
     _score_candidate,
     verify_alchemy_signature,
+    app,
 )
 
 
@@ -18,18 +20,26 @@ def test_verify_alchemy_signature_valid():
     key = "test_signing_key"
     body = b'{"test": "payload"}'
     sig = hmac.new(key.encode(), body, hashlib.sha256).hexdigest()
-    assert verify_alchemy_signature(key, body, sig) is True
+    assert verify_alchemy_signature(body, sig, [key]) is True
 
 
 def test_verify_alchemy_signature_invalid():
     key = "test_signing_key"
     body = b'{"test": "payload"}'
-    assert verify_alchemy_signature(key, body, "wrong_sig") is False
+    assert verify_alchemy_signature(body, "wrong_sig", [key]) is False
 
 
 def test_verify_alchemy_signature_missing():
-    assert verify_alchemy_signature("key", b"body", None) is False
-    assert verify_alchemy_signature("key", b"body", "") is False
+    assert verify_alchemy_signature(b"body", None, ["key"]) is False
+    assert verify_alchemy_signature(b"body", "", ["key"]) is False
+
+
+def test_verify_alchemy_signature_multi_key():
+    key1 = "key1"
+    key2 = "key2"
+    body = b'{"test": "payload"}'
+    sig2 = hmac.new(key2.encode(), body, hashlib.sha256).hexdigest()
+    assert verify_alchemy_signature(body, sig2, [key1, key2]) is True
 
 
 def test_network_mapping():
@@ -119,14 +129,13 @@ def test_score_candidate_whale_transfer():
     assert score >= 50.0
 
 
-def test_build_app_registers_route():
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from whaledecode.config.settings import Settings
-    from pydantic import SecretStr
+def test_fastapi_app_has_routes():
+    """Verify FastAPI app has the webhook and health routes."""
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
 
-    dummy_settings = Settings(BOT_TOKEN=SecretStr("test"), GROQ_API_KEY=SecretStr("test"))
-    dummy_factory = async_sessionmaker(None)
-    dummy_investigation = object()
-    app = _build_app(dummy_settings, dummy_factory, dummy_investigation)
-    routes = [r for r in app.router.routes() if r.method == "POST" and r.resource.canonical == "/webhook/alchemy"]
-    assert len(routes) == 1
+    # Webhook endpoint exists (returns 401 without signature, not 404)
+    response = client.post("/webhook/alchemy", json={})
+    assert response.status_code == 401  # signature verification fails
