@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     ALCHEMY_WEBHOOK_SIGNING_KEY: SecretStr | None = None
     ALCHEMY_WEBHOOK_SIGNING_KEYS: str = ""
+    ALCHEMY_AUTH_TOKEN: SecretStr | None = None
 
     @property
     def webhook_signing_keys(self) -> list[str]:

@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import click
 
@@ -115,6 +116,32 @@ def db_init():
     ctx = click.get_current_context()
     ctx.invoke(migrate)
     ctx.invoke(seed)
+
+
+@cli.command()
+def verify_seed():
+    """Verify seed wallet addresses have on-chain activity (writes wallets_verified.json)."""
+    settings = _load_settings()
+    setup_logging(settings)
+
+    from whaledecode.scripts.verify_seed import main as verify_main
+
+    exit(verify_main())
+
+
+@cli.command()
+@click.option("--webhook-id", required=True, help="Alchemy webhook ID (wh_...)")
+@click.option("--verified-file", required=True, type=click.Path(exists=True), help="Path to wallets_verified.json")
+def sync_webhook(webhook_id: str, verified_file: str):
+    """Sync verified addresses to an Alchemy webhook via Notify API."""
+    settings = _load_settings()
+    setup_logging(settings)
+
+    import asyncio
+
+    from whaledecode.scripts.verify_seed import sync_webhook as sync_impl
+
+    exit(asyncio.run(sync_impl(webhook_id, Path(verified_file))))
 
 
 if __name__ == "__main__":

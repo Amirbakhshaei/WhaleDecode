@@ -3,8 +3,7 @@ from typing import Any
 
 from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm_graph.formatting.sanitizer import sanitize_event_payload

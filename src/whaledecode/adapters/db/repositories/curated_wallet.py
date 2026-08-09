@@ -1,3 +1,4 @@
+from cachetools import TTLCache
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,17 +12,32 @@ _CHAIN_FROM_STR: dict[str, Chain] = {
     "ARB": Chain.ARB,
 }
 
+# Cache list_active results per chain for 300 seconds (5 min)
+# Key: chain name (or "all" for no filter), Value: list[CuratedWallet]
+_ACTIVE_WALLET_CACHE: TTLCache = TTLCache(maxsize=10, ttl=300)
+
+
+def reset_wallet_cache() -> None:
+    """Clear the wallet cache (useful for tests)."""
+    _ACTIVE_WALLET_CACHE.clear()
+
 
 class CuratedWalletRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def list_active(self, chain: str | None = None) -> list[CuratedWallet]:
+        cache_key = chain or "all"
+        if cache_key in _ACTIVE_WALLET_CACHE:
+            return _ACTIVE_WALLET_CACHE[cache_key]
+
         stmt = select(CuratedWalletModel).where(CuratedWalletModel.is_active.is_(True))
         if chain is not None:
             stmt = stmt.where(CuratedWalletModel.chain == chain)
         result = await self._session.execute(stmt)
-        return [self._to_domain(row) for row in result.scalars()]
+        wallets = [self._to_domain(row) for row in result.scalars()]
+        _ACTIVE_WALLET_CACHE[cache_key] = wallets
+        return wallets
 
     async def search_by_label(self, query: str) -> list[CuratedWallet]:
         result = await self._session.execute(
@@ -40,6 +56,7 @@ class CuratedWalletRepository:
         )
         self._session.add(model)
         await self._session.flush()
+        _ACTIVE_WALLET_CACHE.clear()
         return self._to_domain(model)
 
     async def get(self, id: int) -> CuratedWallet | None:
@@ -58,6 +75,7 @@ class CuratedWalletRepository:
         model.label = wallet.label
         model.tags = ",".join(wallet.tags)
         model.quality_score = wallet.quality_score
+        _ACTIVE_WALLET_CACHE.clear()
 
     async def get_by_address_and_chain(self, address: str, chain: str) -> CuratedWallet | None:
         result = await self._session.execute(
