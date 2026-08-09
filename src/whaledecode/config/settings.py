@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     ADMIN_USER_IDS: list[int] = []
     PORT: int = 8000
     ALCHEMY_WEBHOOK_SIGNING_KEY: SecretStr | None = None
+    ALCHEMY_WEBHOOK_SIGNING_KEYS: str = ""
+
+    @property
+    def webhook_signing_keys(self) -> list[str]:
+        """Return list of signing keys from ALCHEMY_WEBHOOK_SIGNING_KEYS (comma-separated),
+        falling back to the single ALCHEMY_WEBHOOK_SIGNING_KEY if provided."""
+        if self.ALCHEMY_WEBHOOK_SIGNING_KEYS:
+            return [k.strip() for k in self.ALCHEMY_WEBHOOK_SIGNING_KEYS.split(",") if k.strip()]
+        if self.ALCHEMY_WEBHOOK_SIGNING_KEY:
+            return [self.ALCHEMY_WEBHOOK_SIGNING_KEY.get_secret_value()]
+        return []
 
     # Telegram
     BOT_TOKEN: SecretStr

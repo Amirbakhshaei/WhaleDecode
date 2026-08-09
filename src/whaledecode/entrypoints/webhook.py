@@ -123,15 +123,11 @@ async def _handle_alchemy(request: web.Request) -> web.Response:
     investigation_service: InvestigationService = request.app["investigation_service"]
     session_factory: async_sessionmaker[AsyncSession] = request.app["session_factory"]
 
-    signing_key = (
-        settings.ALCHEMY_WEBHOOK_SIGNING_KEY.get_secret_value()
-        if settings.ALCHEMY_WEBHOOK_SIGNING_KEY
-        else None
-    )
+    signing_keys = settings.webhook_signing_keys
     body = await request.read()
     signature = request.headers.get("x-alchemy-signature")
-    if not signing_key or not verify_alchemy_signature(signing_key, body, signature):
-        log.warning("webhook_invalid_signature", header_present=bool(signing_key))
+    if not signing_keys or not any(verify_alchemy_signature(k, body, signature) for k in signing_keys):
+        log.warning("webhook_invalid_signature", keys_configured=len(signing_keys), header_present=bool(signature))
         return web.Response(status=401, text="Invalid signature")
 
     try:
