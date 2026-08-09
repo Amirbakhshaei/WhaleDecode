@@ -69,7 +69,7 @@ class LiveBlockchainFetcher:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.error("fetcher_loop_error", error=str(e), exc_info=True)
+                log.error("fetcher_loop_error", extra={"error": str(e)}, exc_info=True)
             try:
                 await asyncio.sleep(self._settings.POLL_INTERVAL_SECONDS)
             except asyncio.CancelledError:
@@ -81,7 +81,7 @@ class LiveBlockchainFetcher:
             wallets = await uow.curated_wallets.list_active()
 
         if not wallets:
-            log.info("fetcher_no_wallets")
+            log.info("fetcher_no_wallets", extra={})
             return
 
         curated_ids = {w.id for w in wallets if w.id is not None}
@@ -90,7 +90,7 @@ class LiveBlockchainFetcher:
             try:
                 block = await self._provider.get_block_number(chain)
             except Exception as e:
-                log.error("fetcher_block_failed", chain=chain, error=str(e))
+                log.error("fetcher_block_failed", extra={"chain": chain, "error": str(e)})
                 continue
 
             on_chain = [w for w in wallets if w.chain.label() == chain]
@@ -115,7 +115,7 @@ class LiveBlockchainFetcher:
                             topics=topics,
                         )
                     except Exception as e:
-                        log.error("fetcher_logs_failed", chain=chain, batch=i, error=str(e))
+                        log.error("fetcher_logs_failed", extra={"chain": chain, "batch": i, "error": str(e)})
                         continue
                     for raw_log in logs:
                         wallet_id = wallet_id_from_transfer_topics(raw_log.get("topics", []), padded_to_wallet)
@@ -130,9 +130,9 @@ class LiveBlockchainFetcher:
                             pending.append(self._to_pending_data(event))
                 if pending:
                     await self._insert_pending(pending)
-                    log.info("fetcher_inserted", chain=chain, count=len(pending))
+                    log.info("fetcher_inserted", extra={"chain": chain, "count": len(pending)})
 
-        log.info("fetcher_poll_complete", wallet_count=len(wallets))
+        log.info("fetcher_poll_complete", extra={"wallet_count": len(wallets)})
 
     def _from_block(self, chain: str, block: int) -> int:
         requested = block - self._settings.REORG_SAFE_BLOCKS
@@ -141,10 +141,12 @@ class LiveBlockchainFetcher:
         if from_block != requested:
             log.warning(
                 "block_range_clamped",
-                chain=chain,
-                from_block=from_block,
-                to_block=block,
-                max_block_range=max_block_range,
+                extra={
+                    "chain": chain,
+                    "from_block": from_block,
+                    "to_block": block,
+                    "max_block_range": max_block_range,
+                },
             )
         return from_block
 

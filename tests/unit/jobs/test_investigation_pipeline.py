@@ -164,7 +164,7 @@ async def test_webhook_activity_investigates_and_persists_agent_run(
     assert result["summary"] == "Whale moved 1M USDC to Binance"
 
     async with UnitOfWork(session_factory) as uow:
-        events = await uow.candidate_events.list_by_status("pending")
+        events = await uow.candidate_events.list_by_status("NEW")
         assert len(events) == 1
         assert isinstance(events[0].id, int)
         run = await uow.agent_runs.get_by_trigger("event", events[0].id)

@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.chain.normalizer import _classify_event
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import (
-    InvestigationService,
     build_investigation_service,
 )
 from whaledecode.config.settings import Settings
@@ -55,103 +54,6 @@ def _hex_int(value: Any, default: int = 0) -> int:
         except ValueError:
             return default
     return default
-
-
-def _activity_candidate(
-    activity: dict[str, Any],
-    chain: Chain,
-    wallet: CuratedWallet,
-) -> CandidateEvent:
-    """Shape one Alchemy Address Activity into our internal candidate event."""
-    value_usd = float(activity.get("value") or 0.0)
-    log_obj = activity.get("log") or {}
-    topics = log_obj.get("topics") or []
-    event_type = _classify_event(topics, log_obj.get("address", "")) if topics else "TRANSFER"
-    log_index = _hex_int(log_obj.get("logIndex"))
-    chain_label = chain.label()
-
-    raw_json = dict(activity)
-    raw_json["value_usd"] = value_usd
-    return CandidateEvent(
-        wallet_id=wallet.id,
-        chain=chain_label,
-        tx_hash=Hash(activity["hash"]),
-        log_index=log_index,
-        block_number=_hex_int(activity.get("blockNum")),
-        event_type=event_type,
-        raw_json=raw_json,
-        score=0.0,
-        status="pending",
-        dedupe_key=f"{wallet.id}:{activity['hash']}:{log_index}",
-    )
-
-
-def _score_candidate(candidate: CandidateEvent) -> float:
-    return _sentinel.score(
-        {
-            "event_type": candidate.event_type,
-            "value_usd": candidate.raw_json.get("value_usd", 0.0),
-            "wallet_id": candidate.wallet_id,
-            "tx_hash": str(candidate.tx_hash),
-        },
-        curated_wallet_ids={candidate.wallet_id},
-    )
-
-
-async def _safe_process(
-    investigation_service: InvestigationService, candidate: CandidateEvent
-) -> None:
-    try:
-        await investigation_service.process_event(candidate)
-        logger.info(
-            "webhook_candidate_investigated",
-            dedupe_key=candidate.dedupe_key,
-            score=candidate.score,
-        )
-    except Exception as e:
-        logger.warning(
-            "webhook_candidate_failed", dedupe_key=candidate.dedupe_key, error=str(e)
-        )
-
-
-async def _process_webhook_payload(
-    payload: dict[str, Any],
-    settings: Settings,
-    session_factory: async_sessionmaker[AsyncSession],
-    investigation_service: InvestigationService,
-) -> None:
-    """Process webhook payload in background."""
-    if payload.get("type") != "ADDRESS_ACTIVITY":
-        return
-    event = payload.get("event") or {}
-    chain = _NETWORK_TO_CHAIN.get(event.get("network"))
-    if chain is None:
-        logger.warning("webhook_unknown_network", network=event.get("network"))
-        return
-
-    async with UnitOfWork(session_factory) as uow:
-        wallets = await uow.curated_wallets.list_active(chain=chain.name)
-    wallet_map = {w.address.lower(): w for w in wallets if w.id is not None}
-
-    threshold = settings.ALERT_SCORE_THRESHOLD * 100
-    for activity in event.get("activity") or []:
-        if not activity.get("hash"):
-            continue
-        wallet = None
-        for side in ("fromAddress", "toAddress"):
-            addr = activity.get(side)
-            if addr and addr.lower() in wallet_map:
-                wallet = wallet_map[addr.lower()]
-                break
-        if wallet is None:
-            continue
-
-        candidate = _activity_candidate(activity, chain, wallet)
-        candidate.score = _score_candidate(candidate)
-        if candidate.score < threshold:
-            continue
-
-        await _safe_process(investigation_service, candidate)
 
 
 @asynccontextmanager
@@ -226,6 +128,95 @@ async def alchemy_webhook(
         payload,
         settings,
         session_factory,
-        investigation_service,
     )
     return {"status": "accepted"}
+
+
+async def _process_webhook_payload(
+    payload: dict[str, Any],
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Process webhook payload in background - only ingest and persist as pending."""
+    if payload.get("type") != "ADDRESS_ACTIVITY":
+        return
+    event = payload.get("event") or {}
+    chain = _NETWORK_TO_CHAIN.get(event.get("network"))
+    if chain is None:
+        logger.warning("webhook_unknown_network", extra={"network": event.get("network")})
+        return
+
+    async with UnitOfWork(session_factory) as uow:
+        wallets = await uow.curated_wallets.list_active(chain=chain.name)
+    wallet_map = {w.address.lower(): w for w in wallets if w.id is not None}
+
+    for activity in event.get("activity") or []:
+        if not activity.get("hash"):
+            continue
+        wallet = None
+        for side in ("fromAddress", "toAddress"):
+            addr = activity.get(side)
+            if addr and addr.lower() in wallet_map:
+                wallet = wallet_map[addr.lower()]
+                break
+        if wallet is None:
+            continue
+
+        # Build candidate data and insert directly as pending
+        candidate_data = _build_candidate_data(activity, chain, wallet)
+        async with UnitOfWork(session_factory) as uow:
+            await uow.candidate_events.create_pending(candidate_data)
+            await uow.commit()
+        logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
+
+
+def _build_candidate_data(
+    activity: dict[str, Any],
+    chain: Chain,
+    wallet: CuratedWallet,
+) -> dict[str, Any]:
+    """Build candidate event data dict for repository insertion."""
+    value_usd = float(activity.get("value") or 0.0)
+    log_obj = activity.get("log") or {}
+    topics = log_obj.get("topics") or []
+    event_type = _classify_event(topics, log_obj.get("address", "")) if topics else "TRANSFER"
+    log_index = _hex_int(log_obj.get("logIndex"))
+    chain_label = chain.label()
+
+    raw_json = dict(activity)
+    raw_json["value_usd"] = value_usd
+    tx_hash = Hash(activity["hash"])
+
+    return {
+        "wallet_id": wallet.id,
+        "chain": chain_label,
+        "tx_hash": str(tx_hash),
+        "log_index": log_index,
+        "block_number": _hex_int(activity.get("blockNum")),
+        "event_type": event_type,
+        "raw_json": raw_json,
+        "score": 0.0,
+        "dedupe_key": f"{wallet.id}:{activity['hash']}:{log_index}",
+    }
+
+
+def _activity_candidate(
+    activity: dict[str, Any],
+    chain: Chain,
+    wallet: CuratedWallet,
+) -> CandidateEvent:
+    """Shape one Alchemy Address Activity into our internal candidate event (legacy for tests)."""
+    data = _build_candidate_data(activity, chain, wallet)
+    return CandidateEvent(**data)
+
+
+def _score_candidate(candidate: CandidateEvent) -> float:
+    return _sentinel.score(
+        {
+            "event_type": candidate.event_type,
+            "value_usd": candidate.raw_json.get("value_usd", 0.0),
+            "wallet_id": candidate.wallet_id,
+            "tx_hash": str(candidate.tx_hash),
+        },
+        curated_wallet_ids={candidate.wallet_id},
+    )

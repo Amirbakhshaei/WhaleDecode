@@ -62,9 +62,9 @@ class BackgroundAIWorker:
                 reaped = await uow.candidate_events.reap_zombie_events()
                 await uow.commit()
         except Exception as e:
-            log.error("worker_reap_failed", error=str(e), exc_info=True)
+            log.error("worker_reap_failed", extra={"error": str(e)}, exc_info=True)
         else:
-            (log.warning if reaped else log.info)("worker_reaped_zombie_events", count=reaped)
+            (log.warning if reaped else log.info)("worker_reaped_zombie_events", extra={"count": reaped})
 
         while not (stop_event and stop_event.is_set()):
             try:
@@ -72,7 +72,7 @@ class BackgroundAIWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.error("worker_loop_error", error=str(e), exc_info=True)
+                log.error("worker_loop_error", extra={"error": str(e)}, exc_info=True)
             try:
                 await asyncio.sleep(self._settings.POLL_INTERVAL_SECONDS)
             except asyncio.CancelledError:
@@ -100,7 +100,7 @@ class BackgroundAIWorker:
                 async with UnitOfWork(self._session_factory) as uow:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
-                log.info("worker_event_skipped", dedupe_key=event.dedupe_key, status="skipped")
+                log.info("worker_event_skipped", extra={"dedupe_key": event.dedupe_key, "status": "skipped"})
                 return
             dispatched = await self._dispatch(event, result)
             async with UnitOfWork(self._session_factory) as uow:
@@ -108,21 +108,21 @@ class BackgroundAIWorker:
                 if dispatched:
                     await uow.candidate_events.mark_published(event.id)
                 await uow.commit()
-            log.info("worker_event_done", dedupe_key=event.dedupe_key, status="completed")
+            log.info("worker_event_done", extra={"dedupe_key": event.dedupe_key, "status": "completed"})
         except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter):
-            log.warning("Telegram API unreachable, deferring alert.", dedupe_key=event.dedupe_key)
+            log.warning("Telegram API unreachable, deferring alert.", extra={"dedupe_key": event.dedupe_key})
             async with UnitOfWork(self._session_factory) as uow:
                 await uow.candidate_events.set_status(event.id, "pending")
                 await uow.commit()
         except Exception as e:
-            log.error("worker_event_failed", dedupe_key=event.dedupe_key, error=str(e), exc_info=True)
+            log.error("worker_event_failed", extra={"dedupe_key": event.dedupe_key, "error": str(e)}, exc_info=True)
             async with UnitOfWork(self._session_factory) as uow:
                 next_status = await uow.candidate_events.record_failure(event.id, max_attempts=MAX_ATTEMPTS)
                 if next_status == "dead_letter":
                     await uow.admin_audit_logs.create(self._dead_letter_audit(event, e))
                 await uow.commit()
             if next_status == "dead_letter":
-                log.warning("worker_event_dead_lettered", dedupe_key=event.dedupe_key)
+                log.warning("worker_event_dead_lettered", extra={"dedupe_key": event.dedupe_key})
 
     @staticmethod
     def _dead_letter_audit(event: CandidateEvent, exc: Exception) -> AdminAuditLog:
@@ -147,11 +147,11 @@ class BackgroundAIWorker:
     async def _dispatch(self, event: CandidateEvent, result: dict[str, Any]) -> bool:
         """Send the alert; return True only if a message was actually dispatched."""
         if not self._bot or not self._channel_id:
-            log.info("worker_dispatch_skipped", channel_id=self._channel_id or "NOT_SET")
+            log.info("worker_dispatch_skipped", extra={"channel_id": self._channel_id or "NOT_SET"})
             return False
         summary = result.get("summary", "")
         if not summary:
-            log.warning("worker_dispatch_empty_summary", dedupe_key=event.dedupe_key)
+            log.warning("worker_dispatch_empty_summary", extra={"dedupe_key": event.dedupe_key})
             return False
 
         from whaledecode.adapters.telegram.keyboards import build_keyboard
@@ -165,5 +165,5 @@ class BackgroundAIWorker:
             reply_markup=build_keyboard(str(event.tx_hash)),
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-        log.info("worker_dispatched", dedupe_key=event.dedupe_key)
+        log.info("worker_dispatched", extra={"dedupe_key": event.dedupe_key})
         return True
