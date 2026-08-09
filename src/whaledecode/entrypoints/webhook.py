@@ -20,6 +20,7 @@ from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app
+from whaledecode.entrypoints.worker import launch_supervisor_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ def _activity_candidate(
         event_type=event_type,
         raw_json=raw_json,
         score=0.0,
+        status="pending",
         dedupe_key=f"{wallet.id}:{activity['hash']}:{log_index}",
     )
 
@@ -154,7 +156,7 @@ async def _process_webhook_payload(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: start bot polling on startup, stop on shutdown."""
+    """FastAPI lifespan: start bot polling + consumer supervisor on startup, stop on shutdown."""
     settings = app.state.settings
     logger.info("Starting Telegram Bot in the background...")
     bot, dp = build_telegram_app(settings)
@@ -164,13 +166,31 @@ async def lifespan(app: FastAPI):
     app.state.dp = dp
     app.state.polling_task = dp.start_polling(bot)
     logger.info("Bot polling started")
+
+    # Start consumer supervisor (BackgroundAIWorker + alert loop + cron jobs)
+    stop_event = asyncio.Event()
+    app.state.stop_event = stop_event
+    app.state.supervisor_tasks = launch_supervisor_tasks(
+        app.state.session_factory,
+        app.state.investigation_service,
+        settings,
+        bot,
+        stop_event,
+    )
+    logger.info("Consumer supervisor started")
+
     yield
-    logger.info("Shutting down Telegram Bot...")
+
+    logger.info("Shutting down Telegram Bot and consumer supervisor...")
+    stop_event.set()
     app.state.polling_task.cancel()
+    for task in app.state.supervisor_tasks:
+        task.cancel()
     try:
         await app.state.polling_task
     except asyncio.CancelledError:
         pass
+    await asyncio.gather(*app.state.supervisor_tasks, return_exceptions=True)
     await dp.emit_shutdown()
     await bot.session.close()
 

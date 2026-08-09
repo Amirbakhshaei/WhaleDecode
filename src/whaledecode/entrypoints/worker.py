@@ -26,27 +26,6 @@ async def run_worker(settings: Settings) -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    scheduler = AsyncIOScheduler()
-
-    scheduler.add_job(
-        _reset_daily_counters,
-        trigger="cron",
-        hour=0,
-        minute=0,
-        args=[session_factory],
-        id="reset_daily_counters",
-        misfire_grace_time=300,
-    )
-    scheduler.add_job(
-        _run_briefing,
-        trigger="cron",
-        hour=8,
-        minute=0,
-        args=[session_factory, bot, settings],
-        id="daily_briefing",
-        misfire_grace_time=600,
-    )
-
     llm_factory = LLMFactory(settings)
     reasoner = LangGraphReasoner(settings, llm_factory)
 
@@ -70,24 +49,84 @@ async def run_worker(settings: Settings) -> None:
         except NotImplementedError:
             pass
 
+    # Start fetcher (polling) and supervisor tasks
+    fetcher = LiveBlockchainFetcher(session_factory, settings)
+    fetcher_task = asyncio.create_task(fetcher.run(stop_event))
+
+    supervisor_tasks = launch_supervisor_tasks(
+        session_factory, investigation_service, settings, bot, stop_event
+    )
+
+    try:
+        await stop_event.wait()
+    finally:
+        fetcher_task.cancel()
+        for t in supervisor_tasks:
+            t.cancel()
+        await asyncio.gather(fetcher_task, *supervisor_tasks, return_exceptions=True)
+        await reasoner.close()
+        await bot.session.close()
+        log.info("worker_stopped")
+
+
+def launch_supervisor_tasks(
+    session_factory,
+    investigation_service,
+    settings: Settings,
+    bot: Bot,
+    stop_event: asyncio.Event,
+) -> list[asyncio.Task]:
+    """Start the consumer supervisor tasks (worker + alert loop + cron jobs).
+    Returns list of tasks to be awaited/cancelled by caller.
+    """
+    # Scheduler for cron jobs (daily briefing, counter reset)
+    scheduler = AsyncIOScheduler()
+
+    scheduler.add_job(
+        _reset_daily_counters,
+        trigger="cron",
+        hour=0,
+        minute=0,
+        args=[session_factory],
+        id="reset_daily_counters",
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
+        _run_briefing,
+        trigger="cron",
+        hour=8,
+        minute=0,
+        args=[session_factory, bot, settings],
+        id="daily_briefing",
+        misfire_grace_time=600,
+    )
+
     scheduler.start()
 
-    fetcher = LiveBlockchainFetcher(session_factory, settings)
-    worker = BackgroundAIWorker(session_factory, investigation_service, settings, bot=bot)
+    # BackgroundAIWorker: claims pending events, investigates, dispatches to channel
+    worker = BackgroundAIWorker(
+        session_factory, investigation_service, settings, bot=bot
+    )
 
-    fetcher_task = asyncio.create_task(fetcher.run(stop_event))
-    worker_task = asyncio.create_task(worker.run(stop_event))
-    alert_task = asyncio.create_task(_alert_loop(session_factory, bot, settings))
+    tasks = [
+        asyncio.create_task(worker.run(stop_event)),
+        asyncio.create_task(_alert_loop(session_factory, bot, settings)),
+    ]
 
-    await stop_event.wait()
+    # Store scheduler for shutdown
+    tasks.append(asyncio.create_task(_run_scheduler(scheduler, stop_event)))
 
-    fetcher_task.cancel()
-    worker_task.cancel()
-    alert_task.cancel()
+    return tasks
+
+
+async def _run_scheduler(scheduler: AsyncIOScheduler, stop_event: asyncio.Event) -> None:
+    """Run scheduler until stop_event is set."""
+    while not stop_event.is_set():
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            break
     scheduler.shutdown(wait=False)
-    await reasoner.close()
-    await bot.session.close()
-    log.info("worker_stopped")
 
 
 async def _alert_loop(session_factory, bot: Bot, settings: Settings) -> None:
