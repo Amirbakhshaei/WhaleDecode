@@ -33,7 +33,7 @@ def _load_settings() -> Settings:
 
 @cli.command()
 def bot():
-    """Start Telegram bot (polling mode)."""
+    """Run the Telegram bot and Alchemy webhook server concurrently."""
     settings = _load_settings()
     setup_logging(settings)
 
@@ -45,9 +45,13 @@ def bot():
     if not settings.BOT_TOKEN.get_secret_value():
         raise click.ClickException("BOT_TOKEN is not set in .env")
 
-    from whaledecode.entrypoints.bot import run_bot
+    from whaledecode.entrypoints.bot import start_bot
+    from whaledecode.entrypoints.webhook import run_webhook
 
-    asyncio.run(run_bot(settings))
+    async def _combined() -> None:
+        await asyncio.gather(start_bot(settings), run_webhook(settings))
+
+    asyncio.run(_combined())
 
 
 @cli.command()

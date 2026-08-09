@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.chain.normalizer import TRANSFER_EVENT_SIGNATURE, pad_address_to_topic
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
-from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
@@ -38,53 +37,6 @@ class FakeReasoner:
 
     async def generate_briefing(self, briefing_input: dict[str, Any]) -> dict[str, Any]:
         return {"summary": "briefing"}
-
-
-class FakeProvider:
-    async def get_block_number(self, chain: str) -> int:
-        return 20_000_000
-
-    async def get_logs(
-        self,
-        chain: str,
-        addresses: list[str],
-        from_block: int,
-        to_block: int,
-        topics: list[Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        return [
-            {
-                "address": TOKEN_ADDRESS,
-                "topics": [
-                    TRANSFER_EVENT_SIGNATURE,
-                    pad_address_to_topic(WALLET_ADDRESS),
-                    None,
-                ],
-                "data": hex(200_000 * 10**18),
-                "blockNumber": hex(from_block + 1),
-                "transactionHash": TX_HASH,
-                "logIndex": "0x0",
-            }
-        ]
-
-    async def get_token_metadata(self, chain: str, address: str) -> dict[str, Any]:
-        return {"name": "T", "symbol": "T", "decimals": 18}
-
-    async def trace_call(self, chain: str, tx_hash: str) -> dict[str, Any]:
-        return {}
-
-    async def close(self) -> None:
-        pass
-
-
-def _settings() -> Settings:
-    from pydantic import SecretStr
-
-    return Settings(
-        BOT_TOKEN=SecretStr("test"),
-        GROQ_API_KEY=SecretStr("test"),
-        ALERT_SCORE_THRESHOLD=0.3,
-    )
 
 
 async def _seed_wallet(session_factory: async_sessionmaker[AsyncSession]) -> int:
@@ -169,17 +121,47 @@ async def test_process_event_skipped_when_below_gate_threshold(
 
 
 @pytest.mark.asyncio
-async def test_poll_wallets_runs_reasoner_and_persists_agent_run(
-    session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+async def test_webhook_activity_investigates_and_persists_agent_run(
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    from whaledecode.jobs.poll_wallets import poll_wallets
+    from whaledecode.entrypoints.webhook import _activity_candidate, _score_candidate
 
-    await _seed_wallet(session_factory)
-    monkeypatch.setattr("whaledecode.jobs.poll_wallets.create_chain_provider", lambda settings: FakeProvider())
-
+    wallet_id = await _seed_wallet(session_factory)
     reasoner = FakeReasoner()
     service = InvestigationService(lambda: UnitOfWork(session_factory), reasoner)
-    await poll_wallets(session_factory, _settings(), service)
+
+    activity: dict[str, Any] = {
+        "blockNum": "0xdf34a3",
+        "hash": TX_HASH,
+        "fromAddress": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "toAddress": WALLET_ADDRESS,
+        "value": 2_000_000.0,
+        "asset": "USDC",
+        "category": "token",
+        "rawContract": {"address": TOKEN_ADDRESS, "decimals": 6},
+        "log": {
+            "address": TOKEN_ADDRESS,
+            "topics": [
+                TRANSFER_EVENT_SIGNATURE,
+                pad_address_to_topic("0x503828976d22510aad0201ac7ec88293211d23da"),
+                pad_address_to_topic(WALLET_ADDRESS),
+            ],
+            "logIndex": "0x0",
+            "blockNumber": "0xdf34a3",
+            "transactionHash": TX_HASH,
+        },
+    }
+    wallet = CuratedWallet(id=wallet_id, address=WALLET_ADDRESS, chain=Chain.ETH, label="Test Whale")
+    candidate = _activity_candidate(activity, Chain.ETH, wallet)
+    candidate.score = _score_candidate(candidate)
+    assert candidate.event_type == "TRANSFER"
+    assert candidate.dedupe_key == f"{wallet_id}:{TX_HASH}:0"
+    assert candidate.score >= 50.0
+
+    result = await service.process_event(candidate)
+
+    assert reasoner.investigate_calls == 1
+    assert result["summary"] == "Whale moved 1M USDC to Binance"
 
     async with UnitOfWork(session_factory) as uow:
         events = await uow.candidate_events.list_by_status("NEW")

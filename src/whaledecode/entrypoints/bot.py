@@ -3,10 +3,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.adapters.llm.factory import LLMFactory
-from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
 from whaledecode.adapters.telegram.dispatcher import TelegramAlertDispatcher
 from whaledecode.adapters.telegram.middleware import ThrottlingMiddleware
 from whaledecode.adapters.telegram.routers import (
@@ -17,18 +14,16 @@ from whaledecode.adapters.telegram.routers import (
     payments_router,
     wallet_router,
 )
-from whaledecode.application.services.investigation import InvestigationService
+from whaledecode.application.services.investigation import build_investigation_service
 from whaledecode.application.services.wallet import WalletService
 from whaledecode.config.settings import Settings
 from whaledecode.entrypoints.seed import ensure_curated_wallets_seeded
 
 
-async def run_bot(settings: Settings) -> None:
+async def start_bot(settings: Settings) -> None:
     log = structlog.get_logger()
 
-    session_factory = create_session_factory(settings)
-    llm_factory = LLMFactory(settings)
-    reasoner = LangGraphReasoner(settings, llm_factory)
+    session_factory, investigation_service, reasoner = build_investigation_service(settings)
 
     alert_dispatcher = TelegramAlertDispatcher()
 
@@ -36,7 +31,6 @@ async def run_bot(settings: Settings) -> None:
         return UnitOfWork(session_factory)
 
     wallet_service = WalletService(_uow)
-    investigation_service = InvestigationService(_uow, reasoner, settings)
 
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),

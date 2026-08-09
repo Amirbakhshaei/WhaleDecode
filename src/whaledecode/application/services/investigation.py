@@ -3,6 +3,8 @@ from typing import Any
 
 from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm_graph.formatting.sanitizer import sanitize_event_payload
@@ -113,3 +115,21 @@ class InvestigationService:
     async def generate_briefing(self, user_id: int) -> str:
         result = await self._reasoner.generate_briefing({"user_id": user_id})
         return self._relay.format_briefing(result)
+
+
+def build_investigation_service(
+    settings: Settings,
+) -> tuple[async_sessionmaker[AsyncSession], InvestigationService, ReasonerPort]:
+    """Wire DB session + LLM graph into an InvestigationService."""
+    from whaledecode.adapters.db.session import create_session_factory
+    from whaledecode.adapters.llm.factory import LLMFactory
+    from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
+
+    session_factory = create_session_factory(settings)
+    llm_factory = LLMFactory(settings)
+    reasoner = LangGraphReasoner(settings, llm_factory)
+    return (
+        session_factory,
+        InvestigationService(lambda: UnitOfWork(session_factory), reasoner, settings),
+        reasoner,
+    )
