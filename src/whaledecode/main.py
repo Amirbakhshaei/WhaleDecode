@@ -130,6 +130,26 @@ def verify_seed():
 
 
 @cli.command()
+def unstick() -> None:
+    """Re-queue candidate events stranded in dead_letter/skipped by earlier bugs."""
+    settings = _load_settings()
+    setup_logging(settings)
+
+    from whaledecode.adapters.db.session import create_session_factory
+    from whaledecode.adapters.db.uow import UnitOfWork
+
+    async def _requeue() -> int:
+        factory = create_session_factory(settings)
+        async with UnitOfWork(factory) as uow:
+            count = await uow.candidate_events.requeue_stuck_events()
+            await uow.commit()
+        return count
+
+    count = asyncio.run(_requeue())
+    click.echo(f"Re-queued {count} stuck candidate events.")
+
+
+@cli.command()
 @click.option("--webhook-id", required=True, help="Alchemy webhook ID (wh_...)")
 @click.option("--verified-file", required=True, type=click.Path(exists=True), help="Path to wallets_verified.json")
 def sync_webhook(webhook_id: str, verified_file: str):

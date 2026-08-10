@@ -100,6 +100,38 @@ class CandidateEventRepository:
         )
         return result.rowcount or 0
 
+    async def requeue_stuck_events(self) -> int:
+        """Re-queue ``dead_letter``/``skipped`` rows stranded before the MissingGreenlet
+        and score-0 ingest fixes. Scores are recomputed from raw_json so a 0.0 bug score
+        can't stall an event at the gate again. Returns the number of rows re-queued."""
+        result = await self._session.execute(
+            select(CandidateEventModel).where(
+                CandidateEventModel.status.in_(("dead_letter", "skipped"))
+            )
+        )
+        rows = list(result.scalars())
+        if not rows:
+            return 0
+
+        from whaledecode.domain.policies.sentinel import SentinelEngine
+
+        engine = SentinelEngine()
+        for model in rows:
+            raw = json.loads(model.raw_json) if isinstance(model.raw_json, str) else {}
+            model.score = engine.score(
+                {
+                    "event_type": model.event_type,
+                    "value_usd": raw.get("value_usd", 0.0),
+                    "wallet_id": model.wallet_id,
+                    "tx_hash": model.tx_hash,
+                },
+                curated_wallet_ids={model.wallet_id},
+            )
+            model.status = "pending"
+            model.attempt_count = 0
+        await self._session.flush()
+        return len(rows)
+
     def _supports_row_lock(self) -> bool:
         bind = getattr(self._session.sync_session, "bind", None)
         return bind is not None and bind.dialect.name == "postgresql"
@@ -209,6 +241,9 @@ class CandidateEventRepository:
         model.score = event.score
         model.raw_json = json.dumps(event.raw_json)
         await self._session.flush()
+        # server-side onupdate=func.now() expires updated_at on flush; reload it
+        # so the sync attribute reads in _to_domain don't trigger a greenlet
+        await self._session.refresh(model)
         return self._to_domain(model)
 
     def _to_domain(self, model: CandidateEventModel) -> CandidateEvent:

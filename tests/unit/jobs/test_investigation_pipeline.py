@@ -121,6 +121,43 @@ async def test_process_event_skipped_when_below_gate_threshold(
 
 
 @pytest.mark.asyncio
+async def test_process_event_skips_existing_pending_row_without_missing_greenlet(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A pending row already in the DB (score 0.0 ingest bug) must be marked skipped
+    via update() without triggering MissingGreenlet."""
+    wallet_id = await _seed_wallet(session_factory)
+    reasoner = FakeReasoner()
+    service = InvestigationService(lambda: UnitOfWork(session_factory), reasoner)
+
+    event = _candidate_event(wallet_id)
+    event.score = 0.1
+    async with UnitOfWork(session_factory) as uow:
+        await uow.candidate_events.create_pending(
+            {
+                "wallet_id": wallet_id,
+                "chain": "Ethereum",
+                "tx_hash": str(event.tx_hash),
+                "log_index": 0,
+                "block_number": 100,
+                "event_type": "TRANSFER",
+                "raw_json": {"value_usd": 100.0},
+                "score": 0.1,
+                "dedupe_key": event.dedupe_key,
+            }
+        )
+        await uow.commit()
+
+    result = await service.process_event(event)
+
+    assert result == {"status": "skipped", "reason": "Below gate threshold"}
+    async with UnitOfWork(session_factory) as uow:
+        persisted = await uow.candidate_events.get_by_dedupe_key(event.dedupe_key)
+    assert persisted is not None
+    assert persisted.status == "skipped"
+
+
+@pytest.mark.asyncio
 async def test_webhook_activity_investigates_and_persists_agent_run(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

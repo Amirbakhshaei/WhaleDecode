@@ -212,6 +212,92 @@ async def test_set_status_stamps_updated_at(db_session):
 
 
 @pytest.mark.asyncio
+async def test_update_existing_row_no_missing_greenlet(db_session):
+    """update() must not trigger a synchronous refresh (MissingGreenlet) after flush."""
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:update"))
+    await db_session.commit()
+
+    event = await repo.get_by_dedupe_key("pending:update")
+    assert event is not None
+    event.score = 90.0
+    event.status = "completed"
+    event.raw_json = {"value_usd": 2_000_000.0}
+
+    updated = await repo.update(event)
+    assert updated.id == event.id
+    assert updated.score == 90.0
+    assert updated.status == "completed"
+    assert updated.updated_at is not None
+
+    await db_session.commit()
+    persisted = await repo.get(event.id)
+    assert persisted is not None and persisted.score == 90.0
+
+
+@pytest.mark.asyncio
+async def test_update_inserts_when_dedupe_missing(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+    from whaledecode.domain.entities.candidate_event import CandidateEvent
+    from whaledecode.domain.value_objects.hash import Hash
+
+    repo = CandidateEventRepository(db_session)
+    event = CandidateEvent(
+        wallet_id=1,
+        chain="ETH",
+        tx_hash=Hash("0x" + "b" * 64),
+        log_index=0,
+        block_number=100,
+        event_type="TRANSFER",
+        raw_json={"value_usd": 100.0},
+        score=80.0,
+        dedupe_key="pending:update:new",
+    )
+    created = await repo.update(event)
+    assert created.id is not None
+    assert created.score == 80.0
+
+
+@pytest.mark.asyncio
+async def test_requeue_stuck_events_resets_dead_letter_and_skipped(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    for key, status in [("stuck:dlq", "dead_letter"), ("stuck:skip", "skipped")]:
+        data = _pending_data(key)
+        data["score"] = 0.0  # pre-fix ingest bug
+        data["raw_json"] = {"value_usd": 1_000_000.0}
+        await repo.create_pending(data)
+        await db_session.commit()
+        claimed = await repo.claim_next_pending()
+        await repo.set_status(claimed[0].id, status)
+        await db_session.commit()
+
+    requeued = await repo.requeue_stuck_events()
+    await db_session.commit()
+    assert requeued == 2
+
+    events = await repo.claim_next_pending(limit=10)
+    assert len(events) == 2
+    assert all(e.status == "pending" for e in events)
+    assert all(e.attempt_count == 0 for e in events)
+    assert all(e.score > 0 for e in events)  # score recomputed, not 0.0
+
+
+@pytest.mark.asyncio
+async def test_requeue_stuck_events_noop_when_none_stuck(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("stuck:none"))
+    await db_session.commit()
+
+    assert await repo.requeue_stuck_events() == 0
+
+
+@pytest.mark.asyncio
 async def test_record_failure_routes_to_pending_then_dead_letter(db_session):
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 

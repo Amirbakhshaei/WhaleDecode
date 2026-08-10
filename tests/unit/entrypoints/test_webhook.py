@@ -129,6 +129,66 @@ def test_score_candidate_whale_transfer():
     assert score >= 50.0
 
 
+def test_build_candidate_data_scores_whale_transfer():
+    """Ingested webhook events must carry a real sentinel score, not 0.0."""
+    from whaledecode.adapters.chain.normalizer import TRANSFER_EVENT_SIGNATURE, pad_address_to_topic
+    from whaledecode.entrypoints.webhook import _build_candidate_data
+
+    activity = {
+        "blockNum": "0xdf34a3",
+        "hash": "0x" + "d" * 64,
+        "fromAddress": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "toAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "value": 1_000_000.0,
+        "asset": "USDC",
+        "category": "token",
+        "log": {
+            "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "topics": [
+                TRANSFER_EVENT_SIGNATURE,
+                pad_address_to_topic("0x503828976d22510aad0201ac7ec88293211d23da"),
+                pad_address_to_topic("0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"),
+            ],
+            "logIndex": "0x5",
+            "blockNumber": "0xdf34a3",
+            "transactionHash": "0x" + "d" * 64,
+        },
+    }
+    wallet = CuratedWallet(
+        id=1,
+        address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        chain=Chain.ETH,
+        label="Test Whale",
+    )
+    data = _build_candidate_data(activity, Chain.ETH, wallet)
+    assert data["score"] >= 50.0
+    assert data["score"] == _score_candidate(_activity_candidate(activity, Chain.ETH, wallet))
+
+
+def test_build_candidate_data_scores_low_value_transfer_low():
+    """A sub-whale transfer (curated-bonus only) stays well below the whale gate."""
+    from whaledecode.entrypoints.webhook import _build_candidate_data
+
+    activity = {
+        "blockNum": "0xdf34a3",
+        "hash": "0x" + "e" * 64,
+        "fromAddress": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "toAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "value": 10.0,
+        "asset": "USDC",
+        "category": "token",
+        "log": {},
+    }
+    wallet = CuratedWallet(
+        id=1,
+        address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        chain=Chain.ETH,
+        label="Test Whale",
+    )
+    data = _build_candidate_data(activity, Chain.ETH, wallet)
+    assert data["score"] < 50.0
+
+
 def test_fastapi_app_has_routes():
     """Verify FastAPI app has the webhook and health routes."""
     client = TestClient(app)

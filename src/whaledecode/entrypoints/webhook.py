@@ -195,7 +195,7 @@ def _build_candidate_data(
         "block_number": _hex_int(activity.get("blockNum")),
         "event_type": event_type,
         "raw_json": raw_json,
-        "score": 0.0,
+        "score": _score_activity(event_type, value_usd, wallet.id, str(tx_hash)),
         "dedupe_key": f"{wallet.id}:{activity['hash']}:{log_index}",
     }
 
@@ -210,13 +210,23 @@ def _activity_candidate(
     return CandidateEvent(**data)
 
 
-def _score_candidate(candidate: CandidateEvent) -> float:
+def _score_activity(event_type: str, value_usd: float, wallet_id: int, tx_hash: str) -> float:
+    """Deterministic SENTINEL score for one curated-wallet activity."""
     return _sentinel.score(
         {
-            "event_type": candidate.event_type,
-            "value_usd": candidate.raw_json.get("value_usd", 0.0),
-            "wallet_id": candidate.wallet_id,
-            "tx_hash": str(candidate.tx_hash),
+            "event_type": event_type,
+            "value_usd": value_usd,
+            "wallet_id": wallet_id,
+            "tx_hash": tx_hash,
         },
-        curated_wallet_ids={candidate.wallet_id},
+        curated_wallet_ids={wallet_id},
+    )
+
+
+def _score_candidate(candidate: CandidateEvent) -> float:
+    return _score_activity(
+        candidate.event_type,
+        candidate.raw_json.get("value_usd", 0.0),
+        candidate.wallet_id,
+        str(candidate.tx_hash),
     )
