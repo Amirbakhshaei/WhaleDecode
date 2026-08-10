@@ -229,24 +229,30 @@ class TestFormatAlert:
         assert "<b>WHALE ALERT</b>" in html
         assert "<b>USDC</b>" in html
 
-    def test_value_chain_risk_lines(self):
+    def test_value_chain_score_lines(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
         assert "$124,900.99" in html
         assert "<b>Chain:</b> Ethereum" in html
-        assert "<b>Risk:</b> 72%" in html
+        assert "<b>Score:</b> 72/100" in html
+
+    def test_token_amount_on_value_line(self):
+        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+        assert "(124,901 USDC)" in html
 
     def test_smc_bullets(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "<b>Action:</b> whale swept USDC toward a Binance-linked addr" in html
-        assert "<b>Context:</b> consolidation of a liquidity node" in html
-        assert "<b>Bias:</b> neutral, likely accumulation" in html
+        assert "<b>Fundamental Flow:</b> whale swept USDC toward a Binance-linked addr" in html
+        assert "<b>Technical Context:</b> consolidation of a liquidity node" in html
+        assert "<b>Institutional Bias:</b> neutral, likely accumulation" in html
 
     def test_trace_blockquote_truncated_hashes(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
         tx = TRACE_EVENT["tx_hash"]
         assert "<blockquote expandable>" in html
-        assert f">{tx[:6]}...{tx[-4:]}<" in html
-        assert f"{tx[:6]}...{tx[-4:]}<a" not in html
+        assert ">Tx<" in html
+        assert f">{tx[:6]}…{tx[-4:]}<" not in html
+        assert ">0xdfd5…963d<" in html
+        assert ">0xd862…42e2<" in html
 
     def test_html_escaping(self):
         analysis = {"risk_score": 0.3, "summary": "**Action:** <script>alert(1)</script>"}
@@ -258,7 +264,7 @@ class TestFormatAlert:
         data = build_alert_data({**TRACE_EVENT, "chain": 1}, {"risk_score": 0.735})
         html = format_alert(data)
         assert "<b>Chain:</b> Ethereum" in html
-        assert "<b>Risk:</b> 74%" in html
+        assert "<b>Score:</b> 74/100" in html
 
     def test_zero_value_renders_zero(self):
         event_zero = {**TRACE_EVENT, "raw_json": {**TRACE_EVENT["raw_json"], "value_usd": 0}}
@@ -269,9 +275,9 @@ class TestFormatAlert:
 class TestBuildAlertData:
     def test_extracts_smc_fields_from_summary(self):
         data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
-        assert data["action"] == "whale swept USDC toward a Binance-linked addr"
-        assert data["context"] == "consolidation of a liquidity node"
-        assert data["bias"] == "neutral, likely accumulation"
+        assert data["fundamental_summary"] == "whale swept USDC toward a Binance-linked addr"
+        assert data["technical_summary"] == "consolidation of a liquidity node"
+        assert data["bias_summary"] == "neutral, likely accumulation"
 
     def test_explorer_urls_built(self):
         data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)

@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     FREE_ALERT_BATCH_INTERVAL_MINUTES: int = 60
     PAID_ALERT_BATCH_INTERVAL_SECONDS: int = 5
     MIN_INVESTIGATION_SCORE: float = 0.65
-    MIN_INVESTIGATION_VALUE_USD: float = 5000.0
+    MIN_INVESTIGATION_VALUE_USD: float = 50_000.0
 
     # Channel Publishing
     TELEGRAM_CHANNEL_ID: str | None = None

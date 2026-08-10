@@ -246,18 +246,24 @@ def build_alert_data(event_data: dict[str, Any], report: dict[str, Any]) -> dict
         raw.get("token") or raw.get("asset") or event_data.get("token") or event_data.get("asset") or "UNKNOWN"
     )
     chain = str(event_data.get("chain", ""))
+    amount = _as_float(raw.get("amount") or event_data.get("amount"))
     action, context, bias = _smc_fields(report)
+    risk_score = report.get("risk_score", 0.0)
     return {
         "value_usd": _value_usd(event_data, report),
+        "token_amount_formatted": f"{amount:,.0f} {asset}".strip() if amount > 0 else "",
         "asset": asset,
         "chain": chain,
-        "risk_score": report.get("risk_score", 0.0),
+        "score": _risk_percent(risk_score),
+        "risk_score": risk_score,
+        "fundamental_summary": action or "N/A",
+        "technical_summary": context or "N/A",
+        "bias_summary": bias or "Neutral",
         "tx_hash": tx_hash,
         "from_address": from_addr,
         "to_address": to_addr,
-        "action": action,
-        "context": context,
-        "bias": bias,
+        "from_label": truncate_hash(from_addr) if from_addr else "Unknown Wallet",
+        "to_label": truncate_hash(to_addr) if to_addr else "Unknown Wallet",
         "tx_url": url_for("tx", tx_hash, chain) if tx_hash else "#",
         "from_url": url_for("address", from_addr, chain) if from_addr else "#",
         "to_url": url_for("address", to_addr, chain) if to_addr else "#",
@@ -265,41 +271,37 @@ def build_alert_data(event_data: dict[str, Any], report: dict[str, Any]) -> dict
 
 
 def format_alert(alert_data: dict[str, Any]) -> str:
-    """Institutional-trader channel alert: deterministic HTML with an expandable
-    trace blockquote. Hashes are truncated; fiat value is never confused with
-    token quantity."""
+    """Institutional-trader channel alert: high-density HTML. One-line micro anchors
+    hold the trace links; the expandable blockquote hides ONLY the raw hash data,
+    never the trader-intelligence text."""
     value_usd = _as_float(alert_data.get("value_usd", 0.0))
     asset = escape(str(alert_data.get("asset", "UNKNOWN")))
     chain = _normalize_chain(alert_data.get("chain", "ETH"))
-    risk_score = _risk_percent(alert_data.get("risk_score", 0))
+    score = int(_as_float(alert_data.get("score", 0)))
+    token_amount = escape(str(alert_data.get("token_amount_formatted", "")))
 
-    tx_hash = str(alert_data.get("tx_hash", ""))
-    short_tx = f"{tx_hash[:6]}...{tx_hash[-4:]}" if tx_hash else "N/A"
-    from_addr = str(alert_data.get("from_address", ""))
-    short_from = f"{from_addr[:6]}...{from_addr[-4:]}" if from_addr else "N/A"
-    to_addr = str(alert_data.get("to_address", ""))
-    short_to = f"{to_addr[:6]}...{to_addr[-4:]}" if to_addr else "N/A"
-
-    action = escape(str(alert_data.get("action") or "N/A"))
-    context = escape(str(alert_data.get("context") or "N/A"))
-    bias = escape(str(alert_data.get("bias") or "N/A"))
+    fundamental = escape(str(alert_data.get("fundamental_summary") or "N/A"))
+    technical = escape(str(alert_data.get("technical_summary") or "N/A"))
+    bias = escape(str(alert_data.get("bias_summary") or "Neutral"))
 
     tx_url = escape(str(alert_data.get("tx_url") or "#"), quote=True)
     from_url = escape(str(alert_data.get("from_url") or "#"), quote=True)
     to_url = escape(str(alert_data.get("to_url") or "#"), quote=True)
+    from_label = escape(str(alert_data.get("from_label") or "Unknown Wallet"))
+    to_label = escape(str(alert_data.get("to_label") or "Unknown Wallet"))
+
+    value_line = f"💰 <b>Value:</b> ${value_usd:,.2f}"
+    if token_amount:
+        value_line += f" ({token_amount})"
 
     return f"""🚨 <b>WHALE ALERT</b> | <b>{asset}</b>
 ───────────────────────────
-💰 <b>Value:</b> ${value_usd:,.2f}
-🌐 <b>Chain:</b> {chain}
-🎯 <b>Risk:</b> {risk_score}%
+{value_line}
+🌐 <b>Chain:</b> {chain} | 🎯 <b>Score:</b> {score}/100
 
-🧠 <b>Smart Money Intelligence</b>
-• <b>Action:</b> {action}
-• <b>Context:</b> {context}
-• <b>Bias:</b> {bias}
+🧠 <b>TRADER INTELLIGENCE</b>
+• <b>Fundamental Flow:</b> {fundamental}
+• <b>Technical Context:</b> {technical}
+• <b>Institutional Bias:</b> {bias}
 
-<blockquote expandable><b>🔍 Trace Metrics</b>
-<b>Tx:</b> <a href="{tx_url}">{short_tx}</a>
-<b>From:</b> <a href="{from_url}">{short_from}</a>
-<b>To:</b> <a href="{to_url}">{short_to}</a></blockquote>""".strip()
+<blockquote expandable>🔗 <a href="{tx_url}">Tx</a> | <a href="{from_url}">{from_label}</a> ➔ <a href="{to_url}">{to_label}</a></blockquote>""".strip()
