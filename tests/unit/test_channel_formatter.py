@@ -292,6 +292,32 @@ class TestBuildAlertData:
         assert data["technical_summary"] == report["technical_summary"]
         assert data["bias_summary"] == report["bias_summary"]
 
+    def test_raw_hex_always_stripped_from_summaries(self):
+        report = {
+            "risk_score": 0.72,
+            "fundamental_summary": (
+                "Transferred 9,728,356 SHIB from ||0xdfd5293d8e347dfe59e90efd55b2956a1343963d|| "
+                "to 0x545a4655...e2f4: CEX Outflow."
+            ),
+            "technical_summary": "Support zone 0x000000000000000000000000000000000000FFaa.",
+            "bias_summary": "Bullish Accumulation at 0xdeadbeef.",
+        }
+        data = build_alert_data(TRACE_EVENT, report)
+        assert "0x" not in data["fundamental_summary"]
+        assert "0x" not in data["technical_summary"]
+        assert "0x" not in data["bias_summary"]
+        assert "Binance 16 ➔ Cold Storage".split(" ➔ ")[0] == "Binance 16"
+        assert data["fundamental_summary"] == "Transferred 9,728,356 SHIB from to : CEX Outflow."
+        assert data["bias_summary"] == "Bullish Accumulation at ."
+
+    def test_hex_strip_preserves_trader_content(self):
+        from whaledecode.adapters.telegram.formatters.channel_formatter import _strip_hex
+
+        out = _strip_hex("CEX Outflow ($15.2M SHIB: Binance 16 ➔ Cold Storage). ~3.8% of supply.")
+        assert out == "CEX Outflow ($15.2M SHIB: Binance 16 ➔ Cold Storage). ~3.8% of supply."
+        out = _strip_hex("Executed at $0.00001820 daily support zone.")
+        assert out == "Executed at $0.00001820 daily support zone."
+
     def test_explorer_urls_built(self):
         data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
         raw = TRACE_EVENT["raw_json"]

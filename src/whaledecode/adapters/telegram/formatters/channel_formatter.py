@@ -6,6 +6,11 @@ from typing import Any
 
 _MD_CLEANUP = re.compile(r"```(?:json)?|```|\*\*|__|[*_`]")
 
+# Deterministic guard: raw EVM hex (20-byte address or 32-byte hash, full or
+# abbreviated 0x…abc) must never reach the trader-intelligence lines, even if the
+# LLM or a cached legacy run slipped one in. Also removes ||0x…|| spoiler wraps.
+_HEX_TOKEN = re.compile(r"0x[0-9a-fA-F]{4,}(?:\.{2,}[0-9a-fA-F]{0,4})?")
+_SPOILER_HEX = re.compile(r"\|\|0x[0-9a-fA-F]{4,}(?:\|{2}|[^|]*\|{2})")
 _MD2_SPECIAL = set("_[]()~`>#+-=|{}.!")
 
 _EXPLORERS: dict[str, str] = {
@@ -127,7 +132,7 @@ def format_channel_post_markdown(
     """
     chain = chain or str(event_data.get("chain", "Unknown"))
     risk = float(analysis.get("risk_score", 0.0))
-    summary = escape_markdown_v2(_strip_md(str(analysis.get("summary", ""))))
+    summary = escape_markdown_v2(_strip_hex(_strip_md(str(analysis.get("summary", "")))))
     event_type = str(event_data.get("event_type", "EVENT")).upper()
     amount, token = _asset(event_data)
     value = _value_usd(event_data, analysis)
@@ -177,8 +182,8 @@ def format_premium_event_post(event_data: dict[str, Any], analysis: dict[str, An
     chain = str(event_data.get('chain', 'Unknown')).capitalize()
     value_usd = float(raw.get('value_usd', 0) or event_data.get('value_usd', 0))
 
-    summary = escape(_strip_md(str(analysis.get('summary', 'No summary provided.'))))
-    thesis = escape(_strip_md(str(analysis.get('thesis', 'No thesis formulated.'))))
+    summary = escape(_strip_hex(_strip_md(str(analysis.get('summary', 'No summary provided.')))))
+    thesis = escape(_strip_hex(_strip_md(str(analysis.get('thesis', 'No thesis formulated.')))))
 
     return f"""✦ <b>WHALEDECODE</b> PRO
 <i>On-Chain Event Analysis</i>
@@ -222,18 +227,32 @@ def _risk_percent(risk: Any) -> int:
     return int(round(value)) if value > 1 else int(round(value * 100))
 
 
+def _strip_hex(text: str) -> str:
+    """Remove raw EVM hex tokens (and their spoiler wraps) from a summary line.
+
+    Whitespace is collapsed per line only, so multi-bullet summaries keep
+    their line structure."""
+    out = _SPOILER_HEX.sub("", text)
+    out = _HEX_TOKEN.sub("", out)
+    return "\n".join(" ".join(line.split()) for line in out.splitlines()).strip("| ")
+
+
+strip_hex_text = _strip_hex
+
+
 def _smc_fields(report: dict[str, Any]) -> tuple[str, str, str]:
     """Extract the three trader-intelligence fields, preferring the structured
-    LLM output keys over the legacy markdown-bullet parse."""
+    LLM output keys over the legacy markdown-bullet parse. Raw hex is stripped
+    deterministically so the channel can never echo an address/hash."""
     fields: dict[str, str] = {}
     for line in str(report.get("summary", "")).splitlines():
         match = _SMC_BULLET.search(line)
         if match:
             fields[match.group(1)] = match.group(2).strip()
     return (
-        str(report.get("fundamental_summary") or fields.get("Action") or report.get("action", "")),
-        str(report.get("technical_summary") or fields.get("Context") or report.get("context", "")),
-        str(report.get("bias_summary") or fields.get("Bias") or report.get("bias", "")),
+        _strip_hex(str(report.get("fundamental_summary") or fields.get("Action") or report.get("action", ""))),
+        _strip_hex(str(report.get("technical_summary") or fields.get("Context") or report.get("context", ""))),
+        _strip_hex(str(report.get("bias_summary") or fields.get("Bias") or report.get("bias", ""))),
     )
 
 

@@ -3,6 +3,7 @@ from typing import Any
 
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
     format_premium_event_post,
+    strip_hex_text,
 )
 from whaledecode.config.settings import Settings
 
@@ -17,9 +18,9 @@ class RelayFormatter:
         addr_short = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else escape(addr)
         chain = escape(event.get("chain", ""))
         event_type = escape(event.get("event_type", "EVENT"))
-        summary = escape(report.get("summary", "No analysis available."))
+        summary = escape(strip_hex_text(report.get("summary", "No analysis available.")))
         score = report.get("risk_score", 0.0)
-        thesis = escape(report.get("thesis", ""))
+        thesis = escape(strip_hex_text(report.get("thesis", "")))
 
         lines = [
             f"🐋 <b>Whale Alert</b> — {wallet_label}",
@@ -38,7 +39,7 @@ class RelayFormatter:
         return "\n".join(lines)
 
     def format_chat_response(self, report: dict[str, Any]) -> str:
-        summary = escape(report.get("summary", "I couldn't find enough information to answer that."))
+        summary = escape(strip_hex_text(report.get("summary", "I couldn't find enough information to answer that.")))
         evidence = report.get("evidence", [])
         raw_score = report.get("risk_score")
         score = raw_score if raw_score is not None else 0.0
@@ -52,7 +53,7 @@ class RelayFormatter:
             lines.append("")
             lines.append("<b>Evidence:</b>")
             for e in evidence[:5]:
-                fact = escape(e.get("fact", "")) if isinstance(e, dict) else escape(str(e))
+                fact = escape(strip_hex_text(e.get("fact", ""))) if isinstance(e, dict) else escape(strip_hex_text(str(e)))
                 source = escape(e.get("source", "on-chain")) if isinstance(e, dict) else "on-chain"
                 lines.append(f"• {fact} <i>({source})</i>")
         lines.append("")
@@ -62,7 +63,7 @@ class RelayFormatter:
         return "\n".join(lines)
 
     def format_briefing(self, briefing: dict[str, Any]) -> str:
-        summary = escape(briefing.get("summary", "No briefing available."))
+        summary = escape(strip_hex_text(briefing.get("summary", "No briefing available.")))
         events = briefing.get("events", [])
 
         lines = [
@@ -75,9 +76,9 @@ class RelayFormatter:
             lines.append("<b>Top Events:</b>")
             for e in events[:10]:
                 if isinstance(e, dict):
-                    lines.append(f"• {escape(e.get('summary', str(e)))}")
+                    lines.append(f"• {escape(strip_hex_text(e.get('summary', str(e))))}")
                 else:
-                    lines.append(f"• {escape(str(e))}")
+                    lines.append(f"• {escape(strip_hex_text(str(e)))}")
         lines.append("")
         lines.append(self._disclaimer)
         return "\n".join(lines)
