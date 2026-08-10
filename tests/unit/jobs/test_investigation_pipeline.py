@@ -99,6 +99,47 @@ async def test_process_event_idempotent_skips_reasoner(session_factory: async_se
 
 
 @pytest.mark.asyncio
+async def test_process_event_enriches_llm_payload_with_labels_and_category(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The event dict handed to the reasoner carries entity labels + CEX flow category."""
+    async with UnitOfWork(session_factory) as uow:
+        wallet = await uow.curated_wallets.create(
+            CuratedWallet(address="0x28c6c06298d514db089934071355e5743bf21d60", chain=Chain.ETH, label="Binance 16")
+        )
+        await uow.commit()
+        assert isinstance(wallet.id, int)
+
+    class _CapturingReasoner(FakeReasoner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: dict[str, Any] | None = None
+
+        async def investigate_event(self, event_input: dict[str, Any]) -> dict[str, Any]:
+            self.captured = event_input
+            return await super().investigate_event(event_input)
+
+    reasoner = _CapturingReasoner()
+    service = InvestigationService(lambda: UnitOfWork(session_factory), reasoner)
+    event = _candidate_event(wallet.id)
+    event.raw_json = {
+        "from": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "to": "0x28c6c06298d514db089934071355e5743bf21d60",
+        "value_usd": 100_000.0,
+    }
+
+    await service.process_event(event)
+
+    assert reasoner.captured is not None
+    assert reasoner.captured["from_label"] == "Unlabeled EOA"
+    assert reasoner.captured["to_label"] == "Binance 16"
+    assert reasoner.captured["event_category"] == "CEX Inflow"
+    assert reasoner.captured["24h_vol_usd"] == "Unavailable"
+    assert reasoner.captured["from_entity"] == "Unlabeled EOA (0x5038...23da)"
+    assert reasoner.captured["to_entity"] == "Binance 16 (0x28c6...1d60)"
+
+
+@pytest.mark.asyncio
 async def test_process_event_skipped_when_below_gate_threshold(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

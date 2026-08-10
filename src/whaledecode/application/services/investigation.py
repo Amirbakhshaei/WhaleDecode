@@ -37,6 +37,51 @@ def _counterparty(event: dict[str, Any], side: str) -> str:
     return ""
 
 
+_CEX_KEYWORDS = (
+    "binance",
+    "coinbase",
+    "kraken",
+    "okx",
+    "bybit",
+    "bitget",
+    "mexc",
+    "gate.io",
+    "gemini",
+    "bitfinex",
+    "kucoin",
+    "huobi",
+    "htx",
+    "upbit",
+    "bithumb",
+    "crypto.com",
+    "bitmart",
+    "exchange",
+    "hot wallet",
+)
+_COLD_KEYWORDS = ("cold", "treasury", "vault", "storage", "reserve", "custody")
+
+
+def _wallet_kind(label: str, tags: list[str]) -> str:
+    """Classify a curated wallet as CEX / cold storage / other from its label+tags."""
+    text = f"{label} {' '.join(tags)}".lower()
+    if any(k in text for k in _CEX_KEYWORDS):
+        return "cex"
+    if any(k in text for k in _COLD_KEYWORDS):
+        return "cold"
+    return "other"
+
+
+def _event_category(from_kind: str, to_kind: str) -> str:
+    """Derive the CEX-flow macro label the LLM should anchor on."""
+    if from_kind == "cex" and to_kind == "cex":
+        return "Inter-Exchange Transfer"
+    if from_kind == "cex":
+        return "CEX Outflow"
+    if to_kind == "cex":
+        return "CEX Inflow"
+    return "Whale Transfer"
+
+
 class InvestigationService:
     def __init__(
         self,
@@ -79,9 +124,9 @@ class InvestigationService:
         event_dict = event.model_dump()
         event_dict["raw_json"] = compact_json
 
-        # Stage 2.5: Resolve counterparties to human-readable entity labels so the
-        # LLM reasons in labels (Binance 16, Unlabeled EOA) instead of raw hex.
-        event_dict["from_entity"], event_dict["to_entity"] = await self._resolve_entities(event_dict)
+        # Stage 2.5: Resolve counterparties to human-readable entity labels and derive
+        # market context (CEX flow category) so the LLM reasons like a trader.
+        await self._enrich_market_context(event_dict)
 
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
         async with self._rate_limiter:
@@ -105,8 +150,8 @@ class InvestigationService:
             await uow.commit()
         return result
 
-    async def _resolve_entities(self, event: dict[str, Any]) -> tuple[str, str]:
-        """Resolve human-readable labels for both counterparties from curated_wallets.
+    async def _enrich_market_context(self, event: dict[str, Any]) -> None:
+        """Stamp entity labels + CEX flow category onto the event for the LLM.
 
         ``list_active`` is TTL-cached, so this is one cached query producing an
         in-memory (case-insensitive) address→label map. Unknown parties become
@@ -114,15 +159,16 @@ class InvestigationService:
         """
         async with self._uow_factory() as uow:
             wallets = await uow.curated_wallets.list_active()
-        labels = {w.address.lower(): w.label for w in wallets}
-        entities = []
+        labels = {w.address.lower(): (w.label, w.tags) for w in wallets}
+        kinds = []
         for side in ("from", "to"):
             address = _counterparty(event, side)
-            entity = labels.get(address, "Unlabeled EOA") if address else "Unlabeled EOA"
-            if address:
-                entity += f" ({address[:6]}...{address[-4:]})"
-            entities.append(entity)
-        return entities[0], entities[1]
+            label, tags = labels.get(address, ("", []))
+            kinds.append(_wallet_kind(label, tags))
+            event[f"{side}_label"] = label or "Unlabeled EOA"
+            event[f"{side}_entity"] = f"{event[f'{side}_label']} ({address[:6]}...{address[-4:]})" if address else event[f"{side}_label"]
+        event["event_category"] = _event_category(*kinds)
+        event["24h_vol_usd"] = "Unavailable"  # filled by dexscreener_tool when the LLM queries it
 
     @staticmethod
     async def _persist_skipped(uow: UnitOfWork, event: CandidateEvent) -> None:

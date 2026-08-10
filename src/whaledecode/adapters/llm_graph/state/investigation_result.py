@@ -9,6 +9,31 @@ class InvestigationResult(BaseModel):
         description="The core investment or risk thesis, grounded ONLY in the tool/on-chain data provided. "
         "Do NOT invent wallet addresses, amounts, or USD values."
     )
+    fundamental_summary: str = Field(
+        default="",
+        description=(
+            "Institutional-trade-grade fundamental analysis. Format: "
+            "[Vector: CEX Outflow/Inflow/Inter-Exchange] + [Entity Route] + [Supply Impact / % of 24h Volume or Liquid Depth]. "
+            "ZERO raw 0x hex addresses. Use resolved entity labels (e.g., 'Binance 16', 'Unlabeled Cold Wallet'). "
+            "Do NOT repeat basic transfer metrics; provide market context."
+        ),
+    )
+    technical_summary: str = Field(
+        default="",
+        description=(
+            "Institutional-trade-grade technical analysis. Format: "
+            "[Interaction with Key Price Levels / VWAP / Support / Resistance] + [Orderbook Impact (e.g., Absorption, Liquidity Sweep)]. "
+            "ZERO raw 0x hex addresses. Use entity labels and market terms only."
+        ),
+    )
+    bias_summary: str = Field(
+        default="",
+        description=(
+            "Institutional-trade-grade directional read. Format: "
+            "[Directional Bias: Bullish Accumulation / Bearish Distribution / Neutral Rebalancing] + "
+            "[Actionable Trigger or Invalidation Level]. ZERO raw 0x hex addresses."
+        ),
+    )
     evidence: list[dict] = Field(
         description="List of factual evidence points, each with 'fact' and 'source'. "
         "Every figure must come from tool output; no fabricated data."

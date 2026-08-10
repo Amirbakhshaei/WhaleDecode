@@ -54,6 +54,9 @@ class LangGraphReasoner(ReasonerPort):
         tokens_in = self._count_tokens(state.get("messages", []))
         return {
             "summary": state.get("summary", ""),
+            "fundamental_summary": state.get("fundamental_summary", ""),
+            "technical_summary": state.get("technical_summary", ""),
+            "bias_summary": state.get("bias_summary", ""),
             "risk_score": state.get("risk_score", 0.0),
             "is_safe": state.get("is_safe", True),
             "thesis": state.get("thesis", ""),

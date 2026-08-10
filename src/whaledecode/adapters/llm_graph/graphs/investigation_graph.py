@@ -6,6 +6,7 @@ from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.adapters.llm_graph.nodes.consolidated_report import create_consolidated_report_node
 from whaledecode.adapters.llm_graph.nodes.event_analysis import create_analysis_node
 from whaledecode.adapters.llm_graph.state.event_investigation import EventInvestigationState
+from whaledecode.adapters.llm_graph.tools.data_gatherer_tools import create_data_gatherer_tools
 from whaledecode.adapters.llm_graph.tools.onchain import create_onchain_tools
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
@@ -14,7 +15,7 @@ def build_investigation_graph(llm: BaseChatModel, provider: ChainProviderPort | 
     workflow = StateGraph(EventInvestigationState)
 
     provider = provider or MockChainProvider()
-    tools = create_onchain_tools(provider)
+    tools = create_onchain_tools(provider) + create_data_gatherer_tools(provider)
     tool_node = ToolNode(tools)
     llm_with_tools = llm.bind_tools(tools)
 

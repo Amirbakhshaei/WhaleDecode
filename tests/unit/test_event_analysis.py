@@ -61,6 +61,10 @@ async def test_analyze_event_injects_resolved_entity_labels_into_system_prompt()
             "event_type": "TRANSFER",
             "from_entity": "Binance 16 (0xdfd5...abcd)",
             "to_entity": "Unlabeled EOA (0x91dd...beef)",
+            "from_label": "Binance 16",
+            "to_label": "Unlabeled EOA",
+            "event_category": "CEX Outflow",
+            "24h_vol_usd": "Unavailable",
         },
         "messages": [HumanMessage(content='{"event_type": "TRANSFER"}')],
     }
@@ -71,7 +75,27 @@ async def test_analyze_event_injects_resolved_entity_labels_into_system_prompt()
     assert "# EVENT ENTITIES" in system.content
     assert "from_entity: Binance 16 (0xdfd5...abcd)" in system.content
     assert "to_entity: Unlabeled EOA (0x91dd...beef)" in system.content
-    assert "NEVER write raw EVM hex addresses" in system.content
+    assert "# MARKET CONTEXT" in system.content
+    assert "from_label: Binance 16" in system.content
+    assert "event_category: CEX Outflow" in system.content
+    assert "24h_vol_usd: Unavailable" in system.content
+    assert "ZERO RAW HEX ADDRESSES" in system.content
+
+
+async def test_analyze_event_market_context_defaults_to_unavailable() -> None:
+    model = _RecordingModel()
+    node = create_analysis_node(model)
+
+    await node(
+        {
+            "event_data": {"event_type": "TRANSFER"},
+            "messages": [HumanMessage(content='{"event_type": "TRANSFER"}')],
+        }
+    )
+
+    system = model.calls[0][0]
+    assert "from_label: Unavailable" in system.content
+    assert "24h_vol_usd: Unavailable" in system.content
 
 
 async def test_analyze_event_omits_entity_block_when_labels_absent() -> None:

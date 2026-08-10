@@ -279,6 +279,19 @@ class TestBuildAlertData:
         assert data["technical_summary"] == "consolidation of a liquidity node"
         assert data["bias_summary"] == "neutral, likely accumulation"
 
+    def test_structured_summaries_override_parsed_bullets(self):
+        report = {
+            "risk_score": 0.72,
+            "summary": "**Action:** echo of raw metrics\n**Context:** echo\n**Bias:** echo",
+            "fundamental_summary": "CEX Outflow ($15.2M SHIB: Binance 16 ➔ Cold Storage).",
+            "technical_summary": "Executed at the $0.00001820 daily support zone.",
+            "bias_summary": "Bullish Accumulation. Favor long setups; invalidated below $0.00001780.",
+        }
+        data = build_alert_data(TRACE_EVENT, report)
+        assert data["fundamental_summary"] == report["fundamental_summary"]
+        assert data["technical_summary"] == report["technical_summary"]
+        assert data["bias_summary"] == report["bias_summary"]
+
     def test_explorer_urls_built(self):
         data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
         raw = TRACE_EVENT["raw_json"]

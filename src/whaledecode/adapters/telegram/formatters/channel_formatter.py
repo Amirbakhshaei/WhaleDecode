@@ -223,16 +223,17 @@ def _risk_percent(risk: Any) -> int:
 
 
 def _smc_fields(report: dict[str, Any]) -> tuple[str, str, str]:
-    """Extract Action/Context/Bias from the report summary bullets or top-level keys."""
+    """Extract the three trader-intelligence fields, preferring the structured
+    LLM output keys over the legacy markdown-bullet parse."""
     fields: dict[str, str] = {}
     for line in str(report.get("summary", "")).splitlines():
         match = _SMC_BULLET.search(line)
         if match:
             fields[match.group(1)] = match.group(2).strip()
     return (
-        fields.get("Action") or str(report.get("action", "")),
-        fields.get("Context") or str(report.get("context", "")),
-        fields.get("Bias") or str(report.get("bias", "")),
+        str(report.get("fundamental_summary") or fields.get("Action") or report.get("action", "")),
+        str(report.get("technical_summary") or fields.get("Context") or report.get("context", "")),
+        str(report.get("bias_summary") or fields.get("Bias") or report.get("bias", "")),
     )
 
 
