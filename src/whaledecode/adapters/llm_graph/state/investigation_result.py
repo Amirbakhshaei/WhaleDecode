@@ -31,7 +31,7 @@ class InvestigationResult(BaseModel):
             "🌐 **Chain:** [Chain]\n"
             "🎯 **Risk:** [Score]%\n\n"
             "> **🧠 SMC Intelligence**\n"
-            "> [Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance. No filler words.]\n\n"
+            "> [Write a dense 1-2 sentence paragraph stating exactly what moved and its structural/liquidity significance. No filler words. Name counterparties by entity label (e.g. 'Binance 16', 'Unlabeled EOA') or macro terms — never raw 0x addresses.]\n\n"
             "**Trace Metrics**\n"
             "Tx: ||`[tx_hash]`||\n"
             "From: ||`[from_address]`||\n"

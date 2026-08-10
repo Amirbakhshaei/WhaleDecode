@@ -25,6 +25,10 @@ log = structlog.get_logger()
 
 MAX_ATTEMPTS = 3
 
+# Un-bypassable Telegram channel floor: low-score or low-value alerts never go out.
+CHANNEL_MIN_SCORE = 50
+CHANNEL_MIN_VALUE_USD = 50_000.0
+
 
 class BackgroundAIWorker:
     """Continually claims pending candidate_events, investigates, and dispatches alerts."""
@@ -93,6 +97,18 @@ class BackgroundAIWorker:
                     await uow.commit()
                 log.info("worker_event_skipped", extra={"dedupe_key": event.dedupe_key, "status": "skipped"})
                 return
+
+            score, value_usd = self._channel_metrics(event, result)
+            if score < CHANNEL_MIN_SCORE or value_usd < CHANNEL_MIN_VALUE_USD:
+                async with UnitOfWork(self._session_factory) as uow:
+                    await uow.candidate_events.set_status(event.id, "skipped")
+                    await uow.commit()
+                log.info(
+                    "worker_event_below_channel_floor",
+                    extra={"dedupe_key": event.dedupe_key, "score": score, "value_usd": value_usd},
+                )
+                return
+
             dispatched = await self._dispatch(event, result)
             async with UnitOfWork(self._session_factory) as uow:
                 await uow.candidate_events.set_status(event.id, "completed")
@@ -134,6 +150,14 @@ class BackgroundAIWorker:
                 "trace": traceback.format_exc(),
             },
         )
+
+    @staticmethod
+    def _channel_metrics(event: CandidateEvent, result: dict[str, Any]) -> tuple[int, float]:
+        """The exact Score (0-100) and USD value shown on the channel post."""
+        score = int(float(result.get("risk_score", 0.0)) * 100)
+        raw = event.raw_json if isinstance(event.raw_json, dict) else {}
+        value = float(raw.get("value_usd", 0) or 0.0)
+        return score, value
 
     async def _dispatch(self, event: CandidateEvent, result: dict[str, Any]) -> bool:
         """Send the alert; return True only if a message was actually dispatched."""

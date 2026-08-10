@@ -15,6 +15,28 @@ from whaledecode.domain.ports.reasoner import ReasonerPort
 from whaledecode.domain.services.event_gate import EventGate
 
 
+def _unpad_address(address: str) -> str:
+    """Normalize a log-topics padded address (64 hex chars) to a 20-byte 0x string."""
+    body = address[2:] if address.lower().startswith("0x") else address
+    body = body.lower()
+    return "0x" + body[-40:] if len(body) >= 40 else body
+
+
+def _counterparty(event: dict[str, Any], side: str) -> str:
+    """Best-effort extraction of the from/to address from webhook or RPC-log payloads."""
+    raw = event.get("raw_json") if isinstance(event.get("raw_json"), dict) else {}
+    keys = ("from", "fromAddress") if side == "from" else ("to", "toAddress")
+    for key in keys:
+        addr = raw.get(key) or event.get(key)
+        if addr:
+            return _unpad_address(str(addr))
+    topics = raw.get("topics") or event.get("topics") or []
+    idx = 1 if side == "from" else 2
+    if len(topics) > idx and topics[idx]:
+        return _unpad_address(str(topics[idx]))
+    return ""
+
+
 class InvestigationService:
     def __init__(
         self,
@@ -57,6 +79,10 @@ class InvestigationService:
         event_dict = event.model_dump()
         event_dict["raw_json"] = compact_json
 
+        # Stage 2.5: Resolve counterparties to human-readable entity labels so the
+        # LLM reasons in labels (Binance 16, Unlabeled EOA) instead of raw hex.
+        event_dict["from_entity"], event_dict["to_entity"] = await self._resolve_entities(event_dict)
+
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
         async with self._rate_limiter:
             result = await self._reasoner.investigate_event(event_dict)
@@ -78,6 +104,25 @@ class InvestigationService:
                 await uow.agent_runs.create(run)
             await uow.commit()
         return result
+
+    async def _resolve_entities(self, event: dict[str, Any]) -> tuple[str, str]:
+        """Resolve human-readable labels for both counterparties from curated_wallets.
+
+        ``list_active`` is TTL-cached, so this is one cached query producing an
+        in-memory (case-insensitive) address→label map. Unknown parties become
+        "Unlabeled EOA" — never a bare hex string in the LLM context.
+        """
+        async with self._uow_factory() as uow:
+            wallets = await uow.curated_wallets.list_active()
+        labels = {w.address.lower(): w.label for w in wallets}
+        entities = []
+        for side in ("from", "to"):
+            address = _counterparty(event, side)
+            entity = labels.get(address, "Unlabeled EOA") if address else "Unlabeled EOA"
+            if address:
+                entity += f" ({address[:6]}...{address[-4:]})"
+            entities.append(entity)
+        return entities[0], entities[1]
 
     @staticmethod
     async def _persist_skipped(uow: UnitOfWork, event: CandidateEvent) -> None:

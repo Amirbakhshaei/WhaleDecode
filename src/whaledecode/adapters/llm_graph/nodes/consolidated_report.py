@@ -25,6 +25,11 @@ briefing_markdown template (fill placeholders with event/tool data ONLY, wrap ev
 > • **Bias:** [market-structure read: short/neutral/long]
 > No filler words, no preamble, no trailing prose.
 
+# ENTITY RULES (STRICT)
+- In the three SMC bullets, name counterparties by their entity labels from the event payload (e.g. "Binance 16", "Unlabeled EOA") or macro terms ("CEX Outflow", "Cold Storage").
+- NEVER write raw EVM hex addresses (0x...) inside the Action/Context/Bias bullets. Raw hashes belong only in the Trace Metrics section, wrapped in ||...|| spoiler tags.
+- Describe the financial significance and market impact in plain English for professional traders.
+
 **Trace Metrics**
 Tx: ||`[tx_hash]`||
 From: ||`[from_address]`||

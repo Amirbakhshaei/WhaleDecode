@@ -61,7 +61,7 @@ def _pending_data(dedupe_key: str) -> dict:
         "log_index": 0,
         "block_number": 100,
         "event_type": "TRANSFER",
-        "raw_json": {"value_usd": 100.0},
+        "raw_json": {"value_usd": 100000.0},
         "score": 80.0,
         "dedupe_key": dedupe_key,
     }
@@ -246,6 +246,56 @@ async def test_process_pending_skipped_does_not_dispatch(session_factory) -> Non
     worker = BackgroundAIWorker(
         session_factory,
         FakeInvestigation(result={"status": "skipped", "reason": "Below gate threshold"}),
+        _settings(),
+        bot=bot,
+        channel_id="-100",
+    )
+
+    await worker.process_pending()
+
+    assert bot.sent == []
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status == "skipped"
+    assert claimed.published_at is None
+
+
+@pytest.mark.asyncio
+async def test_process_pending_below_value_floor_is_skipped_not_dispatched(session_factory) -> None:
+    await _seed_pending(session_factory, "worker:floorvalue")
+    async with UnitOfWork(session_factory) as uow:
+        event = await uow.candidate_events.get(1)
+        event.raw_json["value_usd"] = 5_589.0
+        await uow.candidate_events.update(event)
+        await uow.commit()
+
+    bot = FakeBot()
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(result={"summary": GLASS_WHALE_SUMMARY, "risk_score": 0.95}),
+        _settings(),
+        bot=bot,
+        channel_id="-100",
+    )
+
+    await worker.process_pending()
+
+    assert bot.sent == []
+    async with UnitOfWork(session_factory) as uow:
+        claimed = await uow.candidate_events.get(1)
+    assert claimed is not None
+    assert claimed.status == "skipped"
+    assert claimed.published_at is None
+
+
+@pytest.mark.asyncio
+async def test_process_pending_below_score_floor_is_skipped_not_dispatched(session_factory) -> None:
+    await _seed_pending(session_factory, "worker:floorscore")
+    bot = FakeBot()
+    worker = BackgroundAIWorker(
+        session_factory,
+        FakeInvestigation(result={"summary": GLASS_WHALE_SUMMARY, "risk_score": 0.10}),
         _settings(),
         bot=bot,
         channel_id="-100",
