@@ -5,7 +5,8 @@ from aiogram.types import LinkPreviewOptions
 
 from whaledecode.adapters.db.session import async_sessionmaker
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
-    format_channel_post_markdown,
+    build_alert_data,
+    format_alert,
 )
 from whaledecode.adapters.telegram.keyboards import build_keyboard
 from whaledecode.config.settings import Settings
@@ -32,14 +33,14 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
             report = run.output_json if run else {}
 
             event_data = event.model_dump()
-            msg = format_channel_post_markdown(event_data, report)
+            msg = format_alert(build_alert_data(event_data, report))
             tx_hash = event_data.get("tx_hash", "")
-            keyboard = build_keyboard(tx_hash)
+            keyboard = build_keyboard(str(tx_hash))
             try:
                 await bot.send_message(
                     chat_id=channel_id,
                     text=msg,
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=keyboard,
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
@@ -48,7 +49,7 @@ async def publish_channel(session_factory: async_sessionmaker, bot: Bot, setting
                 log.info("channel_published", event_id=event.id, event_type=event.event_type)
             except Exception as e:
                 log.warning(
-                    "channel_publish_markdown_failed",
+                    "channel_publish_html_failed",
                     event_id=event.id,
                     error=str(e),
                 )

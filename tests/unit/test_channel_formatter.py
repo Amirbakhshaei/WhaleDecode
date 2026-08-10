@@ -1,5 +1,7 @@
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
+    build_alert_data,
     escape_markdown_v2,
+    format_alert,
     format_channel_post_markdown,
     format_premium_event_post,
     truncate_hash,
@@ -218,3 +220,63 @@ class TestFormatChannelPostMarkdown:
             {"risk_score": 0.5, "summary": "**Bias:** neutral. - Not shaken."},
         )
         assert "neutral\\. \\- Not shaken\\." in md
+
+
+class TestFormatAlert:
+    def test_header_and_asset(self):
+        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+        assert "🚨" in html
+        assert "<b>WHALE ALERT</b>" in html
+        assert "<b>USDC</b>" in html
+
+    def test_value_chain_risk_lines(self):
+        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+        assert "$124,900.99" in html
+        assert "<b>Chain:</b> Ethereum" in html
+        assert "<b>Risk:</b> 72%" in html
+
+    def test_smc_bullets(self):
+        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+        assert "<b>Action:</b> whale swept USDC toward a Binance-linked addr" in html
+        assert "<b>Context:</b> consolidation of a liquidity node" in html
+        assert "<b>Bias:</b> neutral, likely accumulation" in html
+
+    def test_trace_blockquote_truncated_hashes(self):
+        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+        tx = TRACE_EVENT["tx_hash"]
+        assert "<blockquote expandable>" in html
+        assert f">{tx[:6]}...{tx[-4:]}<" in html
+        assert f"{tx[:6]}...{tx[-4:]}<a" not in html
+
+    def test_html_escaping(self):
+        analysis = {"risk_score": 0.3, "summary": "**Action:** <script>alert(1)</script>"}
+        html = format_alert(build_alert_data(TRACE_EVENT, analysis))
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_chain_id_and_risk_float_normalized(self):
+        data = build_alert_data({**TRACE_EVENT, "chain": 1}, {"risk_score": 0.735})
+        html = format_alert(data)
+        assert "<b>Chain:</b> Ethereum" in html
+        assert "<b>Risk:</b> 74%" in html
+
+    def test_zero_value_renders_zero(self):
+        event_zero = {**TRACE_EVENT, "raw_json": {**TRACE_EVENT["raw_json"], "value_usd": 0}}
+        html = format_alert(build_alert_data(event_zero, {"risk_score": 0.1}))
+        assert "$0.00" in html
+
+
+class TestBuildAlertData:
+    def test_extracts_smc_fields_from_summary(self):
+        data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
+        assert data["action"] == "whale swept USDC toward a Binance-linked addr"
+        assert data["context"] == "consolidation of a liquidity node"
+        assert data["bias"] == "neutral, likely accumulation"
+
+    def test_explorer_urls_built(self):
+        data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
+        raw = TRACE_EVENT["raw_json"]
+        tx = TRACE_EVENT["tx_hash"]
+        assert data["tx_url"] == f"https://etherscan.io/tx/{tx}"
+        assert data["from_url"] == f"https://etherscan.io/address/{raw['from']}"
+        assert data["to_url"] == f"https://etherscan.io/address/{raw['to']}"

@@ -40,6 +40,27 @@ def test_low_value_event_dropped() -> None:
     assert not gate.should_investigate(_event(score=0.9, value_usd=1000.0))
 
 
+def test_zero_value_event_dropped_by_dust_gate() -> None:
+    gate = EventGate(min_score_threshold=0.65, min_value_usd=5000.0)
+    event = _event(score=0.9)
+    event.raw_json["value_usd"] = 0.0
+    assert not gate.should_investigate(event)
+
+
+def test_sub_dollar_dust_event_dropped() -> None:
+    gate = EventGate(min_score_threshold=0.65, min_value_usd=5000.0)
+    event = _event(score=0.9)
+    event.raw_json["value_usd"] = 9.99
+    assert not gate.should_investigate(event)
+
+
+def test_missing_value_usd_not_blocked() -> None:
+    gate = EventGate(min_score_threshold=0.65, min_value_usd=5000.0)
+    event = _event(score=0.9)
+    assert "value_usd" not in event.raw_json
+    assert gate.should_investigate(event)
+
+
 def test_high_value_event_passes() -> None:
     gate = EventGate(min_score_threshold=0.65, min_value_usd=5000.0)
     assert gate.should_investigate(_event(score=0.9, value_usd=100_000.0))

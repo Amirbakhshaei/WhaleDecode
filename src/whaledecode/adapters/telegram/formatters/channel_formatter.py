@@ -15,6 +15,20 @@ _EXPLORERS: dict[str, str] = {
     "bsc": "https://bscscan.com",
 }
 
+_CHAIN_BY_ID: dict[int, str] = {1: "Ethereum", 8453: "Base", 42161: "Arbitrum"}
+
+_CHAIN_BY_LABEL: dict[str, str] = {
+    "ethereum": "Ethereum",
+    "eth": "Ethereum",
+    "base": "Base",
+    "arbitrum": "Arbitrum",
+    "arb": "Arbitrum",
+    "bsc": "BSC",
+    "bnb": "BSC",
+}
+
+_SMC_BULLET = re.compile(r"\*\*(Action|Context|Bias):\s*\*+\s*(.+)$")
+
 
 def truncate_hash(tag: str) -> str:
     """Collapse a 0x hash/address to ``0x1234…abcd`` for a compact trace line."""
@@ -183,3 +197,109 @@ def format_premium_event_post(event_data: dict[str, Any], analysis: dict[str, An
 
 —
 <code>Intelligence relies on on-chain heuristics. Not financial advice.</code>"""
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _normalize_chain(chain: Any) -> str:
+    """Map numeric Chain IDs / labels to readable names; fallback to raw."""
+    if isinstance(chain, int) or (isinstance(chain, str) and chain.isdigit()):
+        return _CHAIN_BY_ID.get(int(chain), str(chain))
+    label = str(chain).strip().lower()
+    if label in _CHAIN_BY_LABEL:
+        return _CHAIN_BY_LABEL[label]
+    return str(chain).strip().capitalize() or "Unknown"
+
+
+def _risk_percent(risk: Any) -> int:
+    """Risk score (0–1 float, or 0–100) as an integer percentage."""
+    value = _as_float(risk)
+    return int(round(value)) if value > 1 else int(round(value * 100))
+
+
+def _smc_fields(report: dict[str, Any]) -> tuple[str, str, str]:
+    """Extract Action/Context/Bias from the report summary bullets or top-level keys."""
+    fields: dict[str, str] = {}
+    for line in str(report.get("summary", "")).splitlines():
+        match = _SMC_BULLET.search(line)
+        if match:
+            fields[match.group(1)] = match.group(2).strip()
+    return (
+        fields.get("Action") or str(report.get("action", "")),
+        fields.get("Context") or str(report.get("context", "")),
+        fields.get("Bias") or str(report.get("bias", "")),
+    )
+
+
+def build_alert_data(event_data: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+    """Shape a candidate event + LLM report into the alert_data dict ``format_alert`` renders."""
+    raw = event_data.get("raw_json") if isinstance(event_data.get("raw_json"), dict) else {}
+    tx_hash = str(event_data.get("tx_hash", ""))
+    from_addr = str(raw.get("from") or raw.get("fromAddress") or event_data.get("from") or "")
+    to_addr = str(raw.get("to") or raw.get("toAddress") or event_data.get("to") or "")
+    asset = str(
+        raw.get("token") or raw.get("asset") or event_data.get("token") or event_data.get("asset") or "UNKNOWN"
+    )
+    chain = str(event_data.get("chain", ""))
+    action, context, bias = _smc_fields(report)
+    return {
+        "value_usd": _value_usd(event_data, report),
+        "asset": asset,
+        "chain": chain,
+        "risk_score": report.get("risk_score", 0.0),
+        "tx_hash": tx_hash,
+        "from_address": from_addr,
+        "to_address": to_addr,
+        "action": action,
+        "context": context,
+        "bias": bias,
+        "tx_url": url_for("tx", tx_hash, chain) if tx_hash else "#",
+        "from_url": url_for("address", from_addr, chain) if from_addr else "#",
+        "to_url": url_for("address", to_addr, chain) if to_addr else "#",
+    }
+
+
+def format_alert(alert_data: dict[str, Any]) -> str:
+    """Institutional-trader channel alert: deterministic HTML with an expandable
+    trace blockquote. Hashes are truncated; fiat value is never confused with
+    token quantity."""
+    value_usd = _as_float(alert_data.get("value_usd", 0.0))
+    asset = escape(str(alert_data.get("asset", "UNKNOWN")))
+    chain = _normalize_chain(alert_data.get("chain", "ETH"))
+    risk_score = _risk_percent(alert_data.get("risk_score", 0))
+
+    tx_hash = str(alert_data.get("tx_hash", ""))
+    short_tx = f"{tx_hash[:6]}...{tx_hash[-4:]}" if tx_hash else "N/A"
+    from_addr = str(alert_data.get("from_address", ""))
+    short_from = f"{from_addr[:6]}...{from_addr[-4:]}" if from_addr else "N/A"
+    to_addr = str(alert_data.get("to_address", ""))
+    short_to = f"{to_addr[:6]}...{to_addr[-4:]}" if to_addr else "N/A"
+
+    action = escape(str(alert_data.get("action") or "N/A"))
+    context = escape(str(alert_data.get("context") or "N/A"))
+    bias = escape(str(alert_data.get("bias") or "N/A"))
+
+    tx_url = escape(str(alert_data.get("tx_url") or "#"), quote=True)
+    from_url = escape(str(alert_data.get("from_url") or "#"), quote=True)
+    to_url = escape(str(alert_data.get("to_url") or "#"), quote=True)
+
+    return f"""🚨 <b>WHALE ALERT</b> | <b>{asset}</b>
+───────────────────────────
+💰 <b>Value:</b> ${value_usd:,.2f}
+🌐 <b>Chain:</b> {chain}
+🎯 <b>Risk:</b> {risk_score}%
+
+🧠 <b>Smart Money Intelligence</b>
+• <b>Action:</b> {action}
+• <b>Context:</b> {context}
+• <b>Bias:</b> {bias}
+
+<blockquote expandable><b>🔍 Trace Metrics</b>
+<b>Tx:</b> <a href="{tx_url}">{short_tx}</a>
+<b>From:</b> <a href="{from_url}">{short_from}</a>
+<b>To:</b> <a href="{to_url}">{short_to}</a></blockquote>""".strip()
