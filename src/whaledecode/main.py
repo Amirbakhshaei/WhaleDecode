@@ -131,22 +131,24 @@ def verify_seed():
 
 @cli.command()
 def unstick() -> None:
-    """Re-queue candidate events stranded in dead_letter/skipped by earlier bugs."""
+    """Purge stale pending alerts and re-queue candidate events from the last 24h so
+    they re-run through the current EventGate and channel formatter."""
     settings = _load_settings()
     setup_logging(settings)
 
     from whaledecode.adapters.db.session import create_session_factory
     from whaledecode.adapters.db.uow import UnitOfWork
 
-    async def _requeue() -> int:
+    async def _unstick() -> tuple[int, int]:
         factory = create_session_factory(settings)
         async with UnitOfWork(factory) as uow:
-            count = await uow.candidate_events.requeue_stuck_events()
+            purged = await uow.alerts.purge_pending()
+            requeued = await uow.candidate_events.requeue_recent_events(hours=24)
             await uow.commit()
-        return count
+        return purged, requeued
 
-    count = asyncio.run(_requeue())
-    click.echo(f"Re-queued {count} stuck candidate events.")
+    purged, requeued = asyncio.run(_unstick())
+    click.echo(f"Purged {purged} stale pending alerts; re-queued {requeued} candidate events.")
 
 
 @cli.command()

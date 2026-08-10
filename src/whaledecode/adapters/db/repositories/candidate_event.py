@@ -112,7 +112,26 @@ class CandidateEventRepository:
         rows = list(result.scalars())
         if not rows:
             return 0
+        await self._requeue_models(rows)
+        return len(rows)
 
+    async def requeue_recent_events(self, *, hours: int = 24) -> int:
+        """Reset candidate_events created in the last ``hours`` to ``pending`` with
+        recomputed scores, so they re-run through the current EventGate and channel
+        formatter after a pipeline/format change. Returns the number of rows re-queued."""
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
+        result = await self._session.execute(
+            select(CandidateEventModel).where(CandidateEventModel.created_at >= cutoff)
+        )
+        rows = list(result.scalars())
+        if not rows:
+            return 0
+        await self._requeue_models(rows)
+        return len(rows)
+
+    async def _requeue_models(self, rows: list[CandidateEventModel]) -> None:
+        """Recompute each row's score from raw_json and reset claim/attempt state,
+        so the EventGate re-evaluates it with current heuristics."""
         from whaledecode.domain.policies.sentinel import SentinelEngine
 
         engine = SentinelEngine()
@@ -130,7 +149,6 @@ class CandidateEventRepository:
             model.status = "pending"
             model.attempt_count = 0
         await self._session.flush()
-        return len(rows)
 
     def _supports_row_lock(self) -> bool:
         bind = getattr(self._session.sync_session, "bind", None)

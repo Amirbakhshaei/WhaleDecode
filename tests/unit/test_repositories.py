@@ -396,3 +396,77 @@ async def test_reap_zombie_events_keeps_fresh_processing(db_session):
         select(CandidateEventModel).where(CandidateEventModel.id == claimed[0].id)
     )
     assert row.scalar_one().status == "processing"
+
+
+@pytest.mark.asyncio
+async def test_requeue_recent_events_resets_pending_and_recomputes_score(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    data = _pending_data("recent:vip")
+    data["raw_json"] = {"value_usd": 1_000_000.0}
+    data["score"] = 0.0
+    await repo.create_pending(data)
+    await db_session.commit()
+    claimed = await repo.claim_next_pending()
+    await repo.set_status(claimed[0].id, "completed")
+    await repo.set_status(claimed[0].id, "dead_letter", attempt_count=3)
+    await db_session.commit()
+
+    requeued = await repo.requeue_recent_events(hours=24)
+    await db_session.commit()
+    assert requeued == 1
+
+    events = await repo.claim_next_pending(limit=10)
+    assert len(events) == 1
+    assert events[0].status == "pending"
+    assert events[0].attempt_count == 0
+    assert events[0].score > 0
+
+
+@pytest.mark.asyncio
+async def test_requeue_recent_events_skips_older_rows(db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+    from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("recent:old"))
+    await db_session.commit()
+    await db_session.execute(
+        update(CandidateEventModel)
+        .where(CandidateEventModel.dedupe_key == "recent:old")
+        .values(created_at=datetime.now(UTC) - timedelta(days=3), status="pending")
+    )
+    await db_session.commit()
+
+    assert await repo.requeue_recent_events(hours=24) == 0
+
+
+@pytest.mark.asyncio
+async def test_requeue_recent_events_noop_when_none(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    assert await repo.requeue_recent_events(hours=24) == 0
+
+
+@pytest.mark.asyncio
+async def test_alert_purge_pending_deletes_only_pending(db_session):
+    from whaledecode.adapters.db.repositories.alert import AlertRepository
+    from whaledecode.domain.entities.alert import Alert
+
+    repo = AlertRepository(db_session)
+    await repo.create(Alert(user_id=1, event_id=1, status="pending", dedupe_key="alert:new"))
+    await repo.create(Alert(user_id=1, event_id=2, status="sent", dedupe_key="alert:sent"))
+    await db_session.commit()
+
+    purged = await repo.purge_pending()
+    await db_session.commit()
+    assert purged == 1
+
+    remaining = await repo.list_by_status("sent")
+    assert [a.dedupe_key for a in remaining] == ["alert:sent"]
+    assert len(await repo.list_by_status("pending")) == 0

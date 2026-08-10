@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whaledecode.adapters.db.models.alert import AlertModel
@@ -8,6 +8,13 @@ from whaledecode.domain.entities.alert import Alert
 class AlertRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def purge_pending(self) -> int:
+        """Delete alerts created before the ChatOps UI / gate fixes but never sent."""
+        result = await self._session.execute(
+            delete(AlertModel).where(AlertModel.status == "pending")
+        )
+        return result.rowcount or 0
 
     async def create(self, alert: Alert) -> Alert:
         model = AlertModel(
