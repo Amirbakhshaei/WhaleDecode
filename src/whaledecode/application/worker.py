@@ -5,13 +5,12 @@ Claims ``pending`` candidate_events with atomic row locks, runs
 Decoupled from the fetcher: it only reads the database and talks to Telegram.
 """
 import asyncio
-import re
 import traceback
 from typing import Any
 
 import structlog
-import telegramify_markdown
 from aiogram import Bot
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -24,15 +23,7 @@ from whaledecode.domain.entities.candidate_event import CandidateEvent
 
 log = structlog.get_logger()
 
-_SPOILER_CODE_RE = re.compile(r"\|\|`([^`\n]+)`\|\|")
-
 MAX_ATTEMPTS = 3
-
-
-def normalize_spoilers(text: str) -> str:
-    """telegramify-markdown drops ``||spoiler||`` when it wraps an inline code
-    span; unwrap the code first so the spoiler entity is emitted."""
-    return _SPOILER_CODE_RE.sub(r"||\1||", text)
 
 
 class BackgroundAIWorker:
@@ -154,14 +145,17 @@ class BackgroundAIWorker:
             log.warning("worker_dispatch_empty_summary", extra={"dedupe_key": event.dedupe_key})
             return False
 
+        from whaledecode.adapters.telegram.formatters.channel_formatter import (
+            build_alert_data,
+            format_alert,
+        )
         from whaledecode.adapters.telegram.keyboards import build_keyboard
 
-        text, entities = telegramify_markdown.convert(normalize_spoilers(summary))
+        msg = format_alert(build_alert_data(event.model_dump(), result))
         await self._bot.send_message(
             chat_id=self._channel_id,
-            text=text,
-            entities=[e.to_dict() for e in entities],
-            parse_mode=None,
+            text=msg,
+            parse_mode=ParseMode.HTML,
             reply_markup=build_keyboard(str(event.tx_hash)),
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )

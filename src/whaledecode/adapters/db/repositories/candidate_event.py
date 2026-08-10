@@ -228,16 +228,6 @@ class CandidateEventRepository:
         )
         return [self._to_domain(row) for row in result.scalars()]
 
-    async def list_unpublished(self, limit: int = 20) -> list[CandidateEvent]:
-        result = await self._session.execute(
-            select(CandidateEventModel)
-            .where(CandidateEventModel.published_at.is_(None))
-            .where(CandidateEventModel.score >= 0.7)
-            .order_by(CandidateEventModel.score.desc())
-            .limit(limit)
-        )
-        return [self._to_domain(row) for row in result.scalars()]
-
     async def mark_published(self, event_id: int) -> None:
         from datetime import UTC, datetime
         result = await self._session.execute(

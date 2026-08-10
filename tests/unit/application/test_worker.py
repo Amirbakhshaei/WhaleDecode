@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.application.worker import MAX_ATTEMPTS, BackgroundAIWorker, normalize_spoilers
+from whaledecode.application.worker import MAX_ATTEMPTS, BackgroundAIWorker
 from whaledecode.config.settings import Settings
 
 GLASS_WHALE_SUMMARY = (
@@ -73,16 +73,6 @@ async def _seed_pending(session_factory, dedupe_key: str = "worker:1") -> None:
         await uow.commit()
 
 
-def test_normalize_spoilers_unwraps_nested_code() -> None:
-    out = normalize_spoilers("Tx: ||`0xabc`||")
-    assert out == "Tx: ||0xabc||"
-
-
-def test_normalize_spoilers_keeps_plain_spoilers() -> None:
-    out = normalize_spoilers("Tx: ||0xabc||")
-    assert out == "Tx: ||0xabc||"
-
-
 @pytest.mark.asyncio
 async def test_process_pending_investigates_dispatches_and_completes(session_factory) -> None:
     await _seed_pending(session_factory)
@@ -99,10 +89,12 @@ async def test_process_pending_investigates_dispatches_and_completes(session_fac
 
     assert len(bot.sent) == 1
     msg = bot.sent[0]
-    assert "0xabc123" in msg["text"]
+    assert "WHALE ALERT" in msg["text"]
+    assert "TRADER INTELLIGENCE" in msg["text"]
+    assert "0x" in msg["text"]
     assert "||" not in msg["text"]
     assert msg["chat_id"] == "-100channel"
-    assert any(e.get("type") == "spoiler" for e in msg["entities"])
+    assert msg["parse_mode"] == "HTML"
     assert msg["reply_markup"] is not None
 
     async with UnitOfWork(session_factory) as uow:
