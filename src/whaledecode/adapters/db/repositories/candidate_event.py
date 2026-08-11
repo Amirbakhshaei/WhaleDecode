@@ -190,6 +190,7 @@ class CandidateEventRepository:
             dedupe_key=event.dedupe_key,
             status=event.status,
             published_at=event.published_at,
+            campaign_id=event.campaign_id,
         )
         self._session.add(model)
         await self._session.flush()
@@ -248,6 +249,8 @@ class CandidateEventRepository:
         model.status = event.status
         model.score = event.score
         model.raw_json = json.dumps(event.raw_json)
+        if event.campaign_id is not None:
+            model.campaign_id = event.campaign_id
         await self._session.flush()
         # server-side onupdate=func.now() expires updated_at on flush; reload it
         # so the sync attribute reads in _to_domain don't trigger a greenlet
@@ -269,6 +272,7 @@ class CandidateEventRepository:
             status=model.status,
             attempt_count=model.attempt_count,
             published_at=model.published_at,
+            campaign_id=model.campaign_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

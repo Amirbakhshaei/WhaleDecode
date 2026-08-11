@@ -1,8 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column
-
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from whaledecode.adapters.db.models.base import Base
 
 
@@ -25,7 +24,10 @@ class CandidateEventModel(Base):
     status: Mapped[str] = mapped_column(String(20), default="NEW")
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    campaign_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    campaign: Mapped["CampaignModel"] = relationship("CampaignModel", back_populates="events")  # noqa: F821

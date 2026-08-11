@@ -1,9 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.db.repositories.admin_audit_log import AdminAuditLogRepository
 from whaledecode.adapters.db.repositories.agent_run import AgentRunRepository
 from whaledecode.adapters.db.repositories.alert import AlertRepository
 from whaledecode.adapters.db.repositories.briefing import BriefingRepository
+from whaledecode.adapters.db.repositories.campaign import CampaignRepository
 from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
 from whaledecode.adapters.db.repositories.tracked_wallet import TrackedWalletRepository
@@ -21,11 +21,18 @@ class UnitOfWork:
         self.curated_wallets = CuratedWalletRepository(self._session)
         self.tracked_wallets = TrackedWalletRepository(self._session)
         self.candidate_events = CandidateEventRepository(self._session)
+        self.campaigns = CampaignRepository(self._session)
         self.alerts = AlertRepository(self._session)
         self.agent_runs = AgentRunRepository(self._session)
         self.briefings = BriefingRepository(self._session)
         self.admin_audit_logs = AdminAuditLogRepository(self._session)
         return self
+
+    @property
+    def session(self) -> AsyncSession:
+        if self._session is None:
+            raise RuntimeError("UnitOfWork session not entered")
+        return self._session
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         if self._session is not None:

@@ -14,7 +14,6 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.settings import Settings
@@ -160,7 +159,13 @@ class BackgroundAIWorker:
         return score, value
 
     async def _dispatch(self, event: CandidateEvent, result: dict[str, Any]) -> bool:
-        """Send the alert; return True only if a message was actually dispatched."""
+        """Send the alert; return True only if a message was actually dispatched.
+
+        Campaign-aware: the first event in a wallet's 30-minute window publishes
+        the rich Glass Whale briefing (CREATED); subsequent in-window events edit
+        that message in place (MUTATED); events past the window or crossing $2M
+        publish an anchored reply (THREADED).
+        """
         if not self._bot or not self._channel_id:
             log.info("worker_dispatch_skipped", extra={"channel_id": self._channel_id or "NOT_SET"})
             return False
@@ -169,19 +174,70 @@ class BackgroundAIWorker:
             log.warning("worker_dispatch_empty_summary", extra={"dedupe_key": event.dedupe_key})
             return False
 
+        from whaledecode.adapters.telegram.formatters.campaign_formatter import (
+            format_mutated_campaign_alert,
+            format_threaded_campaign_alert,
+        )
         from whaledecode.adapters.telegram.formatters.channel_formatter import (
             build_alert_data,
             format_alert,
         )
         from whaledecode.adapters.telegram.keyboards import build_keyboard
+        from whaledecode.application.services.campaign_service import CampaignService
 
-        msg = format_alert(build_alert_data(event.model_dump(), result))
-        await self._bot.send_message(
-            chat_id=self._channel_id,
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            reply_markup=build_keyboard(str(event.tx_hash)),
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
-        log.info("worker_dispatched", extra={"dedupe_key": event.dedupe_key})
-        return True
+        # Resolve + publish inside one transaction: if Telegram is unreachable the
+        # exception propagates and the UoW rolls back, so a failed CREATED never
+        # leaves an orphan campaign that breaks the MUTATED path on retry.
+        async with UnitOfWork(self._session_factory) as uow:
+            campaign, action = await CampaignService.resolve_event_campaign(
+                uow.session, event
+            )
+
+            if action == "CREATED":
+                msg = format_alert(build_alert_data(event.model_dump(), result))
+                sent = await self._bot.send_message(
+                    chat_id=self._channel_id,
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_keyboard(str(event.tx_hash)),
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
+                msg_id = getattr(sent, "message_id", sent)
+                if msg_id:
+                    await uow.campaigns.set_telegram_message_id(campaign.id, msg_id)
+                await uow.candidate_events.update(event)
+                await uow.commit()
+                log.info("worker_dispatched_campaign_created", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+                return True
+
+            if action == "MUTATED":
+                if not campaign.telegram_message_id:
+                    log.warning("worker_campaign_no_message_id", extra={"campaign_id": campaign.id})
+                    return False
+                await self._bot.edit_message_text(
+                    chat_id=self._channel_id,
+                    message_id=campaign.telegram_message_id,
+                    text=format_mutated_campaign_alert(campaign),
+                    parse_mode=ParseMode.HTML,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                )
+                await uow.candidate_events.update(event)
+                await uow.commit()
+                log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+                return True
+
+            # THREADED
+            sent = await self._bot.send_message(
+                chat_id=self._channel_id,
+                text=format_threaded_campaign_alert(event, campaign),
+                reply_to_message_id=campaign.telegram_message_id,
+                parse_mode=ParseMode.HTML,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            new_msg_id = getattr(sent, "message_id", sent)
+            if new_msg_id:
+                await uow.campaigns.set_telegram_message_id(campaign.id, new_msg_id)
+            await uow.candidate_events.update(event)
+            await uow.commit()
+            log.info("worker_dispatched_campaign_threaded", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+            return True

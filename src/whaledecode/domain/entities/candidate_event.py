@@ -19,5 +19,6 @@ class CandidateEvent(BaseModel):
     status: str = "NEW"
     attempt_count: int = 0
     published_at: datetime | None = None
+    campaign_id: int | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime | None = None
