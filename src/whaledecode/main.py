@@ -2,7 +2,6 @@ import asyncio
 from pathlib import Path
 
 import click
-
 from whaledecode import __version__
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
@@ -164,6 +163,24 @@ def sync_webhook(webhook_id: str, verified_file: str):
     from whaledecode.scripts.verify_seed import sync_webhook as sync_impl
 
     exit(asyncio.run(sync_impl(webhook_id, Path(verified_file))))
+
+
+@cli.command()
+@click.option("--dry-run", is_flag=True, help="Replay the candidate→investigation→channel pipeline in memory")
+@click.option("--event-id", type=int, default=None, help="Target a specific candidate event for the dry run")
+def debug_pipeline(dry_run: bool, event_id: int | None):
+    """Inspect candidate/alert/agent_run state, or trace the pipeline for one event."""
+    settings = _load_settings()
+    setup_logging(settings)
+
+    from whaledecode.cli.debug_pipeline import main as debug_main
+
+    argv = []
+    if dry_run:
+        argv.append("--dry-run")
+    if event_id is not None:
+        argv += ["--event-id", str(event_id)]
+    exit(debug_main(argv))
 
 
 if __name__ == "__main__":
