@@ -12,11 +12,15 @@ TX_HASH = "0x" + "b" * 64
 
 
 class _FakeOracle:
-    def __init__(self, price: float) -> None:
+    def __init__(self, price: float, historical: float | None = None) -> None:
         self.price = price
+        self.historical = historical
 
     async def get_token_price_usd(self, contract_address: str, chain: str) -> float:
         return self.price
+
+    async def get_token_price_usd_at(self, contract_address: str, chain: str, unix_ts: float) -> float:
+        return self.historical if self.historical is not None else self.price
 
 
 def _event(
@@ -123,3 +127,12 @@ async def test_process_gate_drops_when_price_unknown() -> None:
     assert not await process_and_gate_candidate(event, _FakeOracle(0.0))
     assert event.status == "skipped"
     assert event.score == 0.0
+
+
+async def test_process_gate_uses_historical_price_at_event_time() -> None:
+    # 3B SHIB priced at an old event timestamp ($0.00002 then) → $60k passes the
+    # floor via the historical path, not today's current price.
+    event = _event(score=0.9)
+    event.raw_json["data"] = hex(int(3_000_000_000 * 10**18))
+    assert await process_and_gate_candidate(event, _FakeOracle(price=0.0, historical=0.00002), timestamp=1700000000)
+    assert event.raw_json["value_usd"] == pytest.approx(60_000.0)

@@ -21,6 +21,7 @@ event_category: {event_category}
 asset: {asset}
 token_amount_formatted: {token_amount_formatted}
 total_value_usd: {total_value_usd}
+price_at_timestamp: {price_at_timestamp}
 chain: {chain}
 flow_type: {flow_type}
 
@@ -28,7 +29,7 @@ flow_type: {flow_type}
 Structure your analysis to feed this schema:
 {
   "fundamental_summary": "[Vector: CEX Outflow/Inflow/Inter-Exchange] + [Entity Route] + [Supply Impact / % of 24h Volume or Liquid Depth].",
-  "technical_summary": "[Interaction with Key Price Levels / VWAP / Support / Resistance] + [Orderbook Impact (e.g., Absorption, Liquidity Sweep)].",
+  "technical_summary": "[Interaction with Key Price Levels / VWAP / Support / Resistance] + [Orderbook Impact (e.g., Absorption, Liquidity Sweep)]. Anchor support/resistance ONLY on the levels in # KEY PRICE LEVELS — never invent levels.",
   "bias_summary": "[Directional Bias: Bullish Accumulation / Bearish Distribution / Neutral Rebalancing] + [Actionable Trigger or Invalidation Level]."
 }
 Cover all three dimensions concisely. Values in an exemplar like "CEX Outflow ($15.2M SHIB: Binance 16 ➔ Cold Storage). Withdraws ~3.8% of liquid orderbook supply" are illustrative — ground every figure on real data or mark N/A.
@@ -58,12 +59,13 @@ def _market_context(event: dict) -> str:
 
 
 def prepare_llm_context(event: dict) -> dict:
-    """Build the exact-amount market facts the LLM must anchor on.
+    """Build the exact-amount + price-level facts the LLM must anchor on.
 
     Every field comes from the enriched event payload (stamped by
     InvestigationService) or the raw RPC log — never fabricated. Values are
     rendered for human reading so the LLM quotes them verbatim instead of
-    guessing from memory.
+    guessing from memory. Deliberately lean: high/low levels only, no raw
+    candle dumps.
     """
     raw = event.get("raw_json") if isinstance(event.get("raw_json"), dict) else {}
     token_amount = event.get("token_amount")
@@ -73,6 +75,7 @@ def prepare_llm_context(event: dict) -> dict:
     value_usd = event.get("total_value_usd")
     if value_usd is None:
         value_usd = _first_present(raw, ("value_usd", "total_value_usd"))
+    price_at = event.get("price_at_timestamp")
 
     def _fmt(value, fmt):
         try:
@@ -80,13 +83,37 @@ def prepare_llm_context(event: dict) -> dict:
         except (TypeError, ValueError):
             return "Unavailable"
 
+    levels_text = _render_price_levels(event.get("price_levels"))
     return {
         "asset": asset,
         "token_amount_formatted": _fmt(token_amount, lambda v: f"{v:,.4f}"),
         "total_value_usd": _fmt(value_usd, lambda v: f"${v:,.0f}"),
+        "price_at_timestamp": _fmt(price_at, lambda v: f"${v:,.6f}"),
         "chain": event.get("chain") or raw.get("chain") or "Unknown",
         "flow_type": event.get("flow_type") or event.get("event_category") or "Unknown",
+        "key_price_levels": levels_text,
     }
+
+
+def _render_price_levels(levels) -> str:
+    """Render 24h/7d/30d high-low + recent daily closes as one compact block."""
+    if not levels or not isinstance(levels, dict):
+        return "Unavailable"
+
+    def _hl(name: str) -> str:
+        bucket = levels.get(name)
+        if not isinstance(bucket, dict) or not bucket.get("high") or not bucket.get("low"):
+            return "N/A"
+        return f"{bucket['high']:,.4f} / {bucket['low']:,.4f}"
+
+    closes = levels.get("daily_closes") or []
+    closes_text = ", ".join(f"{c:,.4f}" for c in closes[:5]) if closes else "N/A"
+    return (
+        f"24h High/Low: {_hl('24h')}\n"
+        f"7d High/Low: {_hl('7d')}\n"
+        f"30d High/Low: {_hl('30d')}\n"
+        f"Daily Closes (5): {closes_text}"
+    )
 
 
 def _first_present(raw: dict, keys: tuple[str, ...]):
@@ -106,6 +133,7 @@ def create_analysis_node(llm: BaseChatModel):
         entities = _entity_context(state.get("event_data", {}))
         market = _market_context(state.get("event_data", {}))
         exact = prepare_llm_context(state.get("event_data", {}))
+        levels = exact.pop("key_price_levels", "Unavailable")
         prompt = SYSTEM_PROMPT
         if entities:
             prompt += f"\n\n# EVENT ENTITIES\n{entities}"
@@ -114,6 +142,7 @@ def create_analysis_node(llm: BaseChatModel):
         prompt += "\n\n# EXACT AMOUNTS (cite these verbatim)\n" + "\n".join(
             f"{key}: {value}" for key, value in exact.items()
         )
+        prompt += f"\n\n# KEY PRICE LEVELS (USD, cite these)\n{levels}"
         result = await llm.ainvoke([SystemMessage(content=prompt), *history])
         return {"messages": [result], "summary": result.content}
     return analyze_event

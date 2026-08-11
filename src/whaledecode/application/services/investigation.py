@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -117,8 +118,10 @@ class InvestigationService:
 
         # Stage 1: Deterministic gate — drop low-conviction / low-value events before the LLM.
         # When a price oracle is wired in, the raw on-chain token amount is first priced
-        # to a real USD value, replacing the placeholder stored at ingestion time.
-        if self._price_oracle is not None and not await process_and_gate_candidate(event, self._price_oracle):
+        # to a real USD value (at event time), replacing the placeholder stored at ingestion.
+        if self._price_oracle is not None and not await process_and_gate_candidate(
+            event, self._price_oracle, timestamp=time.time()
+        ):
             event.status = "skipped"
             async with self._uow_factory() as uow:
                 await self._persist_skipped(uow, event)
@@ -188,6 +191,23 @@ class InvestigationService:
         event["asset"] = raw.get("symbol") or raw.get("token") or raw.get("asset") or "Unknown Token"
         value_usd = float(event.get("raw_json", {}).get("value_usd") or 0.0)
         event["total_value_usd"] = value_usd
+
+        # Oracle enrichment: real symbol, unit price at event time, and key price
+        # levels for the LLM. All best-effort — a failure yields conservative
+        # fallbacks ("Unknown Token") rather than fabricated numbers.
+        if self._price_oracle is not None:
+            contract_address = raw.get("address") or ""
+            chain = event.get("chain") or "ethereum"
+            symbol = await self._price_oracle.get_token_symbol(contract_address, chain)
+            if symbol:
+                event["asset"] = symbol
+            price_at = await self._price_oracle.get_token_price_usd_at(contract_address, chain, time.time())
+            if price_at > 0:
+                event["price_at_timestamp"] = price_at
+                event["total_value_usd"] = event["token_amount"] * price_at
+            levels = await self._price_oracle.get_price_levels(contract_address, chain)
+            if levels:
+                event["price_levels"] = levels
 
     @staticmethod
     async def _persist_skipped(uow: UnitOfWork, event: CandidateEvent) -> None:

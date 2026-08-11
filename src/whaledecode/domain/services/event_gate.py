@@ -20,22 +20,26 @@ _ASSET_KEYS = ("asset", "symbol", "token", "tokenSymbol")
 _TOKEN_AMOUNT_KEYS = ("token_amount", "amount")
 
 
-async def process_and_gate_candidate(candidate: CandidateEvent, price_oracle: Any) -> bool:
+async def process_and_gate_candidate(candidate: CandidateEvent, price_oracle: Any, timestamp: float | None = None) -> bool:
     """Compute the event's *true* USD value and enforce the whale floor.
 
     Overrides ``raw_json["value_usd"]`` with the oracle-derived amount before any
     scoring or LLM logic runs. Returns ``True`` when the event clears the $50k
     floor; otherwise marks it ``skipped`` with score ``0.0`` and returns ``False``.
 
-    ``price_oracle`` needs a ``get_token_price_usd(contract_address, chain)``
-    method returning a ``float`` USD unit price (``0.0`` = unknown).
+    ``price_oracle`` needs a ``get_token_price_usd_at(contract_address, chain, unix_ts)``
+    method returning a ``float`` USD unit price (``0.0`` = unknown); when
+    ``timestamp`` is ``None`` it falls back to ``get_token_price_usd(...)``.
     """
     raw = candidate.raw_json if isinstance(candidate.raw_json, dict) else {}
     contract_address = raw.get("address") or raw.get("contract_address") or ""
     token_amount = _coerce_float_if_present(_first_present(raw, _TOKEN_AMOUNT_KEYS)) or transfer_amount(raw)
     asset = str(_first_present(raw, _ASSET_KEYS) or "").upper()
 
-    unit_price = await price_oracle.get_token_price_usd(contract_address=contract_address, chain=candidate.chain)
+    if timestamp is not None:
+        unit_price = await price_oracle.get_token_price_usd_at(contract_address=contract_address, chain=candidate.chain, unix_ts=timestamp)
+    else:
+        unit_price = await price_oracle.get_token_price_usd(contract_address=contract_address, chain=candidate.chain)
     if unit_price > 0.0:
         value_usd = token_amount * unit_price
     elif asset in STABLECOINS:
