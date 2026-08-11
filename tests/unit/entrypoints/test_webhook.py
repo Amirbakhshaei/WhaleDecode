@@ -3,16 +3,17 @@ import hashlib
 import hmac
 
 from fastapi.testclient import TestClient
-
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.entrypoints.webhook import (
     _NETWORK_TO_CHAIN,
     _activity_candidate,
+    _build_candidate_data,
+    _is_ignorable_activity,
     _score_candidate,
-    verify_alchemy_signature,
     app,
+    verify_alchemy_signature,
 )
 
 
@@ -199,3 +200,71 @@ def test_fastapi_app_has_routes():
     # Webhook endpoint exists (returns 401 without signature, not 404)
     response = client.post("/webhook/alchemy", json={})
     assert response.status_code == 401  # signature verification fails
+
+
+def test_ignorable_activity_zero_value_external():
+    """Zero-value native transfers / empty contract calls are rejected pre-insert."""
+    assert _is_ignorable_activity(
+        {"category": "external", "value": "0", "rawContract": {"rawValue": "0x0"}}
+    )
+    assert _is_ignorable_activity({"category": "external", "value": 0.0, "rawContract": {"rawValue": None}})
+    assert _is_ignorable_activity({"category": "external", "rawContract": {"rawValue": "0x"}})
+
+
+def test_non_ignorable_activities_pass_through():
+    """Non-zero native, and all token categories, are never gated here."""
+    assert not _is_ignorable_activity(
+        {"category": "external", "value": "1.5", "rawContract": {"rawValue": "0x15af1d78b58c40000"}}
+    )
+    assert not _is_ignorable_activity({"category": "erc20", "value": "0x0", "rawContract": {"rawValue": "0x0"}})
+    assert not _is_ignorable_activity({"category": "external", "value": "0.5"})
+
+
+def test_build_candidate_data_scales_token_amount_by_contract_decimals():
+    """6-decimal token (USDT/USDC) raw hex must not be treated as 18-decimal."""
+    activity = {
+        "blockNum": "0xdf34a3",
+        "hash": "0x" + "f" * 64,
+        "fromAddress": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "toAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "value": "0x989680",  # 10,000,000 raw units
+        "asset": "USDT",
+        "category": "erc20",
+        "rawContract": {"address": "0xdac17f958d2ee523a2206206994597c13d831ec7", "rawValue": "0x989680", "decimal": 6},
+        "log": {},
+    }
+    wallet = CuratedWallet(
+        id=1,
+        address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        chain=Chain.ETH,
+        label="Test Whale",
+    )
+    data = _build_candidate_data(activity, Chain.ETH, wallet)
+    # 10,000,000 raw / 10^6 = 10.0 USDT — NOT 10^12× larger from an 18-decimal read.
+    assert data["raw_json"]["token_amount"] == 10.0
+    assert data["raw_json"]["decimals"] == 6
+    # hex token value is not a USD figure → conservative 0.0 placeholder.
+    assert data["raw_json"]["value_usd"] == 0.0
+
+
+def test_build_candidate_data_defaults_to_18_decimals():
+    """Absent decimals hint → ERC-20 default of 18."""
+    activity = {
+        "blockNum": "0xdf34a3",
+        "hash": "0x" + "a1" * 32,
+        "fromAddress": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "toAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "value": 1000.0,
+        "asset": "WETH",
+        "category": "external",
+        "log": {},
+    }
+    wallet = CuratedWallet(
+        id=1,
+        address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        chain=Chain.ETH,
+        label="Test Whale",
+    )
+    data = _build_candidate_data(activity, Chain.ETH, wallet)
+    assert data["raw_json"]["decimals"] == 18
+    assert data["raw_json"]["value_usd"] == 1000.0

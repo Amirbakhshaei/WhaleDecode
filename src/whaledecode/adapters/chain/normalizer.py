@@ -73,18 +73,28 @@ def _classify_event(topics: list[str], address: str) -> str:
     return "CONTRACT_INTERACTION"
 
 
-def transfer_amount(raw_log: dict[str, Any]) -> float:
+def transfer_amount(raw_log: dict[str, Any], decimals: int = 18) -> float:
     """Decode an ERC-20 Transfer log's ``data`` field into a token amount.
 
-    Returns ``0.0`` when the amount is missing or unparseable.
+    Returns ``0.0`` when the amount is missing or unparseable. Defaults to 18
+    decimals; pass the real contract decimals when known (see ``parse_token_amount``).
     """
-    data = raw_log.get("data", "0x0")
-    if len(data) > 2 and data != "0x0":
-        try:
-            return int(data, 16) / 1e18
-        except (ValueError, TypeError):
-            pass
-    return 0.0
+    return parse_token_amount(raw_log.get("data", "0x0"), decimals)
+
+
+def parse_token_amount(raw_hex_value: str, decimals: int) -> float:
+    """Decode a raw hex token amount to its human-readable quantity.
+
+    ``decimals`` must come from the token contract — deterministic scaling.
+    Guessing 18 for a 6-decimal token (USDC/USDT/DAI) would inflate the value
+    by 10^12, which is exactly the valuation anomaly this avoids.
+    """
+    if not raw_hex_value or raw_hex_value == "0x":
+        return 0.0
+    try:
+        return int(raw_hex_value, 16) / (10**decimals)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _estimate_value(raw_log: dict[str, Any], event_type: str) -> float:

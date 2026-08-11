@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from whaledecode.adapters.chain.normalizer import _classify_event
+from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import (
     build_investigation_service,
@@ -51,6 +51,29 @@ def _hex_int(value: Any, default: int = 0) -> int:
     if isinstance(value, str):
         try:
             return int(value, 16)
+        except ValueError:
+            return default
+    return default
+
+
+def _coerce_numeric(value: Any, default: float = 0.0) -> float:
+    """Coerce a webhook ``value`` to float; hex strings → default.
+
+    Alchemy sends token-transfer ``value`` as a hex string of *raw* token units,
+    not a USD figure — treating it as USD would inflate a 6-decimal token by
+    10^12. Only real numerics are accepted; hex/unknown → ``default`` (the
+    deterministic gate re-prices true USD downstream from ``token_amount``).
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("0x"):
+            return default
+        try:
+            return float(stripped)
         except ValueError:
             return default
     return default
@@ -146,13 +169,21 @@ async def _process_webhook_payload(
         logger.warning("webhook_unknown_network", extra={"network": event.get("network")})
         return
 
+    # Early rejection: drop zero-value native transfers and empty contract calls
+    # before any DB session or candidate_event insert — this is the write-
+    # amplification guard that keeps dust/approve/zero-call spam off the queue.
+    raw_activities = event.get("activity") or []
+    activities = [a for a in raw_activities if a.get("hash") and not _is_ignorable_activity(a)]
+    if len(activities) != len(raw_activities):
+        logger.info("webhook_dropped_ignorable", extra={"dropped": len(raw_activities) - len(activities)})
+    if not activities:
+        return
+
     async with UnitOfWork(session_factory) as uow:
         wallets = await uow.curated_wallets.list_active(chain=chain.name)
     wallet_map = {w.address.lower(): w for w in wallets if w.id is not None}
 
-    for activity in event.get("activity") or []:
-        if not activity.get("hash"):
-            continue
+    for activity in activities:
         wallet = None
         for side in ("fromAddress", "toAddress"):
             addr = activity.get(side)
@@ -170,13 +201,58 @@ async def _process_webhook_payload(
         logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
 
 
+def _is_ignorable_activity(activity: dict[str, Any]) -> bool:
+    """Discard zero-value native transfers and empty contract calls.
+
+    A native (``category == "external"``) transfer whose raw value is 0 is a
+    smart-contract interaction / approve / zero-value call — not a transfer
+    worth persisting. Token (erc20/721/1155) activities are never gated here;
+    their value is priced downstream via contract decimals.
+    """
+    if activity.get("category") != "external":
+        return False
+    raw_value = (activity.get("rawContract") or {}).get("rawValue", "0x0")
+    if raw_value not in ("0x0", "0x", None):
+        return False
+    try:
+        value_float = float(activity.get("value") or 0.0)
+    except (TypeError, ValueError):
+        value_float = 0.0
+    return value_float == 0.0
+
+
+def _token_decimals(activity: dict[str, Any]) -> int:
+    """Resolve the token's decimal places from the activity, defaulting to 18.
+
+    Alchemy includes the hint as ``rawContract.decimal``/``rawContract.decimals``
+    on some payloads; when absent, 18 is the ERC-20 default (deterministic, and
+    never an inflation of a 6-decimal token when the hint *is* present).
+    """
+    raw_contract = activity.get("rawContract") or {}
+    for key in ("decimal", "decimals"):
+        value = raw_contract.get(key)
+        if value is not None and value != "":
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+    return 18
+
+
 def _build_candidate_data(
     activity: dict[str, Any],
     chain: Chain,
     wallet: CuratedWallet,
 ) -> dict[str, Any]:
     """Build candidate event data dict for repository insertion."""
-    value_usd = float(activity.get("value") or 0.0)
+    raw_value = (activity.get("rawContract") or {}).get("rawValue")
+    decimals = _token_decimals(activity)
+    token_amount = (
+        parse_token_amount(str(raw_value), decimals)
+        if raw_value and isinstance(raw_value, str)
+        else _coerce_numeric(activity.get("value"))
+    )
+    value_usd = _coerce_numeric(activity.get("value"))
     log_obj = activity.get("log") or {}
     topics = log_obj.get("topics") or []
     event_type = _classify_event(topics, log_obj.get("address", "")) if topics else "TRANSFER"
@@ -185,6 +261,8 @@ def _build_candidate_data(
 
     raw_json = dict(activity)
     raw_json["value_usd"] = value_usd
+    raw_json["token_amount"] = token_amount
+    raw_json["decimals"] = decimals
     tx_hash = Hash(activity["hash"])
 
     return {

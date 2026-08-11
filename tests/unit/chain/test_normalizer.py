@@ -1,6 +1,8 @@
 from whaledecode.adapters.chain.normalizer import (
     TRANSFER_EVENT_SIGNATURE,
     pad_address_to_topic,
+    parse_token_amount,
+    transfer_amount,
     wallet_id_from_transfer_topics,
 )
 
@@ -36,3 +38,23 @@ class TestWalletIdFromTransferTopics:
     def test_returns_none_when_no_tracked_wallet(self) -> None:
         topics = [TRANSFER_EVENT_SIGNATURE, "0x0000000000000000000000000000000000000000000000000000000000112233", None]
         assert wallet_id_from_transfer_topics(topics, {"0x" + "00" * 64: 1}) is None
+
+
+class TestParseTokenAmount:
+    def test_scales_by_contract_decimals(self) -> None:
+        # 10,000,000 raw units of a 6-decimal token = 10.0 (USDT/USDC), not 10^12× more.
+        assert parse_token_amount("0x989680", 6) == 10.0
+        assert parse_token_amount("0x989680", 18) == 10_000_000.0 / 1e18
+
+    def test_handles_empty_and_zero_hex(self) -> None:
+        assert parse_token_amount("", 6) == 0.0
+        assert parse_token_amount("0x", 18) == 0.0
+        assert parse_token_amount("0x0", 6) == 0.0
+
+    def test_garbage_returns_zero(self) -> None:
+        assert parse_token_amount("not-hex", 18) == 0.0
+
+    def test_transfer_amount_uses_parse_with_default_18(self) -> None:
+        raw_log = {"data": hex(int(1.5 * 10**18))}
+        assert transfer_amount(raw_log) == 1.5
+        assert transfer_amount(raw_log, decimals=18) == 1.5
