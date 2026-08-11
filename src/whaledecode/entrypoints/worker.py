@@ -6,7 +6,6 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm.factory import LLMFactory
@@ -100,6 +99,15 @@ def launch_supervisor_tasks(
         id="daily_briefing",
         misfire_grace_time=600,
     )
+    scheduler.add_job(
+        _purge_stale_events,
+        trigger="cron",
+        hour=3,
+        minute=0,
+        args=[session_factory],
+        id="purge_stale_events",
+        misfire_grace_time=3600,
+    )
 
     scheduler.start()
 
@@ -146,9 +154,17 @@ async def _run_briefing(session_factory, bot: Bot, settings: Settings) -> None:
     await run_daily_briefing(session_factory, bot, settings)
 
 
+async def _purge_stale_events(session_factory) -> None:
+    from whaledecode.adapters.db.uow import UnitOfWork
+
+    async with UnitOfWork(session_factory) as uow:
+        purged = await uow.candidate_events.purge_stale_events(days=3)
+        await uow.commit()
+    log.info("purged_stale_events", count=purged)
+
+
 async def _reset_daily_counters(session_factory) -> None:
     from sqlalchemy import update
-
     from whaledecode.adapters.db.models.user import UserModel
 
     async with session_factory() as session:

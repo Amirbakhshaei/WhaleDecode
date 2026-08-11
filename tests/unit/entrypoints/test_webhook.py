@@ -9,6 +9,7 @@ from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.entrypoints.webhook import (
     _NETWORK_TO_CHAIN,
     _activity_candidate,
+    _below_chain_floor,
     _build_candidate_data,
     _is_ignorable_activity,
     _score_candidate,
@@ -218,6 +219,21 @@ def test_non_ignorable_activities_pass_through():
     )
     assert not _is_ignorable_activity({"category": "erc20", "value": "0x0", "rawContract": {"rawValue": "0x0"}})
     assert not _is_ignorable_activity({"category": "external", "value": "0.5"})
+
+
+def test_below_chain_floor_gates_by_chain_threshold():
+    """Sub-floor USD noise is dropped in memory before any DB session."""
+    assert _below_chain_floor({"value": 100.0}, Chain.ETH) is True
+    assert _below_chain_floor({"value": 260_000.0}, Chain.ETH) is False
+    assert _below_chain_floor({"value": 100.0}, Chain.ARB) is True
+    assert _below_chain_floor({"value": 60_000.0}, Chain.ARB) is False
+    assert _below_chain_floor({"value": 30_000.0}, Chain.BASE) is False
+
+
+def test_below_chain_floor_ignores_unpriced_activities():
+    """Hex/absent USD values (0.0) are never floor-gated — re-priced downstream."""
+    assert _below_chain_floor({"value": "0x989680"}, Chain.ETH) is False
+    assert _below_chain_floor({}, Chain.ETH) is False
 
 
 def test_build_candidate_data_scales_token_amount_by_contract_decimals():

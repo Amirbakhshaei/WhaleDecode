@@ -141,6 +141,56 @@ async def test_set_status_updates_pending_row(db_session):
     assert events == []
 
 
+@pytest.mark.asyncio
+async def test_set_status_completed_strips_raw_json(db_session):
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:strip"))
+    await db_session.commit()
+
+    claimed = await repo.claim_next_pending()
+    await repo.set_status(claimed[0].id, "completed")
+    await db_session.commit()
+
+    row = await repo.get(claimed[0].id)
+    assert row is not None
+    assert row.status == "completed"
+    assert row.raw_json == {}
+
+
+@pytest.mark.asyncio
+async def test_purge_stale_events_deletes_old_terminal_rows(db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import text
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    for i, dedupe in enumerate(("purge:old:skipped", "purge:old:completed", "purge:fresh")):
+        await repo.create_pending(_pending_data(dedupe))
+    await db_session.commit()
+
+    # Age the first two rows and mark them terminal.
+    cutoff = datetime.now(UTC) - timedelta(days=10)
+    await db_session.execute(
+        text("UPDATE candidate_events SET status = 'skipped', created_at = :cutoff WHERE dedupe_key = 'purge:old:skipped'"),
+        {"cutoff": cutoff},
+    )
+    await db_session.execute(
+        text("UPDATE candidate_events SET status = 'completed', created_at = :cutoff WHERE dedupe_key = 'purge:old:completed'"),
+        {"cutoff": cutoff},
+    )
+    await db_session.commit()
+
+    purged = await repo.purge_stale_events()
+    await db_session.commit()
+    assert purged == 2
+
+    remaining = await repo.claim_next_pending(limit=10)
+    assert [e.dedupe_key for e in remaining] == ["purge:fresh"]
+
+
 def test_pending_events_statement_locks_skipped_rows_for_postgres() -> None:
     sql = str(pending_events_statement(1, for_update=True).compile(dialect=postgresql.dialect()))
     assert "FOR UPDATE SKIP LOCKED" in sql

@@ -176,6 +176,15 @@ async def _process_webhook_payload(
     activities = [a for a in raw_activities if a.get("hash") and not _is_ignorable_activity(a)]
     if len(activities) != len(raw_activities):
         logger.info("webhook_dropped_ignorable", extra={"dropped": len(raw_activities) - len(activities)})
+
+    # Chain floor gate: drop sub-floor USD noise in memory before any DB session.
+    floored = [a for a in activities if not _below_chain_floor(a, chain)]
+    if len(floored) != len(activities):
+        logger.info(
+            "webhook_dropped_below_floor",
+            extra={"dropped": len(activities) - len(floored), "chain": chain.name},
+        )
+    activities = floored
     if not activities:
         return
 
@@ -199,6 +208,20 @@ async def _process_webhook_payload(
             await uow.candidate_events.create_pending(candidate_data)
             await uow.commit()
         logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
+
+
+def _below_chain_floor(activity: dict[str, Any], chain: Chain) -> bool:
+    """True if the activity's *known* USD value is under the chain's noise floor.
+
+    Hex/absent values (coerced to 0.0 by ``_coerce_numeric``) carry no USD figure
+    and are re-priced downstream by the event gate, so they are never gated here.
+    """
+    from whaledecode.config.chain_rules import CHAIN_RULES
+
+    rule = CHAIN_RULES.get(chain.name)
+    floor = rule.min_usd_threshold if rule else 50_000.0
+    value_usd = _coerce_numeric(activity.get("value"))
+    return value_usd > 0.0 and value_usd < floor
 
 
 def _is_ignorable_activity(activity: dict[str, Any]) -> bool:

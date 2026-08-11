@@ -18,7 +18,7 @@ class CandidateEventModel(Base):
     log_index: Mapped[int] = mapped_column(Integer, default=0)
     block_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     event_type: Mapped[str] = mapped_column(String(50), default="UNKNOWN")
-    raw_json: Mapped[str] = mapped_column(Text, default="{}")
+    raw_json: Mapped[str | None] = mapped_column(Text, default="{}", nullable=True)
     score: Mapped[float] = mapped_column(Float, default=0.0)
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="NEW")

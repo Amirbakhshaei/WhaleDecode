@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +62,9 @@ class CandidateEventRepository:
         values = {"status": status, "updated_at": func.now()}
         if attempt_count is not None:
             values["attempt_count"] = attempt_count
+        # Strip the heavy raw payload on completion to minimize row width.
+        if status == "completed":
+            values["raw_json"] = None
         await self._session.execute(
             update(CandidateEventModel).where(CandidateEventModel.id == event_id).values(**values)
         )
@@ -114,6 +117,17 @@ class CandidateEventRepository:
             return 0
         await self._requeue_models(rows)
         return len(rows)
+
+    async def purge_stale_events(self, *, days: int = 3) -> int:
+        """Hard TTL: delete skipped/completed rows older than ``days`` so the
+        table can't grow unbounded. Returns the number of rows deleted."""
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        result = await self._session.execute(
+            delete(CandidateEventModel)
+            .where(CandidateEventModel.status.in_(("skipped", "completed")))
+            .where(CandidateEventModel.created_at < cutoff)
+        )
+        return result.rowcount or 0
 
     async def requeue_recent_events(self, *, hours: int = 24) -> int:
         """Reset candidate_events created in the last ``hours`` to ``pending`` with
