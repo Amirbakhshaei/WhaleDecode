@@ -1,12 +1,22 @@
+import pytest
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.services.event_gate import (
     CRITICAL_EVENT_TYPES,
     MIN_WHALE_THRESHOLD_USD,
     EventGate,
+    process_and_gate_candidate,
 )
 from whaledecode.domain.value_objects.hash import Hash
 
 TX_HASH = "0x" + "b" * 64
+
+
+class _FakeOracle:
+    def __init__(self, price: float) -> None:
+        self.price = price
+
+    async def get_token_price_usd(self, contract_address: str, chain: str) -> float:
+        return self.price
 
 
 def _event(
@@ -94,3 +104,22 @@ def test_critical_event_skips_score_but_not_value_gate() -> None:
 
 def test_min_whale_threshold_constant() -> None:
     assert MIN_WHALE_THRESHOLD_USD == 50_000.0
+
+
+async def test_process_gate_prices_amount_and_passes_whale() -> None:
+    # 1,000,000 SHIB at $0.00003 → $30 is below the floor; 3,000,000,000 at
+    # $0.00003 → $90,000 clears it. The true USD value comes from amount × price.
+    event = _event(score=0.9)
+    event.raw_json["data"] = hex(int(3_000_000_000 * 10**18))  # 3B SHIB
+    event.raw_json["address"] = "0x" + "c" * 40
+    assert await process_and_gate_candidate(event, _FakeOracle(0.00003))
+    assert event.raw_json["value_usd"] == pytest.approx(90_000.0)
+
+
+async def test_process_gate_drops_when_price_unknown() -> None:
+    # Unknown token (price 0.0) → value 0 → skipped, never reaches LLM.
+    event = _event(score=0.9)
+    event.raw_json["data"] = hex(int(1_000_000 * 10**18))
+    assert not await process_and_gate_candidate(event, _FakeOracle(0.0))
+    assert event.status == "skipped"
+    assert event.score == 0.0

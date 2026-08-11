@@ -73,13 +73,21 @@ def _classify_event(topics: list[str], address: str) -> str:
     return "CONTRACT_INTERACTION"
 
 
+def transfer_amount(raw_log: dict[str, Any]) -> float:
+    """Decode an ERC-20 Transfer log's ``data`` field into a token amount.
+
+    Returns ``0.0`` when the amount is missing or unparseable.
+    """
+    data = raw_log.get("data", "0x0")
+    if len(data) > 2 and data != "0x0":
+        try:
+            return int(data, 16) / 1e18
+        except (ValueError, TypeError):
+            pass
+    return 0.0
+
+
 def _estimate_value(raw_log: dict[str, Any], event_type: str) -> float:
     if event_type == "TRANSFER":
-        data = raw_log.get("data", "0x0")
-        if len(data) > 2 and data != "0x0":
-            try:
-                val = int(data, 16)
-                return val / 1e18
-            except (ValueError, TypeError):
-                pass
+        return transfer_amount(raw_log)
     return 0.0

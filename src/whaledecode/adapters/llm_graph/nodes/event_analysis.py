@@ -18,6 +18,11 @@ from_label: {from_label}
 to_label: {to_label}
 event_category: {event_category}
 24h_vol_usd: {24h_vol_usd}
+asset: {asset}
+token_amount_formatted: {token_amount_formatted}
+total_value_usd: {total_value_usd}
+chain: {chain}
+flow_type: {flow_type}
 
 # OUTPUT (STRICT)
 Structure your analysis to feed this schema:
@@ -52,6 +57,46 @@ def _market_context(event: dict) -> str:
     )
 
 
+def prepare_llm_context(event: dict) -> dict:
+    """Build the exact-amount market facts the LLM must anchor on.
+
+    Every field comes from the enriched event payload (stamped by
+    InvestigationService) or the raw RPC log — never fabricated. Values are
+    rendered for human reading so the LLM quotes them verbatim instead of
+    guessing from memory.
+    """
+    raw = event.get("raw_json") if isinstance(event.get("raw_json"), dict) else {}
+    token_amount = event.get("token_amount")
+    if token_amount is None:
+        token_amount = _first_present(raw, ("token_amount", "amount"))
+    asset = event.get("asset") or raw.get("symbol") or raw.get("token") or "Unknown Token"
+    value_usd = event.get("total_value_usd")
+    if value_usd is None:
+        value_usd = _first_present(raw, ("value_usd", "total_value_usd"))
+
+    def _fmt(value, fmt):
+        try:
+            return fmt(float(value))
+        except (TypeError, ValueError):
+            return "Unavailable"
+
+    return {
+        "asset": asset,
+        "token_amount_formatted": _fmt(token_amount, lambda v: f"{v:,.4f}"),
+        "total_value_usd": _fmt(value_usd, lambda v: f"${v:,.0f}"),
+        "chain": event.get("chain") or raw.get("chain") or "Unknown",
+        "flow_type": event.get("flow_type") or event.get("event_category") or "Unknown",
+    }
+
+
+def _first_present(raw: dict, keys: tuple[str, ...]):
+    for key in keys:
+        value = raw.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
 def create_analysis_node(llm: BaseChatModel):
     async def analyze_event(state: dict) -> dict:
         # The event was injected into state["messages"] as the opening user turn
@@ -60,11 +105,15 @@ def create_analysis_node(llm: BaseChatModel):
         history = trim_history(state.get("messages", []))
         entities = _entity_context(state.get("event_data", {}))
         market = _market_context(state.get("event_data", {}))
+        exact = prepare_llm_context(state.get("event_data", {}))
         prompt = SYSTEM_PROMPT
         if entities:
             prompt += f"\n\n# EVENT ENTITIES\n{entities}"
         if market:
             prompt += f"\n\n# MARKET CONTEXT\n{market}"
+        prompt += "\n\n# EXACT AMOUNTS (cite these verbatim)\n" + "\n".join(
+            f"{key}: {value}" for key, value in exact.items()
+        )
         result = await llm.ainvoke([SystemMessage(content=prompt), *history])
         return {"messages": [result], "summary": result.content}
     return analyze_event

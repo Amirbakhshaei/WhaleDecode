@@ -5,6 +5,7 @@ from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from whaledecode.adapters.chain.normalizer import transfer_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm_graph.formatting.sanitizer import sanitize_event_payload
 from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
@@ -12,7 +13,7 @@ from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.ports.reasoner import ReasonerPort
-from whaledecode.domain.services.event_gate import EventGate
+from whaledecode.domain.services.event_gate import EventGate, process_and_gate_candidate
 
 
 def _unpad_address(address: str) -> str:
@@ -89,10 +90,12 @@ class InvestigationService:
         reasoner: ReasonerPort,
         settings: Settings | None = None,
         rate_limit_rpm: int = 14,
+        price_oracle: Any | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._reasoner = reasoner
         self._relay = RelayFormatter(settings)
+        self._price_oracle = price_oracle
         self._gate = EventGate(
             min_score_threshold=settings.MIN_INVESTIGATION_SCORE if settings else 0.65,
             min_value_usd=settings.MIN_INVESTIGATION_VALUE_USD if settings else 5000.0,
@@ -113,6 +116,13 @@ class InvestigationService:
                     return run.output_json
 
         # Stage 1: Deterministic gate — drop low-conviction / low-value events before the LLM.
+        # When a price oracle is wired in, the raw on-chain token amount is first priced
+        # to a real USD value, replacing the placeholder stored at ingestion time.
+        if self._price_oracle is not None and not await process_and_gate_candidate(event, self._price_oracle):
+            event.status = "skipped"
+            async with self._uow_factory() as uow:
+                await self._persist_skipped(uow, event)
+            return {"status": "skipped", "reason": "Below $50k USD gate"}
         if not self._gate.should_investigate(event):
             event.status = "skipped"
             async with self._uow_factory() as uow:
@@ -168,7 +178,16 @@ class InvestigationService:
             event[f"{side}_label"] = label or "Unlabeled EOA"
             event[f"{side}_entity"] = f"{event[f'{side}_label']} ({address[:6]}...{address[-4:]})" if address else event[f"{side}_label"]
         event["event_category"] = _event_category(*kinds)
+        event["flow_type"] = event["event_category"]
         event["24h_vol_usd"] = "Unavailable"  # filled by dexscreener_tool when the LLM queries it
+        # Exact token/asset/value facts the LLM must anchor on instead of guessing.
+        raw = event.get("raw_json")
+        if not isinstance(raw, dict):
+            raw = {}
+        event["token_amount"] = transfer_amount(raw)
+        event["asset"] = raw.get("symbol") or raw.get("token") or raw.get("asset") or "Unknown Token"
+        value_usd = float(event.get("raw_json", {}).get("value_usd") or 0.0)
+        event["total_value_usd"] = value_usd
 
     @staticmethod
     async def _persist_skipped(uow: UnitOfWork, event: CandidateEvent) -> None:
@@ -214,12 +233,18 @@ def build_investigation_service(
     from whaledecode.adapters.db.session import create_session_factory
     from whaledecode.adapters.llm.factory import LLMFactory
     from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
+    from whaledecode.adapters.pricing.oracle import PriceOracle
 
     session_factory = create_session_factory(settings)
     llm_factory = LLMFactory(settings)
     reasoner = LangGraphReasoner(settings, llm_factory)
     return (
         session_factory,
-        InvestigationService(lambda: UnitOfWork(session_factory), reasoner, settings),
+        InvestigationService(
+            lambda: UnitOfWork(session_factory),
+            reasoner,
+            settings,
+            price_oracle=PriceOracle(),
+        ),
         reasoner,
     )
