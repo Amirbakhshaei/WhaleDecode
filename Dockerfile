@@ -5,6 +5,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Upgrade pip first: poetry shells out to `pip uninstall/install` during
+# reinstall cycles, and old pip + old top-level attrs crashes with
+# "module 'attr.setters' has no attribute 'pipe'" inside vendored rich.
+RUN pip install --no-cache-dir --upgrade pip "attrs>=22.2"
 RUN pip install --no-cache-dir poetry
 
 COPY pyproject.toml README.md poetry.lock* ./
