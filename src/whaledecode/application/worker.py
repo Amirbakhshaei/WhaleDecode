@@ -233,12 +233,18 @@ class BackgroundAIWorker:
             )
 
             if action == "CREATED":
-                msg = format_alert(build_alert_data(event.model_dump(), result))
+                msg = format_alert(
+                    build_alert_data(
+                        event.model_dump(),
+                        result,
+                        bot_username=self._settings.BOT_USERNAME,
+                    )
+                )
                 sent = await self._bot.send_message(
                     chat_id=self._channel_id,
                     text=msg,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=build_keyboard(str(event.tx_hash)),
+                    reply_markup=build_keyboard(str(event.tx_hash), self._settings.BOT_USERNAME),
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
                 msg_id = getattr(sent, "message_id", sent)

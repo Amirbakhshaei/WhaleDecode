@@ -271,6 +271,21 @@ class TestFormatAlert:
         html = format_alert(build_alert_data(event_zero, {"risk_score": 0.1}))
         assert "$0.00" in html
 
+    def test_deep_link_footer_uses_default_username(self):
+        from whaledecode.adapters.telegram.formatters.channel_formatter import deep_link
+
+        data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
+        html = format_alert(data)
+        raw = TRACE_EVENT["raw_json"]
+        tx = TRACE_EVENT["tx_hash"]
+        assert "WhaleDecode Platform Actions" in html
+        assert data["track_link"] == f"https://t.me/whaledecodebot?start=track_{raw['from']}"
+        assert data["analyze_link"] == f"https://t.me/whaledecodebot?start=analyze_{tx}"
+        assert "Track This Entity" in html
+        assert "Ask AI About Tx" in html
+        assert deep_link(f"analyze_{tx}") == f"https://t.me/whaledecodebot?start=analyze_{tx}"
+        assert deep_link(f"track_{raw['from']}", " @BotName ") == f"https://t.me/BotName?start=track_{raw['from']}"
+
 
 class TestBuildAlertData:
     def test_extracts_smc_fields_from_summary(self):

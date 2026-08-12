@@ -256,7 +256,12 @@ def _smc_fields(report: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
-def build_alert_data(event_data: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+def build_alert_data(
+    event_data: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    bot_username: str = "",
+) -> dict[str, Any]:
     """Shape a candidate event + LLM report into the alert_data dict ``format_alert`` renders."""
     raw = event_data.get("raw_json") if isinstance(event_data.get("raw_json"), dict) else {}
     tx_hash = str(event_data.get("tx_hash", ""))
@@ -287,7 +292,20 @@ def build_alert_data(event_data: dict[str, Any], report: dict[str, Any]) -> dict
         "tx_url": url_for("tx", tx_hash, chain) if tx_hash else "#",
         "from_url": url_for("address", from_addr, chain) if from_addr else "#",
         "to_url": url_for("address", to_addr, chain) if to_addr else "#",
+        # Intra-platform actions: deep links back into our own Telegram bot.
+        "track_link": deep_link(f"track_{from_addr}", bot_username),
+        "analyze_link": deep_link(f"analyze_{tx_hash}", bot_username),
     }
+
+
+def deep_link(payload: str, bot_username: str = "") -> str:
+    """Intra-platform deep link back into our own Telegram bot.
+
+    ``?start=track_<addr>`` / ``?start=analyze_<tx>`` keep users inside the
+    WhaleDecode bot instead of leaking them to external platforms.
+    """
+    bot = bot_username.strip().lstrip("@") or "whaledecodebot"
+    return f"https://t.me/{bot}?start={payload}"
 
 
 def format_alert(alert_data: dict[str, Any]) -> str:
@@ -309,10 +327,20 @@ def format_alert(alert_data: dict[str, Any]) -> str:
     to_url = escape(str(alert_data.get("to_url") or "#"), quote=True)
     from_label = escape(str(alert_data.get("from_label") or "Unknown Wallet"))
     to_label = escape(str(alert_data.get("to_label") or "Unknown Wallet"))
+    track_link = escape(str(alert_data.get("track_link") or ""), quote=True)
+    analyze_link = escape(str(alert_data.get("analyze_link") or ""), quote=True)
 
     value_line = f"💰 <b>Value:</b> ${value_usd:,.2f}"
     if token_amount:
         value_line += f" ({token_amount})"
+
+    # Intra-platform actions footer: route users back into our own bot.
+    action_line = ""
+    if track_link and analyze_link:
+        action_line = (
+            f"\n\n👇 <b>WhaleDecode Platform Actions:</b>\n"
+            f"🕵️‍♂️ <a href=\"{track_link}\">Track This Entity</a> | 💬 <a href=\"{analyze_link}\">Ask AI About Tx</a>"
+        )
 
     return f"""🚨 <b>WHALE ALERT</b> | <b>{asset}</b>
 ───────────────────────────
@@ -324,4 +352,4 @@ def format_alert(alert_data: dict[str, Any]) -> str:
 • <b>Technical Context:</b> {technical}
 • <b>Institutional Bias:</b> {bias}
 
-<blockquote expandable>🔗 <a href="{tx_url}">Tx</a> | <a href="{from_url}">{from_label}</a> ➔ <a href="{to_url}">{to_label}</a></blockquote>""".strip()
+<blockquote expandable>🔗 <a href="{tx_url}">Tx</a> | <a href="{from_url}">{from_label}</a> ➔ <a href="{to_url}">{to_label}</a></blockquote>{action_line}""".strip()

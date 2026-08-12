@@ -39,5 +39,9 @@ def test_cta_keyboard_deep_links() -> None:
 
     kb = build_keyboard("0xabc123")
     rows = kb.inline_keyboard
-    assert rows[0][0].url == "https://t.me/whaledecodebot?start=0xabc123"
+    assert rows[0][0].url == "https://t.me/whaledecodebot?start=analyze_0xabc123"
     assert rows[1][0].url == "https://etherscan.io/tx/0xabc123"
+
+    kb_custom = build_keyboard("0xabc123", "MyBot")
+    rows_custom = kb_custom.inline_keyboard
+    assert rows_custom[0][0].url == "https://t.me/MyBot?start=analyze_0xabc123"

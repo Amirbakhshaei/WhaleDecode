@@ -33,6 +33,7 @@ class Settings(BaseSettings):
 
     # Telegram
     BOT_TOKEN: SecretStr
+    BOT_USERNAME: str = "whaledecodebot"
     WEBHOOK_URL: str | None = None
     WEBHOOK_SECRET: SecretStr | None = None
 

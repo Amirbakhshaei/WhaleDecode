@@ -1,7 +1,6 @@
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.application.services.user_service import (
     UPGRADE_CTA_MESSAGE,
@@ -21,6 +20,16 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
 
     payload = (command.args or "").strip()
     if payload:
+        # Intra-platform deep links: ?start=analyze_<tx> / ?start=track_<wallet>.
+        # analyze_ → on-chain event deep dive (existing chat path); track_ →
+        # a plain chat prompt about that entity until a one-tap track hook exists.
+        action, _, arg = payload.partition("_")
+        if action == "track":
+            prompt = f"Analyze and describe this wallet: {arg}"
+        elif action == "analyze":
+            prompt = f"Deep dive into this on-chain event: {arg}"
+        else:
+            prompt = f"Deep dive into this on-chain event: {payload}"
         if investigation_service is None:
             await message.answer("Investigation service unavailable.")
             return
@@ -34,7 +43,7 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
         await message.answer("🧠 Investigating the on-chain event...")
         try:
             result = await investigation_service.chat(
-                f"Deep dive into this on-chain event: {payload}",
+                prompt,
                 thread_id=str(message.from_user.id),
             )
             await message.answer(result[:4000])
