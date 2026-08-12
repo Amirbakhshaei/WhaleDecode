@@ -1,5 +1,5 @@
 """Unified schema for consolidated investigation output."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class InvestigationResult(BaseModel):
@@ -41,6 +41,14 @@ class InvestigationResult(BaseModel):
     risk_score: float = Field(
         description="Risk score between 0.0 and 1.0.", ge=0.0, le=1.0
     )
+
+    @field_validator("risk_score", mode="before")
+    @classmethod
+    def _normalize_risk_score(cls, value) -> float:
+        value = float(value)
+        if value > 1.0:
+            value /= 100.0
+        return max(0.0, min(1.0, value))
     is_safe: bool = Field(
         description="True if the event passes all safety guardrails."
     )
