@@ -6,6 +6,7 @@ Decoupled from the fetcher: it only reads the database and talks to Telegram.
 """
 import asyncio
 import traceback
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -16,6 +17,7 @@ from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import InvestigationService
+from whaledecode.config.alert_policy import GLOBAL_POLICY, policy_for
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 from whaledecode.domain.entities.candidate_event import CandidateEvent
@@ -98,15 +100,52 @@ class BackgroundAIWorker:
                 return
 
             score, value_usd = self._channel_metrics(event, result)
-            if score < CHANNEL_MIN_SCORE or value_usd < CHANNEL_MIN_VALUE_USD:
+            policy = policy_for(event.chain)
+            min_score = policy.min_score_to_publish if policy else CHANNEL_MIN_SCORE
+            min_usd = policy.min_usd_threshold if policy else CHANNEL_MIN_VALUE_USD
+            if score < min_score or value_usd < min_usd:
                 async with UnitOfWork(self._session_factory) as uow:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
                 log.info(
                     "worker_event_below_channel_floor",
-                    extra={"dedupe_key": event.dedupe_key, "score": score, "value_usd": value_usd},
+                    extra={
+                        "dedupe_key": event.dedupe_key,
+                        "score": score,
+                        "value_usd": value_usd,
+                        "min_score": min_score,
+                        "min_usd": min_usd,
+                    },
                 )
                 return
+
+            # Anti-fatigue caps; $2M+ moves (black swans) bypass all caps.
+            chain_daily_cap = policy.max_daily_alerts if policy else GLOBAL_POLICY.max_alerts_per_day
+            now = datetime.now(UTC)
+            async with UnitOfWork(self._session_factory) as uow:
+                hourly = await uow.candidate_events.count_published_since(now - timedelta(hours=1))
+                daily = await uow.candidate_events.count_published_since(now - timedelta(days=1))
+                chain_daily = await uow.candidate_events.count_published_since(
+                    now - timedelta(days=1), chain=event.chain
+                )
+                capped = value_usd < GLOBAL_POLICY.black_swan_usd_override and (
+                    hourly >= GLOBAL_POLICY.max_alerts_per_hour
+                    or daily >= GLOBAL_POLICY.max_alerts_per_day
+                    or chain_daily >= chain_daily_cap
+                )
+                if capped:
+                    await uow.candidate_events.set_status(event.id, "skipped")
+                    await uow.commit()
+                    log.info(
+                        "worker_event_capped",
+                        extra={
+                            "dedupe_key": event.dedupe_key,
+                            "hourly": hourly,
+                            "daily": daily,
+                            "chain_daily": chain_daily,
+                        },
+                    )
+                    return
 
             dispatched = await self._dispatch(event, result)
             async with UnitOfWork(self._session_factory) as uow:

@@ -243,6 +243,18 @@ class CandidateEventRepository:
         )
         return [self._to_domain(row) for row in result.scalars()]
 
+    async def count_published_since(self, since: datetime, *, chain: str | None = None) -> int:
+        """Count events published on the channel since ``since``, optionally per chain."""
+        stmt = (
+            select(func.count())
+            .select_from(CandidateEventModel)
+            .where(CandidateEventModel.published_at >= since)
+        )
+        if chain:
+            stmt = stmt.where(CandidateEventModel.chain == chain)
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def mark_published(self, event_id: int) -> None:
         from datetime import UTC, datetime
         result = await self._session.execute(

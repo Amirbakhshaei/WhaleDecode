@@ -54,3 +54,12 @@ CHAIN_POLICIES: dict[str, ChainPolicy] = {
 }
 
 GLOBAL_POLICY = GlobalAntiFatiguePolicy()
+
+# Candidate events store chain as the display label ("Ethereum"); map to codes.
+_CHAIN_ALIASES = {"ethereum": "ETH", "arbitrum": "ARB", "base": "BASE"}
+
+
+def policy_for(chain: str) -> ChainPolicy | None:
+    """Resolve the chain policy from a chain code or display label, or ``None``."""
+    key = _CHAIN_ALIASES.get(chain.strip().lower(), chain.strip().upper())
+    return CHAIN_POLICIES.get(key)

@@ -61,7 +61,7 @@ def _pending_data(dedupe_key: str) -> dict:
         "log_index": 0,
         "block_number": 100,
         "event_type": "TRANSFER",
-        "raw_json": {"value_usd": 100000.0},
+        "raw_json": {"value_usd": 1_000_000.0},
         "score": 80.0,
         "dedupe_key": dedupe_key,
     }
