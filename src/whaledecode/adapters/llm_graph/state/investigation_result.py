@@ -42,13 +42,14 @@ class InvestigationResult(BaseModel):
         description=(
             "Conviction/impact score on the FULL 0.0-1.0 scale (equal to a 0-100 score). "
             "USE THE ENTIRE RANGE - never cluster around 0.5 as a safe default. "
-            "Anchors: 0.75+ ONLY for undeniable, high-conviction institutional accumulation "
-            "(e.g. named CEX-to-cold-storage outflow at a material % of liquid supply, "
-            "coordinated multi-entity accumulation) or high-impact DEX sweeps that absorb "
-            "visible orderbook walls. 0.65-0.74 = strong signal with a caveat; "
-            "0.45-0.64 = credible whale move with normal market context; below 0.45 = "
-            "routine rebalancing, internal transfer, or ambiguous flow. This score gates "
-            "publishing (per-chain floor 65-75)."
+            "This score gates publishing (per-chain floor 65-75), so under-scoring suppresses valid alerts. "
+            "MANDATORY ANCHORS: (1) total_value_usd >= 5000000 AND flow_type == 'CEX Outflow' (incl. cold-storage "
+            "accumulation) or a $5M+ high-impact DEX liquidity drain -> score >= 0.80. "
+            "(2) total_value_usd >= 1000000 AND flow_type == 'CEX Outflow' -> score >= 0.68. "
+            "(3) flow_type == 'Inter-Exchange Transfer' (CEX internal) -> score <= 0.35 regardless of value. "
+            "Between anchors: 0.65-0.79 smart money / significant flows ($1M-$4.999M directional, LP sweeps, "
+            "smart-money accumulation campaigns); 0.40-0.64 routine directional transfers ($50k-$999k); "
+            "below 0.40 zero-signal noise (CEX hot-wallet rotations, MEV/dust, unlabeled)."
         ),
         ge=0.0,
         le=1.0,

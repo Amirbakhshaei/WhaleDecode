@@ -28,13 +28,20 @@ EXEMPLAR OUTPUT (structure to copy; values are illustrative — ground every fig
   "bias_summary": "Bullish Accumulation. Favor long setups on lower-timeframe retests of $0.00001820; invalidated on daily close below $0.00001780."
 }
 
-# RISK SCORE (0-100 scale, encoded as risk_score 0.0-1.0)
-Score on the FULL 0-100 scale. Do NOT compress into the 45-60 band - a middle score is a real judgment, not a safe default. This score gates publishing, so under-scoring suppresses valid alerts.
-- 75+ (0.75+): ONLY undeniable, high-conviction institutional accumulation (named CEX -> cold-storage at a material % of liquid supply, coordinated multi-entity accumulation) or high-impact DEX sweeps that absorb a visible orderbook wall. This is the publishing bar - reserve it for the strongest few percent of events.
-- 65-74 (0.65-0.74): strong signal with one unresolved caveat (unknown counterparty, moderate size, partial confirmation).
-- 45-64 (0.45-0.64): credible whale move with normal market context - routine but not boring.
-- Below 45 (<0.45): routine rebalancing, internal transfers, or ambiguous flow - below every publishing floor.
-Distribute scores across ALL bands: most events land under 65, and only exceptional ones reach 75+.
+# RISK SCORE (0-100 scale; encode as risk_score = score / 100, e.g. 85 -> 0.85)
+Use the FULL 0-100 scale. Do NOT compress into the 45-60 band - a middle score is a real judgment, not a safe default. This score gates publishing, so under-scoring suppresses valid alerts.
+
+CALIBRATION MATRIX:
+- [80-100] INSTITUTIONAL ACCUMULATION / BLACK SWAN: total_value_usd >= $5M CEX Outflow (incl. cold-storage accumulation), or a heavy DEX liquidity drain / supply shock removing a significant % of circulating supply. Top-tier whale cluster accumulation.
+- [65-79] SMART MONEY & SIGNIFICANT FLOWS: $1M-$4.999M moves with clear directional bias (CEX -> fresh wallet, LP sweeps); multi-tx smart-money accumulation campaigns; significant L2 DEX momentum snipes.
+- [40-64] ROUTINE DIRECTIONAL TRANSFERS: $50k-$999k directional transfers without exceptional cluster history; moderate liquidity additions or standard OTC rebalancing.
+- [0-39] ZERO-SIGNAL NOISE & INTERNAL ROUTING: CEX hot-wallet-to-hot-wallet rotations, MEV/sandwich/dust moves, unlabeled transfers with zero market impact.
+
+MANDATORY ANCHORING RULES (NON-NEGOTIABLE):
+1. If total_value_usd >= 5000000.0 AND flow_type == 'CEX Outflow', score MUST BE >= 80. A $5M+ high-impact DEX liquidity drain (flow_type 'Whale Transfer') also belongs in 80+.
+2. If total_value_usd >= 1000000.0 AND flow_type == 'CEX Outflow', score MUST BE >= 68.
+3. If flow_type == 'Inter-Exchange Transfer' (CEX internal), score MUST NOT EXCEED 35 regardless of USD value.
+Distribute scores across ALL bands: most events land under 65, and only exceptional ones reach 80+.
 
 # BRIEFING
 Also produce briefing_markdown for the Telegram channel. Its SMC Intelligence blockquote repeats the three summaries above as punchy bullets:
