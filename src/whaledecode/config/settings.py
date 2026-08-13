@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     ALCHEMY_WEBHOOK_SIGNING_KEY: SecretStr | None = None
     ALCHEMY_WEBHOOK_SIGNING_KEYS: str = ""
     ALCHEMY_AUTH_TOKEN: SecretStr | None = None
+    ALCHEMY_NOTIFY_TOKEN: SecretStr | None = None
+    ALCHEMY_WEBHOOK_ID_ETH: str = ""
+    ALCHEMY_WEBHOOK_ID_ARB: str = ""
+    ALCHEMY_WEBHOOK_ID_BASE: str = ""
 
     @property
     def webhook_signing_keys(self) -> list[str]:
