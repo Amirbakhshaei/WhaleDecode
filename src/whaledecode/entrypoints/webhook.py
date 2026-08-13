@@ -6,16 +6,20 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import (
     build_investigation_service,
 )
+from whaledecode.config.alert_policy import policy_for
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.policies.sentinel import SentinelEngine
+from whaledecode.domain.services.event_gate import (
+    MIN_WHALE_THRESHOLD_USD,
+    process_and_gate_candidate,
+)
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app
@@ -123,6 +127,9 @@ async def lifespan(app: FastAPI):
 # Initialize settings and deps once at module load
 settings = Settings()
 session_factory, investigation_service, _ = build_investigation_service(settings)
+# Shared oracle with the investigation path; its 5-min TTL cache makes
+# ingestion pricing free after the first lookup of each token.
+_price_oracle = investigation_service._price_oracle
 
 app = FastAPI(lifespan=lifespan)
 app.state.settings = settings
@@ -202,12 +209,37 @@ async def _process_webhook_payload(
         if wallet is None:
             continue
 
-        # Build candidate data and insert directly as pending
+        # Per-chain ingestion gate: price the move now and only persist as
+        # pending when it clears the chain's min_usd_threshold.
         candidate_data = _build_candidate_data(activity, chain, wallet)
+        if not await _clears_chain_floor(candidate_data):
+            continue
         async with UnitOfWork(session_factory) as uow:
             await uow.candidate_events.create_pending(candidate_data)
             await uow.commit()
         logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
+
+
+async def _clears_chain_floor(candidate_data: dict[str, Any]) -> bool:
+    """True when the move prices above its chain's ingestion floor.
+
+    Reuses the investigation gate's pricing so ingestion and investigation
+    agree on value; the priced ``value_usd`` is written back into ``raw_json``
+    so pending rows carry a real USD figure. Sub-floor moves never enter pending.
+    """
+    candidate = CandidateEvent(**candidate_data)
+    await process_and_gate_candidate(candidate, _price_oracle)
+    value_usd = float(candidate.raw_json.get("value_usd") or 0.0)
+    candidate_data["raw_json"]["value_usd"] = value_usd
+    policy = policy_for(candidate.chain)
+    floor = policy.min_usd_threshold if policy else MIN_WHALE_THRESHOLD_USD
+    if value_usd < floor:
+        logger.info(
+            "webhook_dropped_below_chain_floor",
+            extra={"chain": candidate.chain, "value_usd": value_usd, "floor": floor},
+        )
+        return False
+    return True
 
 
 def _below_chain_floor(activity: dict[str, Any], chain: Chain) -> bool:

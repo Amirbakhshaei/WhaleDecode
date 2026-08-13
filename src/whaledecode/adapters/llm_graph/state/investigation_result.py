@@ -39,7 +39,19 @@ class InvestigationResult(BaseModel):
         "Every figure must come from tool output; no fabricated data."
     )
     risk_score: float = Field(
-        description="Risk score between 0.0 and 1.0.", ge=0.0, le=1.0
+        description=(
+            "Conviction/impact score on the FULL 0.0-1.0 scale (equal to a 0-100 score). "
+            "USE THE ENTIRE RANGE - never cluster around 0.5 as a safe default. "
+            "Anchors: 0.75+ ONLY for undeniable, high-conviction institutional accumulation "
+            "(e.g. named CEX-to-cold-storage outflow at a material % of liquid supply, "
+            "coordinated multi-entity accumulation) or high-impact DEX sweeps that absorb "
+            "visible orderbook walls. 0.65-0.74 = strong signal with a caveat; "
+            "0.45-0.64 = credible whale move with normal market context; below 0.45 = "
+            "routine rebalancing, internal transfer, or ambiguous flow. This score gates "
+            "publishing (per-chain floor 65-75)."
+        ),
+        ge=0.0,
+        le=1.0,
     )
 
     @field_validator("risk_score", mode="before")

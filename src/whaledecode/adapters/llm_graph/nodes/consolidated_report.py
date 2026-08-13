@@ -28,6 +28,14 @@ EXEMPLAR OUTPUT (structure to copy; values are illustrative — ground every fig
   "bias_summary": "Bullish Accumulation. Favor long setups on lower-timeframe retests of $0.00001820; invalidated on daily close below $0.00001780."
 }
 
+# RISK SCORE (0-100 scale, encoded as risk_score 0.0-1.0)
+Score on the FULL 0-100 scale. Do NOT compress into the 45-60 band - a middle score is a real judgment, not a safe default. This score gates publishing, so under-scoring suppresses valid alerts.
+- 75+ (0.75+): ONLY undeniable, high-conviction institutional accumulation (named CEX -> cold-storage at a material % of liquid supply, coordinated multi-entity accumulation) or high-impact DEX sweeps that absorb a visible orderbook wall. This is the publishing bar - reserve it for the strongest few percent of events.
+- 65-74 (0.65-0.74): strong signal with one unresolved caveat (unknown counterparty, moderate size, partial confirmation).
+- 45-64 (0.45-0.64): credible whale move with normal market context - routine but not boring.
+- Below 45 (<0.45): routine rebalancing, internal transfers, or ambiguous flow - below every publishing floor.
+Distribute scores across ALL bands: most events land under 65, and only exceptional ones reach 75+.
+
 # BRIEFING
 Also produce briefing_markdown for the Telegram channel. Its SMC Intelligence blockquote repeats the three summaries above as punchy bullets:
 > • **Action:** {fundamental_summary}

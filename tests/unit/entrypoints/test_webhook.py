@@ -1,4 +1,5 @@
 """Unit tests for the Alchemy webhook entrypoint (FastAPI version)."""
+import asyncio
 import hashlib
 import hmac
 
@@ -6,11 +7,13 @@ from fastapi.testclient import TestClient
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
+from whaledecode.entrypoints import webhook
 from whaledecode.entrypoints.webhook import (
     _NETWORK_TO_CHAIN,
     _activity_candidate,
     _below_chain_floor,
     _build_candidate_data,
+    _clears_chain_floor,
     _is_ignorable_activity,
     _score_candidate,
     app,
@@ -284,3 +287,54 @@ def test_build_candidate_data_defaults_to_18_decimals():
     data = _build_candidate_data(activity, Chain.ETH, wallet)
     assert data["raw_json"]["decimals"] == 18
     assert data["raw_json"]["value_usd"] == 1000.0
+
+
+class _FakeOracle:
+    def __init__(self, price: float) -> None:
+        self._price = price
+
+    async def get_token_price_usd(self, contract_address: str, chain: str) -> float:
+        return self._price
+
+
+def _erc20_activity(value: float) -> dict:
+    return {
+        "blockNum": "0xdf34a3",
+        "hash": "0x" + "c" * 64,
+        "fromAddress": "0x503828976d22510aad0201ac7ec88293211d23da",
+        "toAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "value": value,
+        "asset": "WETH",
+        "category": "external",
+        "log": {},
+    }
+
+
+def test_clears_chain_floor_prices_via_oracle(monkeypatch):
+    """Ingestion gate prices the move and enforces the chain's per-chain floor."""
+    wallet = CuratedWallet(id=1, address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18", chain=Chain.ETH, label="Test Whale")
+    data = _build_candidate_data(_erc20_activity(1000.0), Chain.ETH, wallet)
+    monkeypatch.setattr(webhook, "_price_oracle", _FakeOracle(600.0))
+
+    assert asyncio.run(_clears_chain_floor(data)) is True
+    assert data["raw_json"]["value_usd"] == 600_000.0
+
+
+def test_clears_chain_floor_drops_below_threshold(monkeypatch):
+    """Sub-floor move is rejected and never persists — priced value still recorded."""
+    wallet = CuratedWallet(id=1, address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18", chain=Chain.ETH, label="Test Whale")
+    data = _build_candidate_data(_erc20_activity(1000.0), Chain.ETH, wallet)
+    monkeypatch.setattr(webhook, "_price_oracle", _FakeOracle(100.0))
+
+    assert asyncio.run(_clears_chain_floor(data)) is False
+    assert data["raw_json"]["value_usd"] == 100_000.0
+
+
+def test_clears_chain_floor_uses_per_chain_floor(monkeypatch):
+    """BASE's $30k floor governs ingestion, not the flat $50k downstream gate."""
+    wallet = CuratedWallet(id=1, address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18", chain=Chain.BASE, label="Test Whale")
+    data = _build_candidate_data(_erc20_activity(1000.0), Chain.BASE, wallet)
+    monkeypatch.setattr(webhook, "_price_oracle", _FakeOracle(50.0))
+
+    assert asyncio.run(_clears_chain_floor(data)) is True
+    assert data["raw_json"]["value_usd"] == 50_000.0
