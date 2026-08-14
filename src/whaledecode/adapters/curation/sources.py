@@ -28,6 +28,7 @@ import httpx
 log = logging.getLogger(__name__)
 
 EVM_REGEX = re.compile(r"^0x[a-fA-F0-9]{40}$")
+_HEX40 = re.compile(r"^[a-fA-F0-9]{40}$")
 SOL_REGEX = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # DefiLlama chain names -> our chain codes. Extend as needed.
@@ -93,9 +94,9 @@ class DuneApiAdapter:
         self._client = client
 
     _SQL = (
-        "SELECT address, name, chain, label_type "
-        "FROM labels.all "
-        "WHERE label_type IN ('cex', 'protocol', 'fund', 'individual', 'community', 'token') "
+        "SELECT address, name, blockchain, category "
+        "FROM labels.addresses "
+        "WHERE category IN ('cex', 'protocol', 'fund', 'bridge', 'dao', 'token') "
         "LIMIT 5000"
     )
 
@@ -165,7 +166,10 @@ class DuneApiAdapter:
             if state == "QUERY_STATE_COMPLETED":
                 break
             if state in ("QUERY_STATE_FAILED", "QUERY_STATE_EXPIRED", "QUERY_STATE_CANCELLED"):
-                log.warning("dune_api_query_ended", extra={"state": state})
+                log.warning(
+                    "dune_api_query_ended",
+                    extra={"state": state, "body": resp.text[:500]},
+                )
                 return []
             if loop.time() > deadline:
                 log.warning("dune_api_poll_timeout", extra={"timeout": self.poll_timeout})
@@ -187,11 +191,14 @@ class DuneApiAdapter:
     def _parse(self, rows: list[dict]) -> list[CuratedSeed]:
         seeds: list[CuratedSeed] = []
         for r in rows:
-            address = r.get("address")
-            chain = _CHAIN_MAP.get(str(r.get("chain", "")).lower())
+            raw = r.get("address")
+            address = raw
+            if isinstance(raw, str) and _HEX40.match(raw):
+                address = "0x" + raw
+            chain = _CHAIN_MAP.get(str(r.get("blockchain", "")).lower())
             if not isinstance(address, str) or not EVM_REGEX.match(address) or not chain:
                 continue
-            label_type = str(r.get("label_type", ""))
+            category = str(r.get("category", ""))
             label = str(r.get("name") or address)
             seeds.append(
                 CuratedSeed(
@@ -199,7 +206,7 @@ class DuneApiAdapter:
                     chain=chain,
                     network_family="EVM",
                     label=label,
-                    category=label_type.title() if label_type else "Smart Money",
+                    category=category.title() if category else "Smart Money",
                     tags=("dune",),
                     quality_score=75.0,
                 )

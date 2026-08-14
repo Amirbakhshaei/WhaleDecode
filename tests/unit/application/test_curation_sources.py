@@ -12,7 +12,7 @@ from whaledecode.adapters.curation.sources import (
 
 def _dune_transport(execute_status=200, execution_status=200, state="QUERY_STATE_COMPLETED", rows=None):
     if rows is None:
-        rows = [{"address": "0x" + "a" * 40, "name": "Acme", "chain": "ethereum", "label_type": "cex"}]
+        rows = [{"address": "0x" + "a" * 40, "name": "Acme", "blockchain": "ethereum", "category": "cex"}]
 
     def handler(request):
         if request.url.path.endswith("/sql/execute"):
@@ -109,7 +109,7 @@ async def test_dune_api_poll_quota_returns_empty():
 @pytest.mark.asyncio
 async def test_dune_api_skips_non_evm():
     client = httpx.AsyncClient(
-        transport=_dune_transport(rows=[{"address": "nothex", "chain": "ethereum", "name": "X"}])
+        transport=_dune_transport(rows=[{"address": "nothex", "blockchain": "ethereum", "name": "X"}])
     )
     seeds = await DuneApiAdapter(api_key="k", client=client).fetch()
     await client.aclose()
