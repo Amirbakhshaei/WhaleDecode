@@ -105,10 +105,6 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     SENTRY_DSN: SecretStr | None = None
 
-    # EVM address-label ingestion (standalone SQLite cache, see whaledecode.label_ingestion)
-    GITHUB_TOKEN: SecretStr | None = None
-    LABELS_DB_PATH: str = "data/evm_labels.db"
-
     # LangSmith (optional — enables tracing for LangChain/LangGraph)
     LANGSMITH_TRACING: bool = True
     LANGSMITH_ENDPOINT: str | None = None

@@ -6,6 +6,7 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm.factory import LLMFactory
@@ -16,45 +17,6 @@ from whaledecode.application.worker import BackgroundAIWorker
 from whaledecode.config.settings import Settings
 
 log = structlog.get_logger()
-
-
-async def _ingest_evm_labels(settings: Settings) -> None:
-    """Daily job: pull public EVM address labels into the standalone SQLite cache.
-
-    Runs inside the worker (which already holds the Postgres session factory) but
-    writes to its own SQLite file, so it never touches the app's Postgres memory.
-    Guarded so a missing package or GitHub outage can't take down the scheduler."""
-    try:
-        from whaledecode.label_ingestion.config import DEFAULT_REPO_TARGETS
-        from whaledecode.label_ingestion.main import run
-    except ImportError as exc:  # pragma: no cover - package always present in image
-        log.warning("labels_ingest_skipped", extra={"reason": f"package missing: {exc}"})
-        return
-    token = settings.GITHUB_TOKEN.get_secret_value() if settings.GITHUB_TOKEN else None
-    rpc_urls = {
-        int(c): u
-        for c, u in (
-            (1, settings.ETH_RPC_URL),
-            (42161, settings.ARB_RPC_URL),
-            (8453, settings.BASE_RPC_URL),
-        )
-        if u
-    }
-    try:
-        stats = await run(DEFAULT_REPO_TARGETS, settings.LABELS_DB_PATH, token, rpc_urls)
-        log.info(
-            "labels_ingest_done",
-            extra={
-                "files": stats.files,
-                "records": stats.records,
-                "stored": stats.stored,
-                "skipped": stats.skipped,
-                "failures": stats.failures,
-                "db": settings.LABELS_DB_PATH,
-            },
-        )
-    except Exception as exc:  # noqa: BLE001 - keep the scheduler alive on GitHub/network errors
-        log.error("labels_ingest_failed", extra={"error": str(exc)})
 
 
 async def run_worker(settings: Settings) -> None:
@@ -147,15 +109,6 @@ def launch_supervisor_tasks(
         id="purge_stale_events",
         misfire_grace_time=3600,
     )
-    scheduler.add_job(
-        _ingest_evm_labels,
-        trigger="cron",
-        hour=4,
-        minute=0,
-        args=[settings],
-        id="ingest_evm_labels",
-        misfire_grace_time=3600,
-    )
 
     scheduler.start()
 
@@ -213,6 +166,7 @@ async def _purge_stale_events(session_factory) -> None:
 
 async def _reset_daily_counters(session_factory) -> None:
     from sqlalchemy import update
+
     from whaledecode.adapters.db.models.user import UserModel
 
     async with session_factory() as session:
