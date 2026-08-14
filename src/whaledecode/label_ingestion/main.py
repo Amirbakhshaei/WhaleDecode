@@ -20,11 +20,11 @@ import os
 import sys
 from dataclasses import dataclass, field
 
-from evm_label_pipeline.config import DEFAULT_REPO_TARGETS, LABEL_FILE_SUFFIXES, RepoTarget
-from evm_label_pipeline.github_client import GitHubClient
-from evm_label_pipeline.normalizer import flag_cross_chain, normalize
-from evm_label_pipeline.parsers import extract_records
-from evm_label_pipeline.storage import LabelStore
+from whaledecode.label_ingestion.config import DEFAULT_REPO_TARGETS, LABEL_FILE_SUFFIXES, RepoTarget
+from whaledecode.label_ingestion.github_client import GitHubClient
+from whaledecode.label_ingestion.normalizer import flag_cross_chain, normalize
+from whaledecode.label_ingestion.parsers import extract_records
+from whaledecode.label_ingestion.storage import LabelStore
 
 logger = logging.getLogger("evm_label_pipeline")
 

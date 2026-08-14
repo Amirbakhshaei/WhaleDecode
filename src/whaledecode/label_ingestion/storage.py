@@ -6,8 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from web3 import Web3
-
-from evm_label_pipeline.normalizer import AddressLabel
+from whaledecode.label_ingestion.normalizer import AddressLabel
 
 
 class LabelStore:

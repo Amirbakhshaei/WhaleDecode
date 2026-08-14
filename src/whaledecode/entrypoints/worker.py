@@ -18,6 +18,35 @@ from whaledecode.config.settings import Settings
 log = structlog.get_logger()
 
 
+async def _ingest_evm_labels(settings: Settings) -> None:
+    """Daily job: pull public EVM address labels into the standalone SQLite cache.
+
+    Runs inside the worker (which already holds the Postgres session factory) but
+    writes to its own SQLite file, so it never touches the app's Postgres memory.
+    Guarded so a missing package or GitHub outage can't take down the scheduler."""
+    try:
+        from whaledecode.label_ingestion.config import DEFAULT_REPO_TARGETS
+        from whaledecode.label_ingestion.main import run
+    except ImportError as exc:  # pragma: no cover - package always present in image
+        log.warning("labels_ingest_skipped", extra={"reason": f"package missing: {exc}"})
+        return
+    token = settings.GITHUB_TOKEN.get_secret_value() if settings.GITHUB_TOKEN else None
+    try:
+        stats = await run(DEFAULT_REPO_TARGETS, settings.LABELS_DB_PATH, token)
+        log.info(
+            "labels_ingest_done",
+            extra={
+                "files": stats.files,
+                "records": stats.records,
+                "stored": stats.stored,
+                "skipped": stats.skipped,
+                "db": settings.LABELS_DB_PATH,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the scheduler alive on GitHub/network errors
+        log.error("labels_ingest_failed", extra={"error": str(exc)})
+
+
 async def run_worker(settings: Settings) -> None:
     session_factory = create_session_factory(settings)
     bot = Bot(
@@ -106,6 +135,15 @@ def launch_supervisor_tasks(
         minute=0,
         args=[session_factory],
         id="purge_stale_events",
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        _ingest_evm_labels,
+        trigger="cron",
+        hour=4,
+        minute=0,
+        args=[settings],
+        id="ingest_evm_labels",
         misfire_grace_time=3600,
     )
 

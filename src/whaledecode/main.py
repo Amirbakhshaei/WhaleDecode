@@ -183,5 +183,33 @@ def debug_pipeline(dry_run: bool, event_id: int | None):
     exit(debug_main(argv))
 
 
+@cli.command()
+@click.option("--db", default=None, help="SQLite path (defaults to settings.LABELS_DB_PATH)")
+@click.option("--repos", default=None, help="Comma-separated owner/repo overrides")
+@click.option("--token", default=None, help="GitHub PAT (else settings.GITHUB_TOKEN / GITHUB_TOKEN env)")
+def ingest_labels(db: str | None, repos: str | None, token: str | None) -> None:
+    """Ingest public EVM address labels into the SQLite cache (on demand)."""
+    settings = _load_settings()
+    setup_logging(settings)
+
+    from whaledecode.label_ingestion.config import DEFAULT_REPO_TARGETS, RepoTarget
+    from whaledecode.label_ingestion.main import run
+
+    db_path = db or settings.LABELS_DB_PATH
+    targets = (
+        [RepoTarget(r.strip()) for r in repos.split(",") if r.strip()]
+        if repos
+        else list(DEFAULT_REPO_TARGETS)
+    )
+    gh_token = token or (
+        settings.GITHUB_TOKEN.get_secret_value() if settings.GITHUB_TOKEN else None
+    )
+    stats = asyncio.run(run(targets, db_path, gh_token))
+    click.echo(
+        f"Ingested: files={stats.files} records={stats.records} "
+        f"stored={stats.stored} skipped={stats.skipped} -> {db_path}"
+    )
+
+
 if __name__ == "__main__":
     cli()

@@ -14,7 +14,7 @@ main          : orchestration + CLI (`python -m evm_label_pipeline.main`)
 """
 from __future__ import annotations
 
-from evm_label_pipeline.normalizer import (
+from whaledecode.label_ingestion.normalizer import (
     CROSS_CHAIN_REPLICATE,
     SUPPORTED_CHAIN_IDS,
     AddressLabel,
@@ -22,7 +22,7 @@ from evm_label_pipeline.normalizer import (
     is_valid_address,
     normalize,
 )
-from evm_label_pipeline.storage import LabelStore
+from whaledecode.label_ingestion.storage import LabelStore
 
 __all__ = [
     "AddressLabel",

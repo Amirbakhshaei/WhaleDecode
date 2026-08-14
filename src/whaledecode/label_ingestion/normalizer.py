@@ -7,8 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from web3 import Web3
-
-from evm_label_pipeline.config import CROSS_CHAIN_REPLICATE, CROSS_EVM, SUPPORTED_CHAIN_IDS
+from whaledecode.label_ingestion.config import CROSS_CHAIN_REPLICATE, CROSS_EVM, SUPPORTED_CHAIN_IDS
 
 ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
