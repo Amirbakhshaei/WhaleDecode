@@ -1,15 +1,15 @@
 """curated_wallets: Solana-ready + richer metadata.
 
-Revision ID: 0001_curated_wallets_solana
-Revises:
-Create Date: 2026-01-14
+Revision ID: 0009
+Revises: 0008
+Create Date: 2026-08-14
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
-revision = "0001_curated_wallets_solana"
-down_revision = None
+revision = "0009"
+down_revision = "0008"
 branch_labels = None
 depends_on = None
 
@@ -39,8 +39,7 @@ def upgrade():
         "curated_wallets",
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
-    # The old constraint name came from the prior (removed) migration.
-    op.drop_constraint("uq_address_chain", "curated_wallets", type_="unique")
+    # The original curated_wallets table had no (address, chain) uniqueness.
     op.create_unique_constraint("uq_curated_address_chain", "curated_wallets", ["address", "chain"])
     # Drop the backfill server defaults so the application stays authoritative.
     op.execute("ALTER TABLE curated_wallets ALTER COLUMN network_family DROP DEFAULT")
@@ -49,7 +48,6 @@ def upgrade():
 
 def downgrade():
     op.drop_constraint("uq_curated_address_chain", "curated_wallets", type_="unique")
-    op.create_unique_constraint("uq_address_chain", "curated_wallets", ["address", "chain"])
     op.drop_column("curated_wallets", "updated_at")
     op.drop_column("curated_wallets", "created_at")
     op.drop_column("curated_wallets", "category")
