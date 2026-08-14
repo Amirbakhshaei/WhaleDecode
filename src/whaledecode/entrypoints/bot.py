@@ -84,7 +84,11 @@ def build_telegram_app(settings: Settings) -> tuple[Bot, Dispatcher]:
             await ensure_curated_wallets_seeded(session_factory)
         except Exception as e:  # noqa: BLE001
             log.error("curated_wallets_seed_failed", error=str(e), exc_info=True)
-        log.info("bot_started", bot_name=await bot.get_my_name())
+        try:
+            bot_name = await bot.get_my_name()
+        except Exception:  # noqa: BLE001 - don't let a Telegram API hiccup kill startup
+            bot_name = "unknown"
+        log.info("bot_started", bot_name=bot_name)
 
     @dp.shutdown()
     async def on_shutdown():

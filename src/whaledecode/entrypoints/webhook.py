@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
     await bot.delete_webhook(drop_pending_updates=True)
     app.state.bot = bot
     app.state.dp = dp
-    app.state.polling_task = dp.start_polling(bot)
+    app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
     logger.info("Bot polling started")
 
     # Start consumer supervisor (BackgroundAIWorker + alert loop + cron jobs)
