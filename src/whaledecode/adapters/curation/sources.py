@@ -108,7 +108,10 @@ class DuneApiAdapter:
         )
         try:
             try:
-                resp = await client.post(f"{self.base_url}/query/execute", json={"query": self._SQL})
+                resp = await client.post(
+                    f"{self.base_url}/sql/execute",
+                    json={"sql": self._SQL, "performance": "medium"},
+                )
             except httpx.HTTPError as exc:  # noqa: BLE001 - fall back to static
                 log.warning(f"dune_api_request_failed: {exc}")
                 return []
@@ -136,12 +139,13 @@ class DuneApiAdapter:
         return self._parse(rows)
 
     async def _poll(self, client: httpx.AsyncClient, execution_id: str) -> list[dict]:
-        url = f"{self.base_url}/execution/{execution_id}"
+        status_url = f"{self.base_url}/execution/{execution_id}/status"
+        results_url = f"{self.base_url}/execution/{execution_id}/results"
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.poll_timeout
         while True:
             try:
-                resp = await client.get(url)
+                resp = await client.get(status_url)
             except httpx.HTTPError as exc:  # noqa: BLE001 - fall back to static
                 log.warning("dune_api_poll_failed", extra={"error": str(exc)})
                 return []
@@ -157,10 +161,9 @@ class DuneApiAdapter:
                     extra={"status": resp.status_code, "body": resp.text[:200]},
                 )
                 return []
-            data = resp.json()
-            state = data.get("state")
+            state = resp.json().get("state")
             if state == "QUERY_STATE_COMPLETED":
-                return data.get("result", {}).get("rows", [])
+                break
             if state in ("QUERY_STATE_FAILED", "QUERY_STATE_EXPIRED", "QUERY_STATE_CANCELLED"):
                 log.warning("dune_api_query_ended", extra={"state": state})
                 return []
@@ -168,6 +171,18 @@ class DuneApiAdapter:
                 log.warning("dune_api_poll_timeout", extra={"timeout": self.poll_timeout})
                 return []
             await asyncio.sleep(1)
+        try:
+            resp = await client.get(results_url)
+        except httpx.HTTPError as exc:  # noqa: BLE001 - fall back to static
+            log.warning("dune_api_results_failed", extra={"error": str(exc)})
+            return []
+        if not resp.is_success:
+            log.warning(
+                f"dune_api_results_status: HTTP {resp.status_code} body={resp.text[:200]!r}",
+                extra={"status": resp.status_code, "body": resp.text[:200]},
+            )
+            return []
+        return resp.json().get("result", {}).get("rows", [])
 
     def _parse(self, rows: list[dict]) -> list[CuratedSeed]:
         seeds: list[CuratedSeed] = []

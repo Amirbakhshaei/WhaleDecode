@@ -15,10 +15,12 @@ def _dune_transport(execute_status=200, execution_status=200, state="QUERY_STATE
         rows = [{"address": "0x" + "a" * 40, "name": "Acme", "chain": "ethereum", "label_type": "cex"}]
 
     def handler(request):
-        if request.url.path.endswith("/query/execute"):
+        if request.url.path.endswith("/sql/execute"):
             return httpx.Response(execute_status, json={"execution_id": "exec123"})
-        if "/execution/" in request.url.path:
-            return httpx.Response(execution_status, json={"state": state, "result": {"rows": rows}})
+        if request.url.path.endswith("/status"):
+            return httpx.Response(execution_status, json={"state": state})
+        if request.url.path.endswith("/results"):
+            return httpx.Response(200, json={"state": state, "result": {"rows": rows}})
         return httpx.Response(404)
 
     return httpx.MockTransport(handler)
