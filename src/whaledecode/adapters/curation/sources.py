@@ -103,21 +103,26 @@ class DuneApiAdapter:
         headers = {"X-Dune-API-Key": self.api_key}
         client = self._client or httpx.AsyncClient(timeout=self.timeout, headers=headers)
         owned = self._client is None
+        log.info(
+            f"dune_api_attempt: has_key={bool(self.api_key)} key_len={len(self.api_key or '')}"
+        )
         try:
             try:
                 resp = await client.post(f"{self.base_url}/query/execute", json={"query": self._SQL})
             except httpx.HTTPError as exc:  # noqa: BLE001 - fall back to static
-                log.warning("dune_api_request_failed", extra={"error": str(exc)})
+                log.warning(f"dune_api_request_failed: {exc}")
                 return []
             if resp.status_code in (402, 403, 429):
                 log.warning(
-                    "dune_api_quota_exceeded",
+                    f"dune_api_quota_exceeded: HTTP {resp.status_code} "
+                    f"(falling back to static Dune seed)",
                     extra={"status": resp.status_code, "hint": "falling back to static Dune seed"},
                 )
                 return []
             if not resp.is_success:
                 log.warning(
-                    "dune_api_status",
+                    f"dune_api_status: HTTP {resp.status_code} body={resp.text[:200]!r} "
+                    f"(falling back to static Dune seed)",
                     extra={"status": resp.status_code, "body": resp.text[:200]},
                 )
                 return []
@@ -141,11 +146,14 @@ class DuneApiAdapter:
                 log.warning("dune_api_poll_failed", extra={"error": str(exc)})
                 return []
             if resp.status_code in (402, 403, 429):
-                log.warning("dune_api_poll_quota", extra={"status": resp.status_code})
+                log.warning(
+                    f"dune_api_poll_quota: HTTP {resp.status_code}",
+                    extra={"status": resp.status_code},
+                )
                 return []
             if not resp.is_success:
                 log.warning(
-                    "dune_api_poll_status",
+                    f"dune_api_poll_status: HTTP {resp.status_code} body={resp.text[:200]!r}",
                     extra={"status": resp.status_code, "body": resp.text[:200]},
                 )
                 return []
