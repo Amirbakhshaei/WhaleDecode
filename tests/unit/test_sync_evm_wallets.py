@@ -4,6 +4,7 @@ import json
 import httpx
 import pytest
 from sqlalchemy import select
+
 from whaledecode.adapters.alchemy.webhook_manager import AlchemyWebhookManager
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.cli.sync_evm_wallets import _CHAINS, _collect_evm_addresses, _ensure_all_chains
@@ -95,6 +96,30 @@ def test_sync_addresses_skips_unconfigured_webhook(mocker):
     asyncio.run(manager.sync_addresses([A]))
 
     assert calls == ["/api/update-webhook-addresses"]
+
+
+def test_sync_addresses_batches_over_500_per_chain(mocker):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content)["addresses_to_add"])
+        return httpx.Response(200, json={})
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+    mocker.patch.object(httpx, "AsyncClient", side_effect=lambda **kw: real_client(transport=transport))
+
+    addresses = [f"0x{a:040x}" for a in range(505)]
+    manager = AlchemyWebhookManager(
+        alchemy_auth_token="secret",
+        webhook_ids={"ETH": "wh_eth", "ARB": "wh_arb", "BASE": "wh_base"},
+    )
+    asyncio.run(manager.sync_addresses(addresses))
+
+    # 505 addresses -> 2 batches per chain, 3 chains = 6 PATCHes
+    assert len(calls) == 6
+    assert all(len(batch) <= 500 for batch in calls)
+    assert sum(len(batch) for batch in calls) == 505 * 3
 
 
 def test_from_settings_maps_webhook_ids(mocker):

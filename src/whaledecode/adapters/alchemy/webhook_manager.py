@@ -47,17 +47,24 @@ class AlchemyWebhookManager:
             "Content-Type": "application/json",
             "X-Alchemy-Token": self.auth_token,
         }
-        payload = {
-            "webhook_id": webhook_id,
-            "addresses_to_add": addresses,
-            "addresses_to_remove": [],
-        }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.patch(endpoint, headers=headers, json=payload)
-        if response.is_success:
-            logger.info(f"{chain}: webhook {webhook_id} HTTP {response.status_code}, added {len(addresses)} addresses.")
-        else:
-            logger.error(f"{chain}: webhook {webhook_id} sync failed: HTTP {response.status_code} {response.text}")
+        for start in range(0, len(addresses), 500):
+            batch = addresses[start : start + 500]
+            payload = {
+                "webhook_id": webhook_id,
+                "addresses_to_add": batch,
+                "addresses_to_remove": [],
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.patch(endpoint, headers=headers, json=payload)
+            if response.is_success:
+                logger.info(
+                    f"{chain}: webhook {webhook_id} added {len(batch)} addresses (HTTP {response.status_code})."
+                )
+            else:
+                logger.error(
+                    f"{chain}: webhook {webhook_id} sync failed: HTTP {response.status_code} {response.text}"
+                )
+                return
 
     async def sync_webhook_addresses(
         self, webhook_id: str, verified_addresses: list[str]
