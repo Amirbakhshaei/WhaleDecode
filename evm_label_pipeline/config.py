@@ -1,0 +1,41 @@
+"""Pipeline-wide constants and default repository targets."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+# Chains this pipeline explicitly supports. 0 == cross-EVM (no specific chain).
+SUPPORTED_CHAIN_IDS: frozenset[int] = frozenset({1, 42161, 8453, 0})
+
+ETHEREUM = 1
+ARBITRUM = 42161
+BASE = 8453
+CROSS_EVM = 0
+
+# Categories whose label applies to the *same* address across every supported L1/L2
+# (e.g. a CEX hot wallet or a deterministic protocol deployer is the same contract
+# on each chain). Token/stablecoin addresses differ per chain, so they are NOT replicated.
+CROSS_CHAIN_REPLICATE: frozenset[str] = frozenset(
+    {"CEX", "Bridge", "Protocol", "DEX", "MEV Bot"}
+)
+
+# File extensions we attempt to parse for labels.
+LABEL_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".csv", ".sql", ".yaml", ".yml"})
+
+
+@dataclass(frozen=True)
+class RepoTarget:
+    """A GitHub repository to crawl plus an optional ref (branch/tag/sha)."""
+
+    full_name: str  # "owner/repo"
+    ref: str | None = None  # default branch if None
+    # Glob-style path filters (substring match on the tree path). Empty == anywhere.
+    path_includes: tuple[str, ...] = ()
+
+
+# Default public repositories that publish EVM address labels.
+DEFAULT_REPO_TARGETS: tuple[RepoTarget, ...] = (
+    RepoTarget("DefiLlama/token-lists", path_includes=("tokenlists/",)),
+    RepoTarget("DefiLlama/chainlist", path_includes=("chains.json",)),
+    RepoTarget("duneanalytics/spellbook", path_includes=("labels", "seeds")),
+    RepoTarget("brianmcmichael/arkham-intelligence-data"),
+)
