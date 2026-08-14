@@ -15,7 +15,7 @@ def test_ingest_labels_runs_without_postgres_env(tmp_path, monkeypatch) -> None:
     import whaledecode.label_ingestion.main as lim
 
     async def fake_run(targets, db_path, token, rpc_urls=None):
-        return SimpleNamespace(files=1, records=1, stored=1, skipped=0, failures=[])
+        return SimpleNamespace(files=1, records=1, stored=1, skipped=0, failures=[], by_repo={})
 
     monkeypatch.setattr(lim, "run", fake_run)
     monkeypatch.setattr(cli_main, "setup_logging", lambda s: None)

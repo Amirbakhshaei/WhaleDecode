@@ -16,7 +16,7 @@ ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "address": ("address", "contract_address", "token_address", "wallet", "address_hash", "addr"),
     "chain_id": ("chain_id", "chainid", "chainId", "network", "chain"),
-    "name_tag": ("name_tag", "name", "label", "tag", "display_name", "namestring"),
+    "name_tag": ("name_tag", "name", "label", "tag", "display_name", "namestring", "symbol"),
     "entity": ("entity", "project", "protocol", "owner", "exchange"),
     "category": ("category", "type", "label_type", "tag_type", "kind"),
     "source": ("source", "src"),
@@ -106,8 +106,20 @@ def normalize(raw: dict[str, Any], source: str = "") -> AddressLabel | None:
     mapped = _remap(raw)
 
     addr = mapped.get("address")
+    # Some sources prefix the chain, e.g. "ethereum:0x..." (L2BEAT discovered.json).
+    if isinstance(addr, str) and ":" in addr:
+        chain_part, _, addr = addr.partition(":")
+        try:
+            mapped["chain_id"] = _coerce_chain_id(chain_part)
+        except ValueError:
+            return None
     if not is_valid_address(addr):
         return None
+
+    raw_keys = {k.lower() for k in raw}
+    category = mapped.get("category")
+    if not category and "symbol" in raw_keys:
+        category = "Token"
 
     try:
         return AddressLabel(
@@ -115,7 +127,7 @@ def normalize(raw: dict[str, Any], source: str = "") -> AddressLabel | None:
             chain_id=_coerce_chain_id(mapped.get("chain_id")),
             name_tag=str(mapped.get("name_tag") or mapped.get("entity") or addr),
             entity=str(mapped.get("entity") or ""),
-            category=str(mapped.get("category") or "Unknown"),
+            category=str(category or "Unknown"),
             source=str(mapped.get("source") or source or ""),
             confidence_score=_coerce_confidence(mapped.get("confidence_score")),
         )

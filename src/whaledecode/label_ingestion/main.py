@@ -78,7 +78,7 @@ async def run(
                     logger.info("repo_start", extra={"repo": target.full_name})
                     await ingest_repo(client, store, target, stats)
                     if stats.files == files_before:
-                        logger.warning("repo_yielded_no_files", extra={"repo": target.full_name})
+                        logger.warning(f"repo_yielded_no_files {target.full_name}")
                 except Exception as exc:  # noqa: BLE001 - one repo failing must not abort the run
                     msg = f"{target.full_name}: {exc}"
                     logger.error(f"repo_failed {msg}")

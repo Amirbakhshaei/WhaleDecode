@@ -251,6 +251,8 @@ def ingest_labels(db: str | None, repos: str | None, token: str | None) -> None:
         f"Ingested: files={stats.files} records={stats.records} "
         f"stored={stats.stored} skipped={stats.skipped} -> {db_path}"
     )
+    for repo, n in sorted(stats.by_repo.items()):
+        click.echo(f"  {repo}: {n} labels")
     for f in stats.failures:
         click.echo(f"  ! failed: {f}")
     if stats.stored == 0:

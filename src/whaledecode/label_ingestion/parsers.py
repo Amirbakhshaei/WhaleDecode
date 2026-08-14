@@ -20,10 +20,7 @@ ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
 
 # Repo-specific default category when a record omits one (cheap, no per-row logic).
-DEFAULT_CATEGORY_BY_REPO: dict[str, str] = {
-    "DefiLlama/token-lists": "Token",
-    "DefiLlama/chainlist": "Chain",
-}
+DEFAULT_CATEGORY_BY_REPO: dict[str, str] = {}
 
 
 def parse_json_records(text: str) -> Iterator[dict[str, Any]]:
@@ -41,8 +38,9 @@ def _json_to_records(data: Any) -> Iterator[dict[str, Any]]:
             if isinstance(item, dict):
                 yield item
     elif isinstance(data, dict):
-        # Common shapes: {"tokens": [...]}, {"labels": [...]}, {"data": [...]}.
-        for key in ("tokens", "labels", "data", "results", "entities"):
+        # Common shapes: {"tokens": [...]}, {"labels": [...]}, {"data": [...]},
+        # {"found": [...]} (L2BEAT discovered.json).
+        for key in ("tokens", "labels", "data", "results", "entities", "found"):
             if isinstance(data.get(key), list):
                 yield from _json_to_records(data[key])
                 return

@@ -33,10 +33,14 @@ class RepoTarget:
 
 
 # Default public repositories that publish EVM address labels (GitHub tree crawl).
+# DefiLlama/chainlist is intentionally excluded: it's a chain registry (RPC/chainId
+# metadata), not an address->label dataset, so it yields 0 label files.
+# L2BEAT's canonical contract data lives in .ts configs (unparseable here); the only
+# flat address dataset is discovered.json (token symbols) under discover-tokens.
 DEFAULT_REPO_TARGETS: tuple[RepoTarget, ...] = (
-    RepoTarget("DefiLlama/chainlist", path_includes=("chains.json",)),
     RepoTarget("duneanalytics/spellbook", path_includes=("labels", "seeds")),
     RepoTarget("brianleect/etherscan-labels", path_includes=("combined",)),
+    RepoTarget("L2BEAT/l2beat", path_includes=("discover-tokens",)),
 )
 
 # Token metadata ingested via TokenMetadataService (Uniswap + CoinGecko token lists),
