@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     ALCHEMY_WEBHOOK_ID_ARB: str = ""
     ALCHEMY_WEBHOOK_ID_BASE: str = ""
 
+    # Curated-wallet sources
+    DUNE_API_KEY: SecretStr | None = None  # live Dune Spellbook labels (free tier, then falls back to static seed)
+
     @property
     def webhook_signing_keys(self) -> list[str]:
         """Return list of signing keys from ALCHEMY_WEBHOOK_SIGNING_KEYS (comma-separated),

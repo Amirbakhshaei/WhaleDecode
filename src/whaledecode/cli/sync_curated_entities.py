@@ -47,10 +47,25 @@ async def run_sync_pipeline() -> None:
     setup_logging(settings)
     session_factory = create_session_factory(settings)
 
-    dune = DuneSpellbookAdapter()
-    llama = DefiLlamaAdapter()
+    # Static Dune baseline is always present (zero keys, never fails).
+    dune_static = DuneSpellbookAdapter()
+    seeds: list = list(await dune_static.fetch())
 
-    seeds = await dune.fetch() + await llama.fetch()
+    # Live Dune API is primary when a key is configured; on free-tier exhaustion
+    # it returns [] and we silently keep the static seed (auto-resumes next run).
+    api_key = settings.DUNE_API_KEY.get_secret_value() if settings.DUNE_API_KEY else None
+    if api_key:
+        from whaledecode.adapters.curation import DuneApiAdapter
+
+        live = await DuneApiAdapter(api_key=api_key).fetch()
+        if live:
+            log.info("dune_live_used", extra={"count": len(live)})
+            seeds += live  # appended after static -> wins on upsert conflict
+        else:
+            log.warning("dune_live_fallback", extra={"hint": "using static Dune seed"})
+
+    llama = DefiLlamaAdapter()
+    seeds += await llama.fetch()
 
     # Validate + dedupe by (address, chain).
     seen: set[tuple[str, str]] = set()

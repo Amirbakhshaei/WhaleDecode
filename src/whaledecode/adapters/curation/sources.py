@@ -1,20 +1,24 @@
 """Curation sources that feed the curated-wallet pipeline.
 
-Two providers, two philosophies:
+Three providers:
 
 * ``DuneSpellbookAdapter`` — a hardcoded *baseline* of institutional / exchange
   / public-good wallets. Deterministic and always available; this is the seed we
   ship with so the pipeline is never empty even with no external API access.
+* ``DuneApiAdapter`` — *live* Dune Spellbook labels via the Dune API. Requires
+  ``DUNE_API_KEY``. If the free tier is exceeded (HTTP 429 / 402 / 403) or any
+  error occurs it returns ``[]`` so the caller falls back to the static seed.
 * ``DefiLlamaAdapter`` — *best-effort* live enrichment from DefiLlama. The free
   endpoints expose little address-level data (and ``/treasuries`` is paywalled:
   HTTP 402), so without a paid key this yields close to nothing. It is wired up
   and ready; flip it on by calling it in the sync CLI once a key is available.
 
-Both return plain ``CuratedSeed`` objects so the sync CLI can upsert them into
+All return plain ``CuratedSeed`` objects so the sync CLI can upsert them into
 Postgres without depending on SQLAlchemy models.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -62,6 +66,115 @@ class DuneSpellbookAdapter:
 
     async def fetch(self) -> list[CuratedSeed]:
         return _BASELINE
+
+
+class DuneApiAdapter:
+    """Live Dune Spellbook labels via the Dune API (requires ``DUNE_API_KEY``).
+
+    Runs a SQL query against Spellbook label tables and maps rows to seeds.
+    On free-tier exhaustion (HTTP 402/403/429) or any error it returns ``[]``
+    so the caller silently falls back to the static ``DuneSpellbookAdapter``
+    seed. Each run re-attempts live (when a key is present), so it auto-resumes
+    once the quota resets. Pass ``client`` in tests to avoid real network calls.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.dune.com/api/v1",
+        timeout: float = 30.0,
+        poll_timeout: float = 30.0,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.poll_timeout = poll_timeout
+        self._client = client
+
+    _SQL = (
+        "SELECT address, name, chain, label_type "
+        "FROM labels.all "
+        "WHERE label_type IN ('cex', 'protocol', 'fund', 'individual', 'community', 'token') "
+        "LIMIT 5000"
+    )
+
+    async def fetch(self) -> list[CuratedSeed]:
+        headers = {"X-Dune-API-Key": self.api_key}
+        client = self._client or httpx.AsyncClient(timeout=self.timeout, headers=headers)
+        owned = self._client is None
+        try:
+            try:
+                resp = await client.post(f"{self.base_url}/query/execute", json={"query": self._SQL})
+            except httpx.HTTPError as exc:  # noqa: BLE001 - fall back to static
+                log.warning("dune_api_request_failed", extra={"error": str(exc)})
+                return []
+            if resp.status_code in (402, 403, 429):
+                log.warning(
+                    "dune_api_quota_exceeded",
+                    extra={"status": resp.status_code, "hint": "falling back to static Dune seed"},
+                )
+                return []
+            if not resp.is_success:
+                log.warning("dune_api_status", extra={"status": resp.status_code})
+                return []
+            execution_id = resp.json().get("execution_id")
+            if not execution_id:
+                return []
+            rows = await self._poll(client, execution_id)
+        finally:
+            if owned:
+                await client.aclose()
+        return self._parse(rows)
+
+    async def _poll(self, client: httpx.AsyncClient, execution_id: str) -> list[dict]:
+        url = f"{self.base_url}/execution/{execution_id}"
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.poll_timeout
+        while True:
+            try:
+                resp = await client.get(url)
+            except httpx.HTTPError as exc:  # noqa: BLE001 - fall back to static
+                log.warning("dune_api_poll_failed", extra={"error": str(exc)})
+                return []
+            if resp.status_code in (402, 403, 429):
+                log.warning("dune_api_poll_quota", extra={"status": resp.status_code})
+                return []
+            if not resp.is_success:
+                return []
+            data = resp.json()
+            state = data.get("state")
+            if state == "QUERY_STATE_COMPLETED":
+                return data.get("result", {}).get("rows", [])
+            if state in ("QUERY_STATE_FAILED", "QUERY_STATE_EXPIRED", "QUERY_STATE_CANCELLED"):
+                log.warning("dune_api_query_ended", extra={"state": state})
+                return []
+            if loop.time() > deadline:
+                log.warning("dune_api_poll_timeout", extra={"timeout": self.poll_timeout})
+                return []
+            await asyncio.sleep(1)
+
+    def _parse(self, rows: list[dict]) -> list[CuratedSeed]:
+        seeds: list[CuratedSeed] = []
+        for r in rows:
+            address = r.get("address")
+            chain = _CHAIN_MAP.get(str(r.get("chain", "")).lower())
+            if not isinstance(address, str) or not EVM_REGEX.match(address) or not chain:
+                continue
+            label_type = str(r.get("label_type", ""))
+            label = str(r.get("name") or address)
+            seeds.append(
+                CuratedSeed(
+                    address=address,
+                    chain=chain,
+                    network_family="EVM",
+                    label=label,
+                    category=label_type.title() if label_type else "Smart Money",
+                    tags=("dune",),
+                    quality_score=75.0,
+                )
+            )
+        return seeds
 
 
 class DefiLlamaAdapter:
