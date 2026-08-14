@@ -89,8 +89,8 @@ async def test_process_pending_investigates_dispatches_and_completes(session_fac
 
     assert len(bot.sent) == 1
     msg = bot.sent[0]
-    assert "WHALE ALERT" in msg["text"]
-    assert "TRADER INTELLIGENCE" in msg["text"]
+    assert "STRATEGIC TRANSFER | Ethereum" in msg["text"]
+    assert "Agentic Synthesis" in msg["text"]
     assert "0x" in msg["text"]
     assert "||" not in msg["text"]
     assert msg["chat_id"] == "-100channel"

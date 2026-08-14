@@ -2,7 +2,6 @@ import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.telegram.dispatcher import TelegramAlertDispatcher
 from whaledecode.adapters.telegram.middleware import ThrottlingMiddleware
@@ -18,6 +17,32 @@ from whaledecode.application.services.investigation import build_investigation_s
 from whaledecode.application.services.wallet import WalletService
 from whaledecode.config.settings import Settings
 from whaledecode.entrypoints.seed import ensure_curated_wallets_seeded
+
+log = structlog.get_logger()
+
+
+async def _on_error(update, exception: Exception | None = None, **kwargs) -> bool:
+    """Global handler: surface failures instead of silently dropping updates.
+
+    Without this, any exception inside a command handler is swallowed by the
+    polling loop and the user gets no reply — the classic 'bot commands don't
+    work' symptom. We log the traceback and send a safe user-facing message.
+
+    aiogram delivers the error as an ``ErrorEvent``; the original ``Update`` is on
+    ``update.update`` and the raised exception on ``update.exception``."""
+    exc = exception or getattr(update, "exception", None)
+    original = getattr(update, "update", update)
+    message = getattr(original, "message", None)
+    if message is None:
+        callback = getattr(original, "callback_query", None)
+        message = getattr(callback, "message", None)
+    log.error("telegram_update_failed", exc_info=exc, update_id=getattr(original, "update_id", None))
+    if message is not None:
+        try:
+            await message.answer("⚠️ Something went wrong processing that. The team has been notified.")
+        except Exception:  # noqa: BLE001 - never let the error handler crash
+            pass
+    return True
 
 
 def build_telegram_app(settings: Settings) -> tuple[Bot, Dispatcher]:
@@ -49,11 +74,16 @@ def build_telegram_app(settings: Settings) -> tuple[Bot, Dispatcher]:
 
     dp.include_routers(common_router, wallet_router, chat_router, admin_router, callback_router, payments_router)
     dp.message.middleware(ThrottlingMiddleware())
+    dp.errors.register(_on_error)
 
     @dp.startup()
     async def on_startup():
         alert_dispatcher.set_bot(bot)
-        await ensure_curated_wallets_seeded(session_factory)
+        # Don't let a seed failure abort the whole bot; log and continue.
+        try:
+            await ensure_curated_wallets_seeded(session_factory)
+        except Exception as e:  # noqa: BLE001
+            log.error("curated_wallets_seed_failed", error=str(e), exc_info=True)
         log.info("bot_started", bot_name=await bot.get_my_name())
 
     @dp.shutdown()

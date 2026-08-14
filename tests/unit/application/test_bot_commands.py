@@ -1,0 +1,224 @@
+"""Integration smoke tests for the Telegram command layer.
+
+The command handlers had zero coverage, and a missing global error handler meant
+any runtime failure was swallowed silently (the "bot commands don't work, no reply
+at all" symptom). These tests build a real Dispatcher with the production routers,
+inject fakes via workflow_data, and assert every command produces a reply. The
+routers are module-level singletons, so we build one dispatcher and exercise all
+commands through it (re-attaching the same routers to a second dispatcher raises).
+"""
+from __future__ import annotations
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.session.base import BaseSession
+from aiogram.types import Message, Update
+from whaledecode.adapters.telegram.routers import (
+    admin_router,
+    callback_router,
+    chat_router,
+    common_router,
+    payments_router,
+    wallet_router,
+)
+from whaledecode.domain.entities.user import User
+from whaledecode.entrypoints.bot import _on_error
+
+
+class _RecordingSession(BaseSession):
+    """Capture outgoing messages without hitting the Telegram API."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list[str] = []
+
+    async def make_request(self, bot, method, timeout=None):
+        data = method.model_dump() if hasattr(method, "model_dump") else {}
+        if isinstance(data, dict) and data.get("text") is not None:
+            self.sent.append(data["text"])
+        return {
+            "message_id": 1,
+            "date": 0,
+            "chat": {"id": 1, "type": "private"},
+            "from": {"id": 999, "is_bot": True, "first_name": "WhaleDecode"},
+            "text": data.get("text") if isinstance(data, dict) else "",
+        }
+
+    async def close(self):
+        pass
+
+    async def stream(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    async def stream_content(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+
+class _FakeUsers:
+    def __init__(self) -> None:
+        self._user = User(id=1, tg_id=42, username="tester")
+
+    async def get_by_tg_id(self, tg_id):
+        return self._user
+
+    async def get_by_id(self, uid):
+        return self._user
+
+    async def create(self, u):
+        return u
+
+    async def update(self, u):
+        return None
+
+    async def list_by_plan(self, plan):
+        return []
+
+
+class _FakeWallets:
+    async def list_active(self, chain=None):
+        return []
+
+    async def get(self, wid):
+        return None
+
+
+class _FakeTracked:
+    async def count_active_by_user(self, uid):
+        return 0
+
+    async def list_by_user(self, uid):
+        return []
+
+
+class _FakeAlerts:
+    async def list_by_user(self, uid, limit=50):
+        return []
+
+
+class _FakeUow:
+    def __init__(self) -> None:
+        self.users = _FakeUsers()
+        self.curated_wallets = _FakeWallets()
+        self.tracked_wallets = _FakeTracked()
+        self.alerts = _FakeAlerts()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
+class _FakeInvestigation:
+    async def chat(self, msg, context=None, thread_id=None):
+        return "Investigation result text."
+
+    async def generate_briefing(self, user_id):
+        return "Briefing text."
+
+
+class _FakeWalletService:
+    async def track(self, *a, **k):
+        pass
+
+    async def untrack(self, *a, **k):
+        pass
+
+
+class _FakeSettings:
+    ADMIN_USER_IDS: list[int] = []
+    CHANNEL_PUBLISH_ENABLED = False
+    CHANNEL_CHAT_ID = None
+    CHANNEL_MAX_DAILY = 10
+    BOT_USERNAME = "whaledecodebot"
+    DISCLAIMER_TEXT = "Not financial advice."
+
+
+class _BoomUow(_FakeUow):
+    async def __aenter__(self):
+        raise RuntimeError("db down")
+
+
+def _build_dp() -> tuple[Bot, Dispatcher, _RecordingSession]:
+    session = _RecordingSession()
+    bot = Bot(token="123456:FAKE", session=session)
+    dp = Dispatcher()
+    dp["uow_factory"] = _FakeUow
+    dp["investigation_service"] = _FakeInvestigation()
+    dp["wallet_service"] = _FakeWalletService()
+    dp["settings"] = _FakeSettings()
+    dp.errors.register(_on_error)
+    dp.include_routers(
+        common_router, wallet_router, chat_router, admin_router, callback_router, payments_router
+    )
+    return bot, dp, session
+
+
+async def _send(bot, dp, text: str) -> None:
+    from_user = {"id": 42, "is_bot": False, "first_name": "tester"}
+    msg = Message(
+        message_id=1, date=0, chat={"id": 1, "type": "private"}, from_user=from_user, text=text
+    )
+    await dp.feed_update(bot, Update(update_id=1, message=msg))
+
+
+async def test_all_commands_produce_replies_and_errors_surface():
+    """Every command must yield a reply, and a crashing handler must surface one.
+
+    The routers are module-level singletons that attach to a single dispatcher, so
+    we build one dispatcher and exercise all commands through it."""
+    bot, dp, session = _build_dp()
+
+    await _send(bot, dp, "/start")
+    assert any("WhaleDecode" in s for s in session.sent), session.sent
+
+    session.sent.clear()
+    await _send(bot, dp, "/help")
+    assert any("WhaleDecode" in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/status")
+    assert any("Your Status" in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/wallets")
+    assert session.sent
+
+    session.sent.clear()
+    await _send(bot, dp, "/ask what did 0x742d... do recently?")
+    assert any("Investigation result text." in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/decode 0x1234abcd")
+    assert any("Investigation result text." in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/briefing")
+    assert any("Briefing text." in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/track 5")
+    assert any("not found" in s.lower() for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/alerts")
+    assert any("Alerts" in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/start track_0xabcd1234abcd1234abcd1234abcd1234abcd1234")
+    assert any("Investigation result text." in s for s in session.sent)
+
+    session.sent.clear()
+    await _send(bot, dp, "/start some_unknown_payload")
+    assert session.sent, "unknown deep-link payload must still reply, not silently drop"
+
+    # Now verify a crashing handler surfaces the error-handler reply instead of silence.
+    session.sent.clear()
+    dp["uow_factory"] = _BoomUow
+    await _send(bot, dp, "/status")
+    assert any("went wrong" in s for s in session.sent), session.sent

@@ -86,7 +86,15 @@ def _coerce_numeric(value: Any, default: float = 0.0) -> float:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: start bot polling + consumer supervisor on startup, stop on shutdown."""
-    settings = app.state.settings
+    # ``Settings`` is cheap to build at import time; only the DB/LLM service build
+    # is deferred here so a connectivity failure surfaces at startup, not at import.
+    global session_factory, _price_oracle
+    session_factory, investigation_service, _ = build_investigation_service(settings)
+    _price_oracle = investigation_service._price_oracle
+    app.state.settings = settings
+    app.state.session_factory = session_factory
+    app.state.investigation_service = investigation_service
+
     logger.info("Starting Telegram Bot in the background...")
     bot, dp = build_telegram_app(settings)
     await dp.emit_startup()
@@ -100,8 +108,8 @@ async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
     app.state.stop_event = stop_event
     app.state.supervisor_tasks = launch_supervisor_tasks(
-        app.state.session_factory,
-        app.state.investigation_service,
+        session_factory,
+        investigation_service,
         settings,
         bot,
         stop_event,
@@ -124,17 +132,14 @@ async def lifespan(app: FastAPI):
     await bot.session.close()
 
 
-# Initialize settings and deps once at module load
+# ``settings`` is built at import time (cheap env config); the DB/LLM service
+# factory is populated inside the lifespan so a connectivity failure surfaces at
+# startup rather than crashing the import.
 settings = Settings()
-session_factory, investigation_service, _ = build_investigation_service(settings)
-# Shared oracle with the investigation path; its 5-min TTL cache makes
-# ingestion pricing free after the first lookup of each token.
-_price_oracle = investigation_service._price_oracle
+session_factory = None
+_price_oracle = None
 
 app = FastAPI(lifespan=lifespan)
-app.state.settings = settings
-app.state.session_factory = session_factory
-app.state.investigation_service = investigation_service
 
 
 @app.get("/health")
