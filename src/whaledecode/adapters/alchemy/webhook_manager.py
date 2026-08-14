@@ -2,6 +2,7 @@
 import logging
 
 import httpx
+
 from whaledecode.config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ class AlchemyWebhookManager:
     @classmethod
     def from_settings(cls, settings: Settings) -> "AlchemyWebhookManager":
         """Build the manager from env config: notify token + the three per-chain webhook IDs."""
-        token = settings.ALCHEMY_NOTIFY_TOKEN.get_secret_value() if settings.ALCHEMY_NOTIFY_TOKEN else ""
+        token = settings.ALCHEMY_NOTIFY_TOKEN or settings.ALCHEMY_AUTH_TOKEN
+        token = token.get_secret_value() if token else ""
         webhook_ids = {chain: getattr(settings, f"ALCHEMY_WEBHOOK_ID_{chain}") for chain in _CHAINS}
         return cls(alchemy_auth_token=token, webhook_ids=webhook_ids)
 
