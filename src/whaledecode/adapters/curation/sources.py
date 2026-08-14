@@ -116,7 +116,10 @@ class DuneApiAdapter:
                 )
                 return []
             if not resp.is_success:
-                log.warning("dune_api_status", extra={"status": resp.status_code})
+                log.warning(
+                    "dune_api_status",
+                    extra={"status": resp.status_code, "body": resp.text[:200]},
+                )
                 return []
             execution_id = resp.json().get("execution_id")
             if not execution_id:
@@ -141,6 +144,10 @@ class DuneApiAdapter:
                 log.warning("dune_api_poll_quota", extra={"status": resp.status_code})
                 return []
             if not resp.is_success:
+                log.warning(
+                    "dune_api_poll_status",
+                    extra={"status": resp.status_code, "body": resp.text[:200]},
+                )
                 return []
             data = resp.json()
             state = data.get("state")

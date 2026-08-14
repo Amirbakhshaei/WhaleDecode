@@ -83,19 +83,45 @@ def _alembic_url(settings: Settings) -> str:
     return url
 
 
-@cli.command()
-def migrate():
-    """Run Alembic database migrations."""
-    settings = _load_settings()
-    setup_logging(settings)
+def _run_migrations(settings: Settings) -> None:
+    """Run Alembic migrations, self-healing an orphaned ``alembic_version`` row.
+
+    If a previous migration file was removed (e.g. during a refactor) the DB's
+    ``alembic_version`` can point at a revision that no longer exists, so a plain
+    ``upgrade head`` fails with "Can't locate revision". We detect that, stamp
+    ``base`` (clear the stale row), and retry so the current migration chain
+    still applies.
+    """
+    import logging
 
     from alembic.config import Config
 
     from alembic import command
 
+    log = logging.getLogger(__name__)
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))
-    command.upgrade(cfg, "head")
+    try:
+        command.upgrade(cfg, "head")
+    except Exception as exc:  # noqa: BLE001 - recover from orphaned revision, else propagate
+        msg = str(exc)
+        if "Can't locate revision" in msg or "No such revision" in msg:
+            log.warning(
+                "alembic_orphan_detected",
+                extra={"hint": "stamping base and retrying upgrade head"},
+            )
+            command.stamp(cfg, "base")
+            command.upgrade(cfg, "head")
+        else:
+            raise
+
+
+@cli.command()
+def migrate():
+    """Run Alembic database migrations."""
+    settings = _load_settings()
+    setup_logging(settings)
+    _run_migrations(settings)
 
 
 @cli.command()
