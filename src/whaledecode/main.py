@@ -204,11 +204,22 @@ def ingest_labels(db: str | None, repos: str | None, token: str | None) -> None:
     gh_token = token or (
         settings.GITHUB_TOKEN.get_secret_value() if settings.GITHUB_TOKEN else None
     )
-    stats = asyncio.run(run(targets, db_path, gh_token))
+    rpc_urls = {
+        int(c): u
+        for c, u in (
+            (1, settings.ETH_RPC_URL),
+            (42161, settings.ARB_RPC_URL),
+            (8453, settings.BASE_RPC_URL),
+        )
+        if u
+    }
+    stats = asyncio.run(run(targets, db_path, gh_token, rpc_urls))
     click.echo(
         f"Ingested: files={stats.files} records={stats.records} "
         f"stored={stats.stored} skipped={stats.skipped} -> {db_path}"
     )
+    for f in stats.failures:
+        click.echo(f"  ! failed: {f}")
 
 
 if __name__ == "__main__":

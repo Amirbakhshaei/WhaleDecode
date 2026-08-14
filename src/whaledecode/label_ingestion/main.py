@@ -3,18 +3,19 @@
 Usage
 -----
     # Live crawl (needs GITHUB_TOKEN in env for higher quota):
-    python -m evm_label_pipeline.main --db evm_labels.db
+    python -m whaledecode.label_ingestion.main --db evm_labels.db
 
     # Override which repos to crawl:
-    python -m evm_label_pipeline.main --repos DefiLlama/token-lists,duneanalytics/spellbook
+    python -m whaledecode.label_ingestion.main --repos duneanalytics/spellbook
 
     # Offline self-check (no network / no token required):
-    python -m evm_label_pipeline.main --demo
+    python -m whaledecode.label_ingestion.main --demo
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -25,6 +26,7 @@ from whaledecode.label_ingestion.github_client import GitHubClient
 from whaledecode.label_ingestion.normalizer import flag_cross_chain, normalize
 from whaledecode.label_ingestion.parsers import extract_records
 from whaledecode.label_ingestion.storage import LabelStore
+from whaledecode.label_ingestion.token_metadata import TokenMetadataService
 
 logger = logging.getLogger("evm_label_pipeline")
 
@@ -37,6 +39,7 @@ class RunStats:
     stored: int = 0
     skipped: int = 0
     by_repo: dict[str, int] = field(default_factory=dict)
+    failures: list[str] = field(default_factory=list)
 
 
 async def ingest_repo(client: GitHubClient, store: LabelStore, target: RepoTarget, stats: RunStats) -> None:
@@ -62,7 +65,9 @@ async def ingest_repo(client: GitHubClient, store: LabelStore, target: RepoTarge
         logger.info("repo_file_done", extra={"repo": source_repo, "path": path, "labels": len(pending)})
 
 
-async def run(targets: list[RepoTarget], db_path: str, token: str | None) -> RunStats:
+async def run(
+    targets: list[RepoTarget], db_path: str, token: str | None, rpc_urls: dict[int, str] | None = None
+) -> RunStats:
     stats = RunStats()
     store = LabelStore(db_path)
     try:
@@ -71,7 +76,23 @@ async def run(targets: list[RepoTarget], db_path: str, token: str | None) -> Run
                 try:
                     await ingest_repo(client, store, target, stats)
                 except Exception as exc:  # noqa: BLE001 - one repo failing must not abort the run
-                    logger.error("repo_failed", extra={"repo": target.full_name, "error": str(exc)})
+                    msg = f"{target.full_name}: {exc}"
+                    logger.error(f"repo_failed {msg}")
+                    stats.failures.append(msg)
+        # Token metadata (Uniswap + CoinGecko lists). On-chain RPC Multicall is a
+        # per-address fallback inside TokenMetadataService.resolve(), not run here.
+        try:
+            svc = TokenMetadataService(rpc_urls or {})
+            meta_labels = await svc.load_lists()
+            if meta_labels:
+                written = store.upsert(meta_labels)
+                stats.stored += written
+                stats.normalized += len(meta_labels)
+                stats.by_repo["token-metadata"] = stats.by_repo.get("token-metadata", 0) + written
+        except Exception as exc:  # noqa: BLE001 - token lists are best-effort
+            msg = f"token-metadata: {exc}"
+            logger.error(f"token_metadata_failed {msg}")
+            stats.failures.append(msg)
     finally:
         store.close()
     return stats
@@ -79,27 +100,29 @@ async def run(targets: list[RepoTarget], db_path: str, token: str | None) -> Run
 
 def _demo(db_path: str) -> RunStats:
     """Offline end-to-end self-check using embedded sample data (no network)."""
-    token_list_json = """[
-      {"address":"0x28c6c06298d514db089934071355e5743bf21d60","chainId":1,"name":"Binance: Hot Wallet 6","symbol":"ETH"},
-      {"address":"0x7a250d5630b4cf539739df2c5dacb4c659f2488d","chainId":1,"name":"Uniswap V2: Router 2","symbol":"UNI"},
-      {"address":"0xdac17f958d2ee523a2206206994597c13d831ec7","chainId":1,"name":"Tether USD","symbol":"USDT"}
+    etherscan_json = """[
+      {"address":"0x28c6c06298d514db089934071355e5743bf21d60","name":"Binance: Hot Wallet 6","category":"CEX","chainId":1},
+      {"address":"0x742d35cc6634c0532925a3b844bc454e4438f44e","name":"Binance: Cold Wallet 1","category":"CEX","chainId":1},
+      {"address":"0xbad","name":"Bad Row","category":"CEX","chainId":1}
     ]"""
-    arkham_csv = (
-        "address,name,category,chain\n"
-        "0x742d35cc6634c0532925a3b844bc454e4438f44e,Binance: Cold Wallet 1,CEX,1\n"
-        "0xnotanaddress,Bad Row,CEX,1\n"  # invalid -> discarded by normalizer
-    )
     spellbook_sql = (
-        "INSERT INTO labels (address, name, category) VALUES\\n"
-        "('0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be', 'Binance', 'CEX'),\\n"
-        "('0x1111111254eeb25477b68fb85ed929f73a960582', '1inch Router', 'DEX');\\n"
+        "INSERT INTO labels (address, name, category) VALUES\n"
+        "('0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be', 'Binance', 'CEX'),\n"
+        "('0x1111111254eeb25477b68fb85ed929f73a960582', '1inch Router', 'DEX');\n"
+    )
+    token_list_json = json.dumps(
+        {
+            "tokens": [
+                {"chainId": 1, "address": "0xdac17f958d2ee523a2206206994597c13d831ec7", "name": "Tether USD", "symbol": "USDT", "decimals": 6},
+                {"chainId": 42161, "address": "0xaf88d065e9586a8b6c0d8f1c3b5c0deadbeef00", "name": "USD Coin", "symbol": "USDC", "decimals": 6},
+            ]
+        }
     )
 
     store = LabelStore(db_path)
     stats = RunStats()
     samples = [
-        ("DefiLlama/token-lists", "tokenlists/sample.json", token_list_json),
-        ("brianmcmichael/arkham-intelligence-data", "wallets.csv", arkham_csv),
+        ("brianleect/etherscan-labels", "combined/combinedAllLabels.json", etherscan_json),
         ("duneanalytics/spellbook", "labels/binance.sql", spellbook_sql),
     ]
     for repo, path, text in samples:
@@ -115,6 +138,14 @@ def _demo(db_path: str) -> RunStats:
             stats.stored += len(pending)
             stats.normalized += len(pending)
             stats.by_repo[repo] = stats.by_repo.get(repo, 0) + len(pending)
+    # Token metadata (offline parse of a sample token list)
+    svc = TokenMetadataService()
+    meta = svc.parse_token_list(token_list_json, source="demo")
+    if meta:
+        store.upsert(meta)
+        stats.stored += len(meta)
+        stats.normalized += len(meta)
+        stats.by_repo["token-metadata"] = stats.by_repo.get("token-metadata", 0) + len(meta)
     store.close()
     return stats
 
@@ -129,6 +160,7 @@ def _print_summary(stats: RunStats) -> None:
             "stored": stats.stored,
             "skipped": stats.skipped,
             "by_repo": stats.by_repo,
+            "failures": stats.failures,
         },
     )
     sys.stdout.write(
@@ -137,6 +169,10 @@ def _print_summary(stats: RunStats) -> None:
     )
     for repo, n in stats.by_repo.items():
         sys.stdout.write(f"  {repo}: {n} labels\n")
+    if stats.failures:
+        sys.stdout.write(f"\n{len(stats.failures)} source(s) failed:\n")
+        for f in stats.failures:
+            sys.stdout.write(f"  ! {f}\n")
 
 
 def main(argv: list[str] | None = None) -> int:

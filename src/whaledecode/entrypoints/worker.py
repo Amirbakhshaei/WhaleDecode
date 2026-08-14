@@ -31,8 +31,17 @@ async def _ingest_evm_labels(settings: Settings) -> None:
         log.warning("labels_ingest_skipped", extra={"reason": f"package missing: {exc}"})
         return
     token = settings.GITHUB_TOKEN.get_secret_value() if settings.GITHUB_TOKEN else None
+    rpc_urls = {
+        int(c): u
+        for c, u in (
+            (1, settings.ETH_RPC_URL),
+            (42161, settings.ARB_RPC_URL),
+            (8453, settings.BASE_RPC_URL),
+        )
+        if u
+    }
     try:
-        stats = await run(DEFAULT_REPO_TARGETS, settings.LABELS_DB_PATH, token)
+        stats = await run(DEFAULT_REPO_TARGETS, settings.LABELS_DB_PATH, token, rpc_urls)
         log.info(
             "labels_ingest_done",
             extra={
@@ -40,6 +49,7 @@ async def _ingest_evm_labels(settings: Settings) -> None:
                 "records": stats.records,
                 "stored": stats.stored,
                 "skipped": stats.skipped,
+                "failures": stats.failures,
                 "db": settings.LABELS_DB_PATH,
             },
         )

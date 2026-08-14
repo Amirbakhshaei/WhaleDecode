@@ -32,10 +32,20 @@ class RepoTarget:
     path_includes: tuple[str, ...] = ()
 
 
-# Default public repositories that publish EVM address labels.
+# Default public repositories that publish EVM address labels (GitHub tree crawl).
 DEFAULT_REPO_TARGETS: tuple[RepoTarget, ...] = (
-    RepoTarget("DefiLlama/token-lists", path_includes=("tokenlists/",)),
     RepoTarget("DefiLlama/chainlist", path_includes=("chains.json",)),
     RepoTarget("duneanalytics/spellbook", path_includes=("labels", "seeds")),
-    RepoTarget("brianmcmichael/arkham-intelligence-data"),
+    RepoTarget("brianleect/etherscan-labels", path_includes=("combined",)),
 )
+
+# Token metadata ingested via TokenMetadataService (Uniswap + CoinGecko token lists),
+# not from a GitHub repo.
+TOKEN_LIST_URLS: tuple[str, ...] = (
+    "https://tokens.uniswap.org",
+    "https://tokens.coingecko.com/uniswap/all.json",
+)
+
+# Multicall3 is deployed at this address on Ethereum, Arbitrum, Base and most EVMs;
+# used by TokenMetadataService to batch symbol()/decimals()/name() for missing tokens.
+MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"

@@ -15,8 +15,8 @@ def test_ingest_evm_labels_invokes_run_with_settings(tmp_path, monkeypatch) -> N
 
     captured: dict = {}
 
-    async def fake_run(targets, db_path, token):
-        captured.update(targets=targets, db_path=db_path, token=token)
+    async def fake_run(targets, db_path, token, rpc_urls=None):
+        captured.update(targets=targets, db_path=db_path, token=token, rpc_urls=rpc_urls)
         return SimpleNamespace(files=2, records=2, stored=2, skipped=0)
 
     import whaledecode.label_ingestion.main as lim
@@ -34,7 +34,7 @@ def test_ingest_evm_labels_swallows_github_errors(tmp_path, monkeypatch) -> None
     settings = Settings()
     settings.LABELS_DB_PATH = str(tmp_path / "labels.db")
 
-    async def boom(targets, db_path, token):
+    async def boom(targets, db_path, token, rpc_urls=None):
         raise RuntimeError("github down")
 
     import whaledecode.label_ingestion.main as lim
