@@ -223,36 +223,50 @@ class TestFormatChannelPostMarkdown:
 
 
 class TestFormatAlert:
-    def test_header_and_asset(self):
+    def test_template_a_header_and_asset(self):
+        # TRACE_EVENT chain is "ethereum" -> Template A (L1 Mainnet).
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "🚨" in html
-        assert "<b>WHALE ALERT</b>" in html
-        assert "<b>USDC</b>" in html
+        assert "🐋" in html
+        assert "STRATEGIC TRANSFER | Ethereum" in html
+        assert "USDC" in html
 
-    def test_value_chain_score_lines(self):
+    def test_template_a_value_score(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "$124,900.99" in html
-        assert "<b>Chain:</b> Ethereum" in html
-        assert "<b>Score:</b> 72/100" in html
+        assert "$124,900.99 USD" in html
+        assert "Conviction Score:</b> 72/100" in html
 
-    def test_token_amount_on_value_line(self):
+    def test_template_a_synthesis_bullets(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "(124,901 USDC)" in html
+        assert "🧠 <b>Agentic Synthesis:</b>" in html
+        assert "<b>Entity:</b> whale swept USDC toward a Binance-linked addr" in html
+        assert "<b>Context:</b> consolidation of a liquidity node" in html
+        assert "<b>Impact:</b> neutral, likely accumulation" in html
 
-    def test_smc_bullets(self):
+    def test_template_a_flow_line(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "<b>Fundamental Flow:</b> whale swept USDC toward a Binance-linked addr" in html
-        assert "<b>Technical Context:</b> consolidation of a liquidity node" in html
-        assert "<b>Institutional Bias:</b> neutral, likely accumulation" in html
+        assert "<code>0xdfd5…963d</code> ➔ <code>0xd862…42e2</code>" in html
 
-    def test_trace_blockquote_truncated_hashes(self):
-        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+    def test_template_a_footer_links(self):
+        data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
+        html = format_alert(data)
+        raw = TRACE_EVENT["raw_json"]
         tx = TRACE_EVENT["tx_hash"]
-        assert "<blockquote expandable>" in html
-        assert ">Tx<" in html
-        assert f">{tx[:6]}…{tx[-4:]}<" not in html
-        assert ">0xdfd5…963d<" in html
-        assert ">0xd862…42e2<" in html
+        assert "WhaleDecode Platform Actions" in html
+        assert "Track This Entity" in html
+        assert "Ask AI About Tx" in html
+        assert data["track_link"] == f"https://t.me/whaledecodebot?start=track_{raw['from']}"
+        assert data["analyze_link"] == f"https://t.me/whaledecodebot?start=analyze_{tx}"
+
+    def test_template_b_l2_velocity(self):
+        event_l2 = {**TRACE_EVENT, "chain": "base"}
+        html = format_alert(build_alert_data(event_l2, TRACE_ANALYSIS))
+        assert "⚡" in html
+        assert "SMART MONEY TRANSFER | Base" in html
+        assert "🛣️ <b>Flow:</b>" not in html  # L2 omits the flow line
+        assert "<b>Profile:</b>" in html
+        assert "<b>Impact:</b>" in html
+        assert "Auto-Track Wallet" in html
+        assert "Deep Dive Tx" in html
 
     def test_html_escaping(self):
         analysis = {"risk_score": 0.3, "summary": "**Action:** <script>alert(1)</script>"}
@@ -260,31 +274,65 @@ class TestFormatAlert:
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
 
-    def test_chain_id_and_risk_float_normalized(self):
+    def test_chain_id_normalized_to_template_a(self):
         data = build_alert_data({**TRACE_EVENT, "chain": 1}, {"risk_score": 0.735})
         html = format_alert(data)
-        assert "<b>Chain:</b> Ethereum" in html
-        assert "<b>Score:</b> 74/100" in html
+        assert "STRATEGIC" in html
+        assert "Conviction Score:</b> 74/100" in html
 
     def test_zero_value_renders_zero(self):
         event_zero = {**TRACE_EVENT, "raw_json": {**TRACE_EVENT["raw_json"], "value_usd": 0}}
         html = format_alert(build_alert_data(event_zero, {"risk_score": 0.1}))
         assert "$0.00" in html
 
-    def test_deep_link_footer_uses_default_username(self):
-        from whaledecode.adapters.telegram.formatters.channel_formatter import deep_link
+    def test_long_paragraph_shortened_to_one_sentence(self):
+        report = {
+            "risk_score": 0.5,
+            "fundamental_summary": "Whale swept a large USDC block. It landed on a Binance-linked address. Clear CEX inflow.",
+            "technical_summary": "Broke the daily support zone. Volume confirmed the move. Momentum is fading.",
+            "bias_summary": "Bullish accumulation. Favor long setups. Invalidated below support.",
+        }
+        html = format_alert(build_alert_data(TRACE_EVENT, report))
+        assert html.count("It landed") == 0
+        assert "Whale swept a large USDC block." in html
+        assert "Broke the daily support zone." in html
+        assert "Bullish accumulation." in html
 
-        data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
+    def test_na_sentinel_normalized_to_neutral_fallback(self):
+        # LLM returned literal "N/A" / "[ N/A ]" for some synthesis fields.
+        report = {
+            "risk_score": 0.8,
+            "fundamental_summary": "N/A",
+            "technical_summary": "[ N/A ]",
+            "bias_summary": "Neutral rebalancing between unlabeled wallets.",
+        }
+        html = format_alert(build_alert_data(TRACE_EVENT, report))
+        assert "N/A" not in html
+        assert "Entity under analysis." in html
+        assert "Market context unavailable." in html
+        assert "Neutral rebalancing between unlabeled wallets." in html
+
+    def test_empty_fields_use_neutral_fallback_not_na(self):
+        # Empty structured fields AND a summary with no Action/Context/Bias bullets.
+        report = {"risk_score": 0.8, "summary": "Whale moved USDT between two unlabeled wallets."}
+        data = build_alert_data(TRACE_EVENT, report)
         html = format_alert(data)
-        raw = TRACE_EVENT["raw_json"]
-        tx = TRACE_EVENT["tx_hash"]
-        assert "WhaleDecode Platform Actions" in html
-        assert data["track_link"] == f"https://t.me/whaledecodebot?start=track_{raw['from']}"
-        assert data["analyze_link"] == f"https://t.me/whaledecodebot?start=analyze_{tx}"
-        assert "Track This Entity" in html
-        assert "Ask AI About Tx" in html
-        assert deep_link(f"analyze_{tx}") == f"https://t.me/whaledecodebot?start=analyze_{tx}"
-        assert deep_link(f"track_{raw['from']}", " @BotName ") == f"https://t.me/BotName?start=track_{raw['from']}"
+        assert "N/A" not in html
+        assert data["profile"] == "Entity under analysis."
+        assert data["context"] == "Market context unavailable."
+        assert data["impact"] == "Impact under assessment."
+
+    def test_na_variants_all_treated_as_missing(self):
+        from whaledecode.adapters.telegram.formatters.channel_formatter import (
+            _is_missing,
+            parse_synthesis_points,
+        )
+        for token in ["N/A", "n/a", "[ N/A ]", "none", "NULL", "-", "", None]:
+            assert _is_missing(token), token
+        out = parse_synthesis_points({"fundamental_summary": "none", "technical_summary": "-", "bias_summary": "n/a"})
+        assert out["profile"] == "Entity under analysis."
+        assert out["context"] == "Market context unavailable."
+        assert out["impact"] == "Impact under assessment."
 
 
 class TestBuildAlertData:

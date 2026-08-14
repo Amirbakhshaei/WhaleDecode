@@ -1,8 +1,85 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from html import escape
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+# Neutral phrasing used when the LLM genuinely lacks grounding (it emits "N/A"
+# per its own prompt rule) so the channel never prints the literal sentinel.
+_NEUTRAL_FALLBACK = {
+    "profile": "Entity under analysis.",
+    "context": "Market context unavailable.",
+    "impact": "Impact under assessment.",
+}
+
+# Sentinels the LLM uses for "data missing" — treated as absent, not surfaced.
+_MISSING_RE = re.compile(r"^\s*\[?\s*(n/?a|none|null|-|tbd)\s*\]?\s*$", re.IGNORECASE)
+
+
+def _is_missing(text: Any) -> bool:
+    """True when the LLM returned an explicit 'no data' sentinel or nothing."""
+    if not text:
+        return True
+    return bool(_MISSING_RE.match(str(text)))
+
+
+def parse_synthesis_points(output_json: Any) -> dict[str, str]:
+    """Extract concise 1-sentence points from LLM output JSON or raw summary.
+
+    Any "N/A"-style sentinel is normalized to neutral, non-assertive fallback
+    text so the channel never echoes the raw token back to traders."""
+    if isinstance(output_json, str):
+        try:
+            data = json.loads(output_json)
+        except Exception:
+            data = {}
+    else:
+        data = output_json or {}
+
+    profile = (
+        data.get("entity_profile")
+        or data.get("fundamental_flow")
+        or data.get("fundamental_summary")
+    )
+    context = (
+        data.get("context")
+        or data.get("technical_context")
+        or data.get("technical_summary")
+    )
+    impact = (
+        data.get("impact")
+        or data.get("institutional_bias")
+        or data.get("bias_summary")
+    )
+
+    # Fall back to parsing legacy markdown-bullet summary (Action/Context/Bias).
+    if not (profile and context and impact) and data.get("summary"):
+        parsed = {}
+        for line in str(data["summary"]).splitlines():
+            match = _SMC_BULLET.search(line)
+            if match:
+                parsed[match.group(1)] = match.group(2).strip()
+        profile = profile or parsed.get("Action")
+        context = context or parsed.get("Context")
+        impact = impact or parsed.get("Bias")
+
+    def shorten(text: Any, fallback: str) -> str:
+        if _is_missing(text):
+            return fallback
+        first = str(text).split(". ")[0].strip()
+        return first + ("." if not first.endswith(".") else "")
+
+    return {
+        "profile": _strip_hex(shorten(profile, _NEUTRAL_FALLBACK["profile"])),
+        "context": _strip_hex(shorten(context, _NEUTRAL_FALLBACK["context"])),
+        "impact": _strip_hex(shorten(impact, _NEUTRAL_FALLBACK["impact"])),
+    }
+
 
 _MD_CLEANUP = re.compile(r"```(?:json)?|```|\*\*|__|[*_`]")
 
@@ -274,16 +351,21 @@ def build_alert_data(
     amount = _as_float(raw.get("amount") or event_data.get("amount"))
     action, context, bias = _smc_fields(report)
     risk_score = report.get("risk_score", 0.0)
+    synthesis = parse_synthesis_points(report)
     return {
         "value_usd": _value_usd(event_data, report),
         "token_amount_formatted": f"{amount:,.0f} {asset}".strip() if amount > 0 else "",
         "asset": asset,
         "chain": chain,
+        "action": str(event_data.get("event_type", "TRANSFER")).upper(),
         "score": _risk_percent(risk_score),
+        "profile": synthesis["profile"],
+        "context": synthesis["context"],
+        "impact": synthesis["impact"],
         "risk_score": risk_score,
-        "fundamental_summary": action or "N/A",
-        "technical_summary": context or "N/A",
-        "bias_summary": bias or "Neutral",
+        "fundamental_summary": action,
+        "technical_summary": context,
+        "bias_summary": bias,
         "tx_hash": tx_hash,
         "from_address": from_addr,
         "to_address": to_addr,
@@ -309,47 +391,70 @@ def deep_link(payload: str, bot_username: str = "") -> str:
 
 
 def format_alert(alert_data: dict[str, Any]) -> str:
-    """Institutional-trader channel alert: high-density HTML. One-line micro anchors
-    hold the trace links; the expandable blockquote hides ONLY the raw hash data,
-    never the trader-intelligence text."""
+    """Deterministic Template A (L1 Mainnet) or Template B (L2 Velocity) channel alert.
+
+    Renders directly from ``build_alert_data`` output so every section is built from
+    structured fields, never from the legacy verbose paragraph body."""
     value_usd = _as_float(alert_data.get("value_usd", 0.0))
     asset = escape(str(alert_data.get("asset", "UNKNOWN")))
     chain = _normalize_chain(alert_data.get("chain", "ETH"))
+    action = str(alert_data.get("action", "TRANSFER")).upper()
     score = int(_as_float(alert_data.get("score", 0)))
-    token_amount = escape(str(alert_data.get("token_amount_formatted", "")))
 
-    fundamental = escape(str(alert_data.get("fundamental_summary") or "N/A"))
-    technical = escape(str(alert_data.get("technical_summary") or "N/A"))
-    bias = escape(str(alert_data.get("bias_summary") or "Neutral"))
+    profile = escape(str(alert_data.get("profile") or "High-value institutional entity."))
+    context = escape(str(alert_data.get("context") or "Off-exchange liquidity positioning."))
+    impact = escape(str(alert_data.get("impact") or "Reduces immediate exchange-held supply."))
 
-    tx_url = escape(str(alert_data.get("tx_url") or "#"), quote=True)
-    from_url = escape(str(alert_data.get("from_url") or "#"), quote=True)
-    to_url = escape(str(alert_data.get("to_url") or "#"), quote=True)
     from_label = escape(str(alert_data.get("from_label") or "Unknown Wallet"))
     to_label = escape(str(alert_data.get("to_label") or "Unknown Wallet"))
     track_link = escape(str(alert_data.get("track_link") or ""), quote=True)
     analyze_link = escape(str(alert_data.get("analyze_link") or ""), quote=True)
 
-    value_line = f"💰 <b>Value:</b> ${value_usd:,.2f}"
-    if token_amount:
-        value_line += f" ({token_amount})"
-
     # Intra-platform actions footer: route users back into our own bot.
     action_line = ""
     if track_link and analyze_link:
-        action_line = (
-            f"\n\n👇 <b>WhaleDecode Platform Actions:</b>\n"
-            f"🕵️‍♂️ <a href=\"{track_link}\">Track This Entity</a> | 💬 <a href=\"{analyze_link}\">Ask AI About Tx</a>"
+        if chain.upper() in ("ETH", "ETHEREUM"):
+            action_line = (
+                f"👇 <b>WhaleDecode Platform Actions:</b>\n"
+                f"🕵️‍♂️ <a href=\"{track_link}\">Track This Entity</a> | "
+                f"💬 <a href=\"{analyze_link}\">Ask AI About Tx</a>"
+            )
+        else:
+            action_line = (
+                f"👇 <b>WhaleDecode Platform Actions:</b>\n"
+                f"⚡ <a href=\"{track_link}\">Auto-Track Wallet</a> | "
+                f"💬 <a href=\"{analyze_link}\">Deep Dive Tx</a>"
+            )
+
+    # ------------------------------------------------------------------
+    # TEMPLATE A: L1 Mainnet (ETH)
+    # ------------------------------------------------------------------
+    if chain.upper() in ("ETH", "ETHEREUM"):
+        return (
+            f"🐋 <b>STRATEGIC {action} | {chain}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 <b>Total Value:</b> <b>${value_usd:,.2f} USD</b>\n"
+            f"🪙 <b>Asset:</b> {asset}\n"
+            f"🛣️ <b>Flow:</b> <code>{from_label}</code> ➔ <code>{to_label}</code>\n"
+            f"🎯 <b>Conviction Score:</b> {score}/100\n\n"
+            f"🧠 <b>Agentic Synthesis:</b>\n"
+            f"• <b>Entity:</b> {profile}\n"
+            f"• <b>Context:</b> {context}\n"
+            f"• <b>Impact:</b> {impact}\n\n"
+            f"{action_line}"
         )
 
-    return f"""🚨 <b>WHALE ALERT</b> | <b>{asset}</b>
-───────────────────────────
-{value_line}
-🌐 <b>Chain:</b> {chain} | 🎯 <b>Score:</b> {score}/100
-
-🧠 <b>TRADER INTELLIGENCE</b>
-• <b>Fundamental Flow:</b> {fundamental}
-• <b>Technical Context:</b> {technical}
-• <b>Institutional Bias:</b> {bias}
-
-<blockquote expandable>🔗 <a href="{tx_url}">Tx</a> | <a href="{from_url}">{from_label}</a> ➔ <a href="{to_url}">{to_label}</a></blockquote>{action_line}""".strip()
+    # ------------------------------------------------------------------
+    # TEMPLATE B: L2 / High Velocity (BASE, ARB, SOL, ...)
+    # ------------------------------------------------------------------
+    return (
+        f"⚡ <b>SMART MONEY {action} | {chain}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 <b>Total Value:</b> <b>${value_usd:,.2f} USD</b>\n"
+        f"🪙 <b>Asset:</b> {asset}\n"
+        f"🎯 <b>Conviction Score:</b> {score}/100\n\n"
+        f"🧠 <b>Agentic Synthesis:</b>\n"
+        f"• <b>Profile:</b> {profile}\n"
+        f"• <b>Impact:</b> {impact}\n\n"
+        f"{action_line}"
+    )
