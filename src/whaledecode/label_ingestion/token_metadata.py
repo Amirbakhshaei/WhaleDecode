@@ -94,7 +94,10 @@ class TokenMetadataService:
         """Fetch every URL in TOKEN_LIST_URLS and return the union of token labels."""
         owned = client is None
         if owned:
-            client = httpx.AsyncClient(timeout=30.0, headers={"Accept": "application/json"})
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0),
+                headers={"Accept": "application/json"},
+            )
         labels: list[AddressLabel] = []
         try:
             for url in TOKEN_LIST_URLS:

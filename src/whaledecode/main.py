@@ -1,7 +1,10 @@
 import asyncio
+import os
+import sys
 from pathlib import Path
 
 import click
+from pydantic import SecretStr
 from whaledecode import __version__
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
@@ -29,6 +32,21 @@ def _load_settings() -> Settings:
             "Locally: set DATABASE_URL in .env (see .env.example)."
         )
     return settings
+
+
+def load_label_settings() -> Settings:
+    """Settings for the standalone label cache (no Postgres / Telegram / LLM required).
+
+    Label ingestion only needs GITHUB_TOKEN, LABELS_DB_PATH and the per-chain RPC URLs.
+    The full Settings() model mandates BOT_TOKEN/GROQ_API_KEY/DATABASE_URL, which are
+    irrelevant here, so we feed harmless placeholders only when those env vars are absent
+    — letting the command run in any environment (e.g. a Railway console) without them."""
+    kwargs: dict[str, SecretStr] = {}
+    if not os.getenv("BOT_TOKEN"):
+        kwargs["BOT_TOKEN"] = SecretStr("")
+    if not os.getenv("GROQ_API_KEY"):
+        kwargs["GROQ_API_KEY"] = SecretStr("")
+    return Settings(**kwargs)
 
 
 @cli.command()
@@ -189,8 +207,16 @@ def debug_pipeline(dry_run: bool, event_id: int | None):
 @click.option("--token", default=None, help="GitHub PAT (else settings.GITHUB_TOKEN / GITHUB_TOKEN env)")
 def ingest_labels(db: str | None, repos: str | None, token: str | None) -> None:
     """Ingest public EVM address labels into the SQLite cache (on demand)."""
-    settings = _load_settings()
+    settings = load_label_settings()
     setup_logging(settings)
+
+    # Ensure output is never swallowed by block-buffering when stdout isn't a TTY
+    # (piped CI logs, Railway console capture) — otherwise the command looks silent.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:  # noqa: BLE001 - not all streams support reconfigure
+        pass
 
     from whaledecode.label_ingestion.config import DEFAULT_REPO_TARGETS, RepoTarget
     from whaledecode.label_ingestion.main import run
@@ -213,13 +239,23 @@ def ingest_labels(db: str | None, repos: str | None, token: str | None) -> None:
         )
         if u
     }
-    stats = asyncio.run(run(targets, db_path, gh_token, rpc_urls))
+    click.echo(f"▶ ingesting {len(targets)} repos -> {db_path}")
+    sys.stdout.flush()
+    try:
+        stats = asyncio.run(run(targets, db_path, gh_token, rpc_urls))
+    except Exception as exc:  # noqa: BLE001 - surface the real error instead of exiting silently
+        click.echo(f"✗ ingest failed: {exc}", err=True)
+        sys.exit(1)
+
     click.echo(
         f"Ingested: files={stats.files} records={stats.records} "
         f"stored={stats.stored} skipped={stats.skipped} -> {db_path}"
     )
     for f in stats.failures:
         click.echo(f"  ! failed: {f}")
+    if stats.stored == 0:
+        click.echo("✗ nothing stored — check GITHUB_TOKEN and that the repos expose label files.", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

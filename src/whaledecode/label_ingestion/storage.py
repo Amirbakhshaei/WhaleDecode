@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from web3 import Web3
@@ -13,6 +14,7 @@ class LabelStore:
     """Thin, typed SQLite wrapper for EVM address labels."""
 
     def __init__(self, path: str = "evm_labels.db") -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")

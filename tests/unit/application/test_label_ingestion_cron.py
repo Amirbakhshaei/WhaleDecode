@@ -4,8 +4,29 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from click.testing import CliRunner
+from whaledecode import main as cli_main
 from whaledecode.config.settings import Settings
 from whaledecode.entrypoints import worker
+
+
+def test_ingest_labels_runs_without_postgres_env(tmp_path, monkeypatch) -> None:
+    """Label ingestion must NOT require DATABASE_URL / BOT_TOKEN / GROQ_API_KEY."""
+    import whaledecode.label_ingestion.main as lim
+
+    async def fake_run(targets, db_path, token, rpc_urls=None):
+        return SimpleNamespace(files=1, records=1, stored=1, skipped=0, failures=[])
+
+    monkeypatch.setattr(lim, "run", fake_run)
+    monkeypatch.setattr(cli_main, "setup_logging", lambda s: None)
+    for var in ("DATABASE_URL", "BOT_TOKEN", "GROQ_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    result = CliRunner().invoke(
+        cli_main.cli, ["ingest-labels", "--db", str(tmp_path / "labels.db")]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Ingested:" in result.output
 
 
 def test_ingest_evm_labels_invokes_run_with_settings(tmp_path, monkeypatch) -> None:

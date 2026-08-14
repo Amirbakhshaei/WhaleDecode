@@ -72,7 +72,7 @@ class GitHubClient:
         self._limiter = limiter or RateLimiter()
         self._client = httpx.AsyncClient(
             base_url=GITHUB_API,
-            timeout=timeout,
+            timeout=httpx.Timeout(connect=10.0, read=timeout, write=timeout, pool=10.0),
             headers=self._headers(),
             follow_redirects=True,
         )
