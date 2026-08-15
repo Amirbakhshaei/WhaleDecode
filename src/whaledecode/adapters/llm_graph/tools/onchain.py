@@ -8,7 +8,7 @@ from whaledecode.adapters.llm_graph.tools.portfolio import fetch_complete_wallet
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
 CACHE_SIZE = 1000
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 900
 
 RATE_LIMIT_MSG = "Rate limit reached. Proceed with existing context."
 

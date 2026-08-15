@@ -1,9 +1,15 @@
 import json
 
+import eth_abi
 import httpx
 import pytest
 from aiolimiter import AsyncLimiter
-from whaledecode.adapters.chain.providers.http_rpc import HttpRpcProvider, RateLimitError
+from whaledecode.adapters.chain.providers.http_rpc import (
+    _TOKEN_METADATA_CACHE,
+    ERC20_METADATA_ABI,
+    HttpRpcProvider,
+    RateLimitError,
+)
 
 
 def _provider(handler: httpx.MockTransport) -> HttpRpcProvider:
@@ -91,3 +97,28 @@ class TestHttpRpcProvider:
 
         with pytest.raises(RateLimitError):
             await p.rpc_call.__wrapped__(p, "eth_blockNumber")
+
+    async def test_token_metadata_cached_across_calls(self) -> None:
+        _TOKEN_METADATA_CACHE.clear()
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            data = json.loads(request.content)["params"][0]["data"]
+            if data == ERC20_METADATA_ABI["name"]:
+                result = eth_abi.encode(["string"], ["USD Coin"])
+            elif data == ERC20_METADATA_ABI["symbol"]:
+                result = eth_abi.encode(["string"], ["USDC"])
+            else:
+                result = eth_abi.encode(["uint256"], [6])
+            return httpx.Response(200, json={"jsonrpc": "2.0", "result": "0x" + result.hex()})
+
+        p = _provider(httpx.MockTransport(handler))
+        token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+        first = await p.get_token_metadata("ETH", token)
+        second = await p.get_token_metadata("ETH", token)
+
+        assert first == second == {"name": "USD Coin", "symbol": "USDC", "decimals": 6, "address": token}
+        assert request_count == 3  # second lookup served entirely from cache

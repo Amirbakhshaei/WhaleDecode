@@ -6,6 +6,7 @@ import eth_abi
 import httpx
 import structlog
 from aiolimiter import AsyncLimiter
+from cachetools import TTLCache
 from eth_utils import to_checksum_address
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
@@ -42,6 +43,15 @@ ERC20_METADATA_ABI = {
 MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
 MULTICALL3_AGGREGATE3_SELECTOR = "0x82ad56cb"
 ERC20_BALANCE_OF_SELECTOR = "0x70a08231"
+
+# Token metadata (name/symbol/decimals) is immutable on-chain — cache it long
+# term so every wallet holding the same token reuses the 3 eth_calls it cost to
+# fetch it once. Errors are never cached; they pass through like the tool cache.
+TOKEN_METADATA_CACHE_SIZE = 1000
+TOKEN_METADATA_CACHE_TTL_SECONDS = 86400
+_TOKEN_METADATA_CACHE: TTLCache[tuple[str, str], dict[str, Any]] = TTLCache(
+    maxsize=TOKEN_METADATA_CACHE_SIZE, ttl=TOKEN_METADATA_CACHE_TTL_SECONDS
+)
 
 
 class RateLimitError(Exception):
@@ -134,6 +144,11 @@ class HttpRpcProvider(ChainProviderPort):
         return int(result, 16) if isinstance(result, str) and result else 0
 
     async def get_token_metadata(self, chain: str, address: str) -> dict[str, Any]:
+        cache_key = (chain.upper(), address.lower())
+        cached = _TOKEN_METADATA_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
         async def _eth_call(data_hex: str) -> str:
             params = [{"to": address, "data": data_hex}, "latest"]
             result = await self.rpc_call("eth_call", params, chain=chain)
@@ -148,19 +163,21 @@ class HttpRpcProvider(ChainProviderPort):
                 raw = bytes.fromhex(hex_str[2:])
                 if len(raw) >= 64:
                     offset = int.from_bytes(raw[:32], "big")
-                    length = int.from_bytes(raw[offset + 32 : offset + 64], "big")
-                    start = offset + 64
+                    length = int.from_bytes(raw[offset : offset + 32], "big")
+                    start = offset + 32
                     return raw[start : start + length].decode("utf-8", errors="replace")
                 return raw.decode("utf-8", errors="replace").strip("\x00")
             except (ValueError, IndexError):
                 return ""
 
-        return {
+        metadata = {
             "name": _decode_hex_string(name_hex) or "Unknown",
             "symbol": _decode_hex_string(symbol_hex) or "???",
             "decimals": int(decimals_hex, 16) if decimals_hex and decimals_hex != "0x" else 18,
             "address": address,
         }
+        _TOKEN_METADATA_CACHE[cache_key] = metadata
+        return metadata
 
     async def get_token_balances(self, chain: str, address: str, token_addresses: list[str]) -> dict[str, int]:
         if not token_addresses:
