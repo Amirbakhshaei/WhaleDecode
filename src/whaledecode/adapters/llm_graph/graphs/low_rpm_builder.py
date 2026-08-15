@@ -16,7 +16,7 @@ from __future__ import annotations
 import httpx
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
-
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.adapters.llm_graph.nodes.data_gatherer_node import create_data_gatherer_node
 from whaledecode.adapters.llm_graph.nodes.smc_analyst_node import create_smc_analyst_node
@@ -30,13 +30,17 @@ def build_low_rpm_graph(
     provider: ChainProviderPort | None = None,
     http_client: httpx.AsyncClient | None = None,
     checkpointer=None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ):
     workflow = StateGraph(InvestigationState)
 
     provider = provider or MockChainProvider()
     tools = create_data_gatherer_tools(provider, http_client=http_client)
 
-    workflow.add_node("data_gatherer", create_data_gatherer_node(llm, tools))
+    workflow.add_node(
+        "data_gatherer",
+        create_data_gatherer_node(llm, tools, session_factory=session_factory, http_client=http_client),
+    )
     workflow.add_node("smc_analyst", create_smc_analyst_node(llm))
 
     workflow.add_edge(START, "data_gatherer")
