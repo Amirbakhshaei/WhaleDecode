@@ -1,9 +1,10 @@
+import json
 from typing import Any
 
 from cachetools import TTLCache
 from langchain_core.tools import tool
-
 from whaledecode.adapters.chain.providers.http_rpc import RateLimitError
+from whaledecode.adapters.llm_graph.tools.portfolio import fetch_complete_wallet_profile
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
 CACHE_SIZE = 1000
@@ -72,10 +73,26 @@ def create_onchain_tools(provider: ChainProviderPort) -> list:
         cache[key] = result
         return result
 
+    async def get_wallet_portfolio(address: str, chain: str = "ETH") -> str:
+        """Get a wallet's full portfolio: native balance, transaction count, and top ERC-20 token holdings with symbols and amounts."""
+        key = _cache_key("get_wallet_portfolio", {"address": address, "chain": chain})
+        if key in cache:
+            return cache[key]
+        try:
+            profile = await fetch_complete_wallet_profile(provider, address, chain)
+            result = json.dumps(profile, default=str)
+        except RateLimitError:
+            return RATE_LIMIT_MSG
+        except Exception as exc:
+            return f"ERROR: could not fetch portfolio for {address} on {chain}: {exc}"
+        cache[key] = result
+        return result
+
     return [
         tool(get_wallet_info),
         tool(get_token_info),
         tool(trace_transaction),
+        tool(get_wallet_portfolio),
     ]
 
 

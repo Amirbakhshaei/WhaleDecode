@@ -1,10 +1,10 @@
+import re
 from html import escape
 
 import structlog
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.application.services.user_service import (
     UPGRADE_CTA_MESSAGE,
@@ -18,6 +18,9 @@ log = structlog.get_logger()
 chat_router = Router(name="chat")
 
 _GREETINGS = {"hi", "hello", "hey", "help"}
+
+EVM_ADDRESS_REGEX = re.compile(r"^0x[a-fA-F0-9]{40}$")
+TX_HASH_REGEX = re.compile(r"^0x[a-fA-F0-9]{64}$")
 
 
 def is_greeting(query: str) -> bool:
@@ -37,12 +40,34 @@ async def _spend_quota(message: Message, uow_factory) -> bool:
             return False
 
 
+async def _search_curated_entities(uow_factory, query: str) -> str | None:
+    """Find curated wallets by label/category; None when nothing matches.
+
+    Pure DB lookup (no LLM cost) — invalid inputs short-circuit here instead of
+    ever reaching the on-chain tools.
+    """
+    async with uow_factory() as uow:
+        matches = await uow.curated_wallets.search_by_label_or_category(query, limit=5)
+    if not matches:
+        return None
+    lines = [f"🔎 <b>Found {len(matches)} entities matching '{escape(query)}':</b>\n"]
+    for w in matches:
+        short_addr = f"{w.address[:6]}...{w.address[-4:]}"
+        label = escape(w.label or "Unlabeled")
+        lines.append(
+            f"• <b>{label}</b> ({w.chain.name}) — {short_addr}\n"
+            f"  <code>{w.address}</code>\n"
+            f"  👉 /ask {w.address}\n"
+        )
+    return "\n".join(lines)
+
+
 @chat_router.message(Command("ask"))
 async def cmd_ask(message: Message, command: CommandObject, investigation_service, uow_factory, **kwargs) -> None:
     log.info("ask_command_received", user_id=message.from_user.id, text=message.text)
     question = (command.args or "").strip()
     if not question:
-        await message.answer("Usage: <code>/ask &lt;your question&gt;</code>\nExample: <code>/ask what did 0x742d... do recently?</code>")
+        await message.answer("Usage: <code>/ask &lt;your question&gt;</code>\nExample: <code>/ask 0x742d...</code>")
         return
 
     async with uow_factory() as uow:
@@ -55,22 +80,35 @@ async def cmd_ask(message: Message, command: CommandObject, investigation_servic
         await uow.users.update(user)
         await uow.commit()
 
-    if is_greeting(question):
-        await message.answer(
-            "👋 Hey! I'm WhaleDecode — your on-chain intelligence bot.\n\n"
-            "Send me a wallet address, transaction hash, or token symbol to investigate!\n\n"
-            "Examples:\n"
-            "• <code>/ask what did 0x742d... do recently?</code>\n"
-            "• <code>/decode 0x1234...</code>"
-        )
-        return
+    # Deterministic triage: tx hash → tx investigation, wallet address → wallet
+    # investigation, otherwise search the curated-entity DB before any LLM call.
+    if TX_HASH_REGEX.match(question):
+        prompt = f"Decode and analyze this on-chain transaction: {question}"
+    elif EVM_ADDRESS_REGEX.match(question):
+        prompt = f"Investigate this wallet: {question}"
+    else:
+        entity_hits = await _search_curated_entities(uow_factory, question)
+        if entity_hits is not None:
+            await message.answer(entity_hits)
+            return
+        if is_greeting(question):
+            await message.answer(
+                "👋 Hey! I'm WhaleDecode — your on-chain intelligence bot.\n\n"
+                "Send me a wallet address, transaction hash, or token symbol to investigate!\n\n"
+                "Examples:\n"
+                "• <code>/ask 0x742d...</code>\n"
+                "• <code>/ask binance</code>\n"
+                "• <code>/decode 0x1234...</code>"
+            )
+            return
+        prompt = question
 
     if not await _spend_quota(message, uow_factory):
         return
 
     await message.answer("🧠 Thinking...")
     try:
-        result = await investigation_service.chat(question, thread_id=str(message.from_user.id))
+        result = await investigation_service.chat(prompt, thread_id=str(message.from_user.id))
         await message.answer(result[:4000])
     except ConnectionError as e:
         log.error("ask_connection_error", user_id=message.from_user.id, error=str(e))

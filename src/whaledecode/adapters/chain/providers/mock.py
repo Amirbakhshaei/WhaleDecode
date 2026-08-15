@@ -49,6 +49,10 @@ class MockChainProvider(ChainProviderPort):
             "totalSupply": "1000000000000000000000000",
         }
 
+    async def get_token_balances(self, chain: str, address: str, token_addresses: list[str]) -> dict[str, int]:
+        # 1 token (1e18 wei) of each requested token.
+        return {token.lower(): 10**18 for token in token_addresses}
+
     async def trace_call(self, chain: str, tx_hash: str) -> dict[str, Any]:
         return {
             "type": "CALL",

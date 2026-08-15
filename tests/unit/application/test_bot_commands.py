@@ -20,7 +20,9 @@ from whaledecode.adapters.telegram.routers import (
     payments_router,
     wallet_router,
 )
+from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.entities.user import User
+from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.entrypoints.bot import _on_error
 
 
@@ -79,6 +81,9 @@ class _FakeWallets:
 
     async def get(self, wid):
         return None
+
+    async def search_by_label_or_category(self, query, limit=5):
+        return []
 
 
 class _FakeTracked:
@@ -142,6 +147,24 @@ class _FakeSettings:
 class _BoomUow(_FakeUow):
     async def __aenter__(self):
         raise RuntimeError("db down")
+
+
+class _MatchingWallets(_FakeWallets):
+    async def search_by_label_or_category(self, query, limit=5):
+        return [
+            CuratedWallet(
+                address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+                chain=Chain.ETH,
+                label="Binance",
+                quality_score=90,
+            )
+        ]
+
+
+class _MatchUow(_FakeUow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.curated_wallets = _MatchingWallets()
 
 
 def _build_dp() -> tuple[Bot, Dispatcher, _RecordingSession]:
@@ -222,3 +245,20 @@ async def test_all_commands_produce_replies_and_errors_surface():
     dp["uow_factory"] = _BoomUow
     await _send(bot, dp, "/status")
     assert any("went wrong" in s for s in session.sent), session.sent
+
+    # /ask triage: entity name → curated-wallet hits (DB search, no LLM); address/hash → investigation.
+    session.sent.clear()
+    dp["uow_factory"] = _MatchUow
+    await _send(bot, dp, "/ask binance")
+    assert any("Found 1 entities" in s for s in session.sent), session.sent
+    assert any("0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18" in s for s in session.sent), session.sent
+
+    session.sent.clear()
+    dp["uow_factory"] = _FakeUow
+    await _send(bot, dp, "/ask 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
+    assert any("Investigation result text." in s for s in session.sent), session.sent
+
+    session.sent.clear()
+    tx = "0x" + "a" * 64
+    await _send(bot, dp, f"/ask {tx}")
+    assert any("Investigation result text." in s for s in session.sent), session.sent
