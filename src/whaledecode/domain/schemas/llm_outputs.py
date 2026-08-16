@@ -38,3 +38,34 @@ class ChatReportResult(BaseModel):
         default="Not financial advice.",
         description="Standard crypto disclaimer.",
     )
+
+
+class EventAnalysisResult(BaseModel):
+    """Structured per-event analysis produced by the event analysis node.
+
+    The model is constrained via ``with_structured_output`` so the four fields
+    are guaranteed well-formed — no reliance on the LLM spontaneously emitting
+    parseable JSON that a downstream formatter then has to recover.
+    """
+
+    entity_profile: str = Field(
+        ...,
+        description=(
+            "1 concise sentence describing the wallet entity and behavioral "
+            "archetype (e.g., Binance Hot Wallet -> Institutional Accumulator)."
+        ),
+    )
+    context: str = Field(
+        ...,
+        description="1 concise sentence detailing market context, execution timing, or volume magnitude.",
+    )
+    impact: str = Field(
+        ...,
+        description="1 concise sentence evaluating supply shock, exchange liquid reserves depletion, or directional bias.",
+    )
+    conviction_score: int = Field(
+        default=75,
+        ge=0,
+        le=100,
+        description="Confidence/conviction score between 0 and 100 based on entity quality and volume.",
+    )

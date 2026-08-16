@@ -1,6 +1,9 @@
+import json
+
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from whaledecode.adapters.llm_graph.utils import trim_history
+from whaledecode.domain.schemas.llm_outputs import EventAnalysisResult
 
 SYSTEM_PROMPT = """YOU ARE THE WHALEDECODE ON-CHAIN REASONING AGENT.
 Analyze the provided transaction data and telemetry as trader-intelligence, not data echo.
@@ -12,16 +15,14 @@ Analyze the provided transaction data and telemetry as trader-intelligence, not 
 4. Base every number ONLY on the provided data or tool results. Never fabricate percentages, price levels, or volume figures — write "N/A" when data is missing.
 5. Describe the financial significance and market impact in plain English for professional traders.
 
-# OUTPUT (STRICT JSON — NON-NEGOTIABLE)
-You MUST respond ONLY with valid JSON matching these EXACT keys. No other keys, no extra prose:
+# OUTPUT
+Provide a structured analysis with exactly these four fields (the runtime
+enforces the schema, so do not wrap in JSON/markdown — just answer each):
 
-{
-  "entity_profile": "1-sentence attribution: [From Entity] -> [To Entity] with wallet archetype (e.g. Fresh Accumulator, MM Rebalancing).",
-  "context": "1-sentence market context: Execution timing, volume magnitude, or protocol interaction.",
-  "impact": "1-sentence market consequence: Supply shock, orderbook drain, or directional buy/sell bias."
-}
-
-CRITICAL: Do not wrap in markdown blocks. Output raw JSON only.
+- entity_profile: 1 sentence attributing [From Entity] -> [To Entity] with wallet archetype (e.g. Fresh Accumulator, MM Rebalancing).
+- context: 1 sentence on market context, execution timing, or volume magnitude.
+- impact: 1 sentence on supply shock, orderbook drain, or directional buy/sell bias.
+- conviction_score: integer 0-100 confidence based on entity quality and volume.
 
 # MARKET CONTEXT (from the event payload)
 from_label: {from_label}
@@ -126,6 +127,8 @@ def _first_present(raw: dict, keys: tuple[str, ...]):
 
 
 def create_analysis_node(llm: BaseChatModel):
+    structured_llm = llm.with_structured_output(EventAnalysisResult)
+
     async def analyze_event(state: dict) -> dict:
         # The event was injected into state["messages"] as the opening user turn
         # before this node ran. Pass the history through as-is so tool calls stay
@@ -144,6 +147,11 @@ def create_analysis_node(llm: BaseChatModel):
             f"{key}: {value}" for key, value in exact.items()
         )
         prompt += f"\n\n# KEY PRICE LEVELS (USD, cite these)\n{levels}"
-        result = await llm.ainvoke([SystemMessage(content=prompt), *history])
-        return {"messages": [result], "summary": result.content}
+        result: EventAnalysisResult = await structured_llm.ainvoke(
+            [SystemMessage(content=prompt), *history]
+        )
+        # Re-serialize to the JSON string the consolidated report consumes as text,
+        # so the downstream contract is unchanged while the source parse is now guaranteed.
+        summary = json.dumps(result.model_dump())
+        return {"messages": [AIMessage(content=summary)], "summary": summary}
     return analyze_event

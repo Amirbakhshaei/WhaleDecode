@@ -5,13 +5,14 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph
 from whaledecode.adapters.llm_graph.state.investigation_result import InvestigationResult
+from whaledecode.domain.schemas.llm_outputs import EventAnalysisResult
 
 
 class _FakeStructuredOutput:
-    def __init__(self, result: InvestigationResult) -> None:
+    def __init__(self, result: Any) -> None:
         self._result = result
 
-    async def ainvoke(self, *args: Any, **kwargs: Any) -> InvestigationResult:
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
         return self._result
 
 
@@ -23,6 +24,14 @@ class _FakeAnalysisModel:
         return self
 
     def with_structured_output(self, schema: Any, **kwargs: Any) -> _FakeStructuredOutput:
+        if schema is EventAnalysisResult:
+            return _FakeStructuredOutput(
+                EventAnalysisResult(
+                    entity_profile="Anon deployer -> New Contract (Smart Money Seed)",
+                    context="Concentrated liquidity at creation, $50k mint.",
+                    impact="Tight holder base; supply shock if absorbed.",
+                )
+            )
         assert schema is InvestigationResult
         result = InvestigationResult(
             thesis="Rug-pull risk elevated",

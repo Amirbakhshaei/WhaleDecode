@@ -2,15 +2,24 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from whaledecode.adapters.llm_graph.nodes.event_analysis import create_analysis_node
+from whaledecode.domain.schemas.llm_outputs import EventAnalysisResult
 
 
 class _RecordingModel:
     def __init__(self) -> None:
         self.calls: list[list] = []
 
-    async def ainvoke(self, messages: list, **kwargs: Any) -> AIMessage:
+    def with_structured_output(self, schema: Any, **kwargs: Any) -> "_RecordingModel":
+        assert schema is EventAnalysisResult
+        return self
+
+    async def ainvoke(self, messages: list, **kwargs: Any) -> EventAnalysisResult:
         self.calls.append(messages)
-        return AIMessage(content="Analysis complete")
+        return EventAnalysisResult(
+            entity_profile="Binance 16 -> Cold Storage (Institutional Accumulator)",
+            context="Executed at 03:14 UTC, $15.2M magnitude.",
+            impact="Removes ~3.8% of Binance liquid orderbook supply.",
+        )
 
 
 async def test_analyze_event_does_not_reinject_event_as_new_user_turn() -> None:
