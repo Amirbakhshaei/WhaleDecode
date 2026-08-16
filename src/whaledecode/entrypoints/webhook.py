@@ -25,6 +25,7 @@ from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
 from whaledecode.infrastructure.http import HttpClientManager
+from whaledecode.infrastructure.telemetry import init_sentry
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ async def lifespan(app: FastAPI):
     # ``Settings`` is cheap to build at import time; only the DB/LLM service build
     # is deferred here so a connectivity failure surfaces at startup, not at import.
     global session_factory, _price_oracle
+    init_sentry(settings)
     session_factory, investigation_service, _ = build_investigation_service(settings)
     _price_oracle = investigation_service._price_oracle
     app.state.settings = settings

@@ -6,7 +6,6 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm.factory import LLMFactory
@@ -15,11 +14,13 @@ from whaledecode.application.fetcher import LiveBlockchainFetcher
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.application.worker import BackgroundAIWorker
 from whaledecode.config.settings import Settings
+from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
 
 log = structlog.get_logger()
 
 
 async def run_worker(settings: Settings) -> None:
+    init_sentry(settings)
     session_factory = create_session_factory(settings)
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
@@ -147,6 +148,7 @@ async def _alert_loop(session_factory, bot: Bot, settings: Settings) -> None:
             await send_alerts(session_factory, bot, settings)
         except Exception as e:
             log.error("alert_loop_error", error=str(e))
+            capture_exception(e)
         await asyncio.sleep(interval)
 
 
@@ -166,7 +168,6 @@ async def _purge_stale_events(session_factory) -> None:
 
 async def _reset_daily_counters(session_factory) -> None:
     from sqlalchemy import update
-
     from whaledecode.adapters.db.models.user import UserModel
 
     async with session_factory() as session:

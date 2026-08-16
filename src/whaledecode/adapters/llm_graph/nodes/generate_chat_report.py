@@ -1,7 +1,6 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from whaledecode.adapters.llm_graph.utils import extract_clean_json
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from whaledecode.domain.schemas.llm_outputs import ChatReportResult
 
 REPORT_PROMPT = """Based on the investigation, produce a structured answer with:
 - summary: a concise plain-text answer to the user's question
@@ -17,13 +16,16 @@ Output as valid JSON with these exact keys."""
 
 
 def create_chat_report_node(llm: BaseChatModel):
+    structured_llm = llm.with_structured_output(ChatReportResult)
+
     async def generate_report(state: dict) -> dict:
         analysis = state.get("summary", "")
         msg = HumanMessage(content=f"Analysis to summarize:\n\n{analysis}")
-        result = await llm.ainvoke([SystemMessage(content=REPORT_PROMPT), msg])
-        report = extract_clean_json(result.content)
+        result: ChatReportResult = await structured_llm.ainvoke(
+            [SystemMessage(content=REPORT_PROMPT), msg]
+        )
         return {
-            "messages": [result],
-            **report,
+            "messages": [AIMessage(content=result.summary)],
+            **result.model_dump(),
         }
     return generate_report

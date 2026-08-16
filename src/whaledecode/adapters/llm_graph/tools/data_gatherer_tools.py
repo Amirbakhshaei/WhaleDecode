@@ -9,11 +9,15 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from cachetools import TTLCache
 from langchain_core.tools import BaseTool, tool
-
 from whaledecode.domain.ports.chain_provider import ChainProviderPort
 
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/{address}"
+
+# ponytail: DexScreener pairs move on the minute scale; a 60s TTL saves repeated
+# HTTP hits for the same token within one investigation without going stale.
+_DEXSCREENER_CACHE: TTLCache[str, str] = TTLCache(maxsize=256, ttl=60)
 
 DEXSCREENER_CHAIN_ID: dict[str, str] = {
     "ETH": "ethereum",
@@ -52,6 +56,10 @@ def create_data_gatherer_tools(
     async def dexscreener_tool(token_address: str, chain: str = "ETH") -> str:
         """Fetch DEX market data for a token: price USD, liquidity, and 24h volume."""
         chain_id = DEXSCREENER_CHAIN_ID.get(chain.upper(), chain.lower())
+        cache_key = f"{chain_id}:{token_address}"
+        cached = _DEXSCREENER_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         try:
             resp = await client.get(DEXSCREENER_API.format(address=token_address))
             resp.raise_for_status()
@@ -59,14 +67,18 @@ def create_data_gatherer_tools(
             for pair in pairs:
                 if pair.get("chainId") != chain_id:
                     continue
-                return (
+                result = (
                     f"token={token_address} on {chain}: "
                     f"price=${pair.get('priceUsd') or UNAVAILABLE}, "
                     f"liquidity=${_num(pair.get('liquidity')) or UNAVAILABLE}, "
                     f"volume_24h=${_num(pair.get('volume')) or UNAVAILABLE}, "
                     f"pair={pair.get('pairAddress') or UNAVAILABLE}"
                 )
-            return f"{UNAVAILABLE} — no {chain} pair found for {token_address}"
+                _DEXSCREENER_CACHE[cache_key] = result
+                return result
+            miss = f"{UNAVAILABLE} — no {chain} pair found for {token_address}"
+            _DEXSCREENER_CACHE[cache_key] = miss
+            return miss
         except Exception as exc:
             return f"{UNAVAILABLE} — dexscreener lookup failed for {token_address}: {exc}"
 

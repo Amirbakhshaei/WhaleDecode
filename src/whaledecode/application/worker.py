@@ -21,6 +21,7 @@ from whaledecode.config.alert_policy import GLOBAL_POLICY, policy_for
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 from whaledecode.domain.entities.candidate_event import CandidateEvent
+from whaledecode.infrastructure.telemetry import capture_exception
 
 log = structlog.get_logger()
 
@@ -69,6 +70,7 @@ class BackgroundAIWorker:
                 raise
             except Exception as e:
                 log.error("worker_loop_error", extra={"error": str(e)}, exc_info=True)
+                capture_exception(e)
             try:
                 await asyncio.sleep(self._settings.POLL_INTERVAL_SECONDS)
             except asyncio.CancelledError:
@@ -161,6 +163,7 @@ class BackgroundAIWorker:
                 await uow.commit()
         except Exception as e:
             log.error("worker_event_failed", extra={"dedupe_key": event.dedupe_key, "error": str(e)}, exc_info=True)
+            capture_exception(e)
             async with UnitOfWork(self._session_factory) as uow:
                 next_status = await uow.candidate_events.record_failure(event.id, max_attempts=MAX_ATTEMPTS)
                 if next_status == "dead_letter":

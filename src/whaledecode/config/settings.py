@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     # Observability
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     SENTRY_DSN: SecretStr | None = None
+    ENVIRONMENT: str = "production"
 
     # LangSmith (optional — enables tracing for LangChain/LangGraph)
     LANGSMITH_TRACING: bool = True
