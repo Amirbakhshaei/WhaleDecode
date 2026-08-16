@@ -14,9 +14,8 @@ import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
+from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
 from whaledecode.adapters.llm_graph.tools.data_gatherer_tools import DEXSCREENER_API
 
 GATHER_PROMPT = """You are a data gatherer. Summarize the factual on-chain and market
@@ -47,14 +46,9 @@ async def enrich_event_context(
 
     if session_factory is not None and (from_addr or to_addr):
         async with session_factory() as session:
-            stmt = select(CuratedWalletModel).where(
-                or_(
-                    func.lower(CuratedWalletModel.address) == from_addr.lower(),
-                    func.lower(CuratedWalletModel.address) == to_addr.lower(),
-                )
-            )
-            res = await session.execute(stmt)
-            for wallet in res.scalars().all():
+            repo = CuratedWalletRepository(session)
+            wallets = await repo.find_by_addresses([from_addr, to_addr])
+            for wallet in wallets:
                 if wallet.address.lower() == from_addr.lower():
                     enriched["from_label"] = wallet.label or enriched["from_label"]
                 if wallet.address.lower() == to_addr.lower():

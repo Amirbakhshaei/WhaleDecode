@@ -5,6 +5,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from whaledecode.adapters.db.models import Base
 from whaledecode.adapters.db.repositories.curated_wallet import reset_wallet_cache
+from whaledecode.infrastructure.http import HttpClientManager
 
 
 @pytest.fixture(autouse=True)
@@ -12,6 +13,13 @@ def _clear_wallet_cache():
     """Clear wallet cache before each test to avoid cross-test pollution."""
     reset_wallet_cache()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_http_client_manager():
+    """Reset the process-wide HTTP client pool so per-test httpx mocks apply cleanly."""
+    yield
+    HttpClientManager._clients.clear()
 
 
 @pytest.fixture

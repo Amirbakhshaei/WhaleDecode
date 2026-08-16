@@ -1,5 +1,6 @@
 import pytest
 
+from whaledecode.domain.value_objects.address import EVMAddress, InvalidAddressError, SolanaAddress
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.domain.value_objects.money import Money
@@ -50,3 +51,29 @@ class TestMoney:
         m = Money(value=100)
         with pytest.raises(Exception):
             m.value = 200
+
+
+class TestEVMAddress:
+    def test_valid(self):
+        a = EVMAddress("0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
+        assert a == "0x742d35cc6634c0532925a3b844bc9e7595f2bd18"
+        assert a.startswith("0x")
+        assert len(a) == 42
+
+    def test_invalid(self):
+        with pytest.raises(InvalidAddressError):
+            EVMAddress("0x123")
+
+    def test_invalid_subclass_of_value_error(self):
+        with pytest.raises(ValueError):
+            EVMAddress("0x123")
+
+
+class TestSolanaAddress:
+    def test_valid(self):
+        a = SolanaAddress("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j")
+        assert a == "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j"
+
+    def test_invalid(self):
+        with pytest.raises(InvalidAddressError):
+            SolanaAddress("0x123")

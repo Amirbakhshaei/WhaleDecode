@@ -24,6 +24,7 @@ from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
+from whaledecode.infrastructure.http import HttpClientManager
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ async def lifespan(app: FastAPI):
     await asyncio.gather(*app.state.supervisor_tasks, return_exceptions=True)
     await dp.emit_shutdown()
     await bot.session.close()
+    await HttpClientManager.aclose()
 
 
 # ``settings`` is built at import time (cheap env config); the DB/LLM service

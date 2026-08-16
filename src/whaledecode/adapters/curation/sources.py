@@ -27,9 +27,9 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-EVM_REGEX = re.compile(r"^0x[a-fA-F0-9]{40}$")
+from whaledecode.domain.value_objects.address import EVMAddress, SolanaAddress
+
 _HEX40 = re.compile(r"^[a-fA-F0-9]{40}$")
-SOL_REGEX = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # DefiLlama chain names -> our chain codes. Extend as needed.
 _CHAIN_MAP = {
@@ -54,11 +54,9 @@ class CuratedSeed:
 def validate_seed(seed: CuratedSeed) -> CuratedSeed:
     """Reject addresses that don't match their declared network family."""
     if seed.network_family == "SVM":
-        if not SOL_REGEX.match(seed.address):
-            raise ValueError(f"Solana address invalid: {seed.address}")
+        SolanaAddress(seed.address)
     else:
-        if not EVM_REGEX.match(seed.address):
-            raise ValueError(f"EVM address invalid: {seed.address}")
+        EVMAddress(seed.address)
     return seed
 
 
@@ -196,7 +194,11 @@ class DuneApiAdapter:
             if isinstance(raw, str) and _HEX40.match(raw):
                 address = "0x" + raw
             chain = _CHAIN_MAP.get(str(r.get("blockchain", "")).lower())
-            if not isinstance(address, str) or not EVM_REGEX.match(address) or not chain:
+            if not isinstance(address, str) or not chain:
+                continue
+            try:
+                address = EVMAddress(address)
+            except ValueError:
                 continue
             category = str(r.get("category", ""))
             label = str(r.get("name") or address)
@@ -261,18 +263,23 @@ class DefiLlamaAdapter:
         for item in data:
             address = item.get("address")
             chain = _CHAIN_MAP.get(str(item.get("chain", "")).lower())
-            if isinstance(address, str) and EVM_REGEX.match(address) and chain:
-                seeds.append(
-                    CuratedSeed(
-                        address=address,
-                        chain=chain,
-                        network_family="EVM",
-                        label=str(item.get("name", address)),
-                        category="Smart Money",
-                        tags=("defillama",),
-                        quality_score=70.0,
-                    )
+            if not isinstance(address, str) or not chain:
+                continue
+            try:
+                address = EVMAddress(address)
+            except ValueError:
+                continue
+            seeds.append(
+                CuratedSeed(
+                    address=address,
+                    chain=chain,
+                    network_family="EVM",
+                    label=str(item.get("name", address)),
+                    category="Smart Money",
+                    tags=("defillama",),
+                    quality_score=70.0,
                 )
+            )
         return seeds
 
     async def _from_treasuries(self, client: httpx.AsyncClient) -> list[CuratedSeed]:
@@ -296,18 +303,23 @@ class DefiLlamaAdapter:
         for item in data:
             address = item.get("address")
             chain = _CHAIN_MAP.get(str(item.get("chain", "")).lower())
-            if isinstance(address, str) and EVM_REGEX.match(address) and chain:
-                seeds.append(
-                    CuratedSeed(
-                        address=address,
-                        chain=chain,
-                        network_family="EVM",
-                        label=str(item.get("name", address)),
-                        category="Institutional",
-                        tags=("defillama-treasury",),
-                        quality_score=90.0,
-                    )
+            if not isinstance(address, str) or not chain:
+                continue
+            try:
+                address = EVMAddress(address)
+            except ValueError:
+                continue
+            seeds.append(
+                CuratedSeed(
+                    address=address,
+                    chain=chain,
+                    network_family="EVM",
+                    label=str(item.get("name", address)),
+                    category="Institutional",
+                    tags=("defillama-treasury",),
+                    quality_score=90.0,
                 )
+            )
         return seeds
 
 

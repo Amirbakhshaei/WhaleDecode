@@ -3,7 +3,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.adapters.telegram.dispatcher import TelegramAlertDispatcher
+from whaledecode.adapters.telegram.dispatcher import (
+    RateLimitedDispatcher,
+    TelegramAlertDispatcher,
+)
 from whaledecode.adapters.telegram.middleware import ThrottlingMiddleware
 from whaledecode.adapters.telegram.routers import (
     admin_router,
@@ -51,7 +54,7 @@ def build_telegram_app(settings: Settings) -> tuple[Bot, Dispatcher]:
 
     session_factory, investigation_service, reasoner = build_investigation_service(settings)
 
-    alert_dispatcher = TelegramAlertDispatcher()
+    alert_dispatcher = RateLimitedDispatcher(TelegramAlertDispatcher())
 
     def _uow() -> UnitOfWork:
         return UnitOfWork(session_factory)

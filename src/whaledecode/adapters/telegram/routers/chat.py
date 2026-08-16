@@ -12,6 +12,7 @@ from whaledecode.application.services.user_service import (
 )
 from whaledecode.config.tiers import get_limits
 from whaledecode.domain.exceptions import QuotaExceededError
+from whaledecode.domain.value_objects.address import EVMAddress
 
 log = structlog.get_logger()
 
@@ -19,9 +20,15 @@ chat_router = Router(name="chat")
 
 _GREETINGS = {"hi", "hello", "hey", "help"}
 
-EVM_ADDRESS_REGEX = re.compile(r"^0x[a-fA-F0-9]{40}$")
 TX_HASH_REGEX = re.compile(r"^0x[a-fA-F0-9]{64}$")
 
+
+def is_evm_address(value: str) -> bool:
+    try:
+        EVMAddress(value)
+        return True
+    except ValueError:
+        return False
 
 def is_greeting(query: str) -> bool:
     q = query.strip().lower()
@@ -84,7 +91,7 @@ async def cmd_ask(message: Message, command: CommandObject, investigation_servic
     # investigation, otherwise search the curated-entity DB before any LLM call.
     if TX_HASH_REGEX.match(question):
         prompt = f"Decode and analyze this on-chain transaction: {question}"
-    elif EVM_ADDRESS_REGEX.match(question):
+    elif is_evm_address(question):
         prompt = f"Investigate this wallet: {question}"
     else:
         entity_hits = await _search_curated_entities(uow_factory, question)

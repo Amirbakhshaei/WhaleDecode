@@ -1,9 +1,8 @@
 """Alchemy Notify API webhook management."""
 import logging
 
-import httpx
-
 from whaledecode.config.settings import Settings
+from whaledecode.infrastructure.http import HttpClientManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +53,8 @@ class AlchemyWebhookManager:
                 "addresses_to_add": batch,
                 "addresses_to_remove": [],
             }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.patch(endpoint, headers=headers, json=payload)
+            client = HttpClientManager.get_client("alchemy", timeout=30.0)
+            response = await client.patch(endpoint, headers=headers, json=payload)
             if response.is_success:
                 logger.info(
                     f"{chain}: webhook {webhook_id} added {len(batch)} addresses (HTTP {response.status_code})."
@@ -87,11 +86,11 @@ class AlchemyWebhookManager:
             "addresses": verified_addresses,
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.put(endpoint, headers=headers, json=payload)
+        client = HttpClientManager.get_client("alchemy", timeout=30.0)
+        response = await client.put(endpoint, headers=headers, json=payload)
 
-            if response.status_code == 200:
-                logger.info(f"Synced {len(verified_addresses)} addresses to webhook {webhook_id}.")
-            else:
-                logger.error(f"Alchemy sync failed: {response.status_code} - {response.text}")
-                response.raise_for_status()
+        if response.status_code == 200:
+            logger.info(f"Synced {len(verified_addresses)} addresses to webhook {webhook_id}.")
+        else:
+            logger.error(f"Alchemy sync failed: {response.status_code} - {response.text}")
+            response.raise_for_status()

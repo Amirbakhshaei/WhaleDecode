@@ -1,5 +1,5 @@
 from cachetools import TTLCache
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
@@ -42,6 +42,18 @@ class CuratedWalletRepository:
         result = await self._session.execute(
             select(CuratedWalletModel).where(CuratedWalletModel.label.ilike(f"%{query}%"))
         )
+        return [self._to_domain(row) for row in result.scalars()]
+
+    async def find_by_addresses(self, addresses: list[str]) -> list[CuratedWallet]:
+        """Reverse-lookup curated wallets by (lowercased) address."""
+        if not addresses:
+            return []
+        stmt = select(CuratedWalletModel).where(
+            or_(
+                *(func.lower(CuratedWalletModel.address) == addr.lower() for addr in addresses)
+            )
+        )
+        result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars()]
 
     async def search_by_label_or_category(self, query: str, limit: int = 5) -> list[CuratedWallet]:
