@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 from html import escape
 from typing import Any
+
+from whaledecode.adapters.llm_graph.utils import extract_clean_json
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,7 @@ def parse_synthesis_points(output_json: Any) -> dict[str, str]:
     Any "N/A"-style sentinel is normalized to neutral, non-assertive fallback
     text so the channel never echoes the raw token back to traders."""
     if isinstance(output_json, str):
-        try:
-            data = json.loads(output_json)
-        except Exception:
-            data = {}
+        data = extract_clean_json(output_json)
     else:
         data = output_json or {}
 

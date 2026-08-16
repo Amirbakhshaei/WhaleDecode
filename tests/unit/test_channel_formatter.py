@@ -334,6 +334,22 @@ class TestFormatAlert:
         assert out["context"] == "Market context unavailable."
         assert out["impact"] == "Impact under assessment."
 
+    def test_fenced_json_with_preamble_is_parsed(self):
+        from whaledecode.adapters.telegram.formatters.channel_formatter import parse_synthesis_points
+        raw = (
+            "Here is my analysis:\n"
+            "```json\n"
+            "{\"entity_profile\": \"Fresh Accumulator -> CEX\", "
+            "\"context\": \"CEX Outflow timing\", "
+            "\"impact\": \"Supply shock\"}\n"
+            "```"
+        )
+        out = parse_synthesis_points(raw)
+        assert out["profile"] == "Fresh Accumulator -> CEX."
+        assert out["context"] == "CEX Outflow timing."
+        assert out["impact"] == "Supply shock."
+        assert out["profile"] != "Entity under analysis."
+
 
 class TestBuildAlertData:
     def test_extracts_smc_fields_from_summary(self):
