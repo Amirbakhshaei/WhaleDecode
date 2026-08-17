@@ -39,6 +39,14 @@ _CHAIN_MAP = {
     "solana": "SOL",
 }
 
+# Dune Spellbook categories -> webhook taxonomy (only eligible ones map to an
+# allowed category; the rest fall through to their raw label and get gated out).
+_WEBHOOK_CATEGORY_MAP = {
+    "cex": "CEX Reserve",
+    "fund": "Venture Fund",
+    "dao": "DAO Treasury",
+}
+
 
 @dataclass(frozen=True)
 class CuratedSeed:
@@ -58,6 +66,21 @@ def validate_seed(seed: CuratedSeed) -> CuratedSeed:
     else:
         EVMAddress(seed.address)
     return seed
+
+
+# Only high-conviction, low-frequency categories are webhook-worthy. DEX
+# routers, token contracts, and CEX hot sweepers are excluded so the Alchemy
+# webhook never becomes a global transfer firehose.
+ALLOWED_WEBHOOK_CATEGORIES = {"CEX Reserve", "Venture Fund", "Notable Whale", "DAO Treasury"}
+MIN_WEBHOOK_QUALITY_SCORE = 85.0
+
+
+def is_webhook_eligible(seed: CuratedSeed) -> bool:
+    """True when a seed is worth tracking via Alchemy webhook (category + quality gate)."""
+    return (
+        seed.category in ALLOWED_WEBHOOK_CATEGORIES
+        and seed.quality_score >= MIN_WEBHOOK_QUALITY_SCORE
+    )
 
 
 class DuneSpellbookAdapter:
@@ -208,7 +231,7 @@ class DuneApiAdapter:
                     chain=chain,
                     network_family="EVM",
                     label=label,
-                    category=category.title() if category else "Smart Money",
+                    category=_WEBHOOK_CATEGORY_MAP.get(category, category.title() or "Smart Money"),
                     tags=("dune",),
                     quality_score=75.0,
                 )
@@ -325,22 +348,23 @@ class DefiLlamaAdapter:
 
 # Hardcoded institutional baseline (Dune Spellbook-style). Addresses are the
 # well-known public addresses of these entities; treat as a starting seed, not
-# an exhaustive list.
+# an exhaustive list. Categories follow the ALLOWED_WEBHOOK_CATEGORIES taxonomy
+# so the webhook sync gate keeps only cold storage / treasury / whale EOAs.
 _BASELINE: list[CuratedSeed] = [
-    # Exchanges (hot wallets)
+    # Exchanges (hot wallets — high-frequency firehose, never webhook-tracked)
     CuratedSeed("0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE", "ETH", "EVM", "Binance Hot Wallet 1", "Exchange", ("cex", "binance"), 95.0),
     CuratedSeed("0x28C6c06298d514Db089934071355E5743bf21d60", "ETH", "EVM", "Binance Hot Wallet 2", "Exchange", ("cex", "binance"), 95.0),
     CuratedSeed("0x71660c4005BA85c37ccec55d0C4493E66Fe775d3", "ETH", "EVM", "Binance Hot Wallet 3", "Exchange", ("cex", "binance"), 95.0),
     CuratedSeed("0x28a8746e75304c078b65722e58b79226dc3934C8", "ETH", "EVM", "Coinbase 1", "Exchange", ("cex", "coinbase"), 95.0),
     CuratedSeed("0x716F8a6Cc8d853c7B2D4a5Bb9C9f0e6C3C9f3C0a", "ETH", "EVM", "Kraken", "Exchange", ("cex", "kraken"), 95.0),
-    CuratedSeed("0x267be1C1D684F78cb4F6a176C4911b741E4Ffdc0", "ETH", "EVM", "Bitfinex Cold", "Exchange", ("cex", "bitfinex"), 95.0),
-    # L2 bridges / canonical contracts
+    CuratedSeed("0x267be1C1D684F78cb4F6a176C4911b741E4Ffdc0", "ETH", "EVM", "Bitfinex Cold", "CEX Reserve", ("cex", "bitfinex"), 95.0),
+    # L2 bridges / canonical contracts (high-frequency, never webhook-tracked)
     CuratedSeed("0x8315177aB297bA92A06054cE80a67Ed4DBd7ed3a", "ARB", "EVM", "Binance Arb Bridge", "Bridge", ("bridge", "binance"), 90.0),
     CuratedSeed("0x23d924C8c14520B2dA45D5aA76A008A8C30B8d27", "BASE", "EVM", "Binance Base Bridge", "Bridge", ("bridge", "binance"), 90.0),
     # Public-good / infrastructure
-    CuratedSeed("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "ETH", "EVM", "vitalik.eth", "Public Figure", ("founder", "ethereum"), 92.0),
+    CuratedSeed("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "ETH", "EVM", "vitalik.eth", "Notable Whale", ("founder", "ethereum"), 92.0),
     # Solana (SVM) — established ecosystem wallets/contracts
-    CuratedSeed("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j", "SOL", "SVM", "Solana Foundation Treasury", "Foundation", ("solana", "foundation"), 90.0),
+    CuratedSeed("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j", "SOL", "SVM", "Solana Foundation Treasury", "DAO Treasury", ("solana", "foundation"), 90.0),
     CuratedSeed("9WzWXw8dr7v5kLRm6jF7ZR1LXt3fQ8wY3nTcq9N1kP2", "SOL", "SVM", "Jito Tip Account", "Infrastructure", ("solana", "jito"), 85.0),
     CuratedSeed("7LMfVrHbP8vWUbsCfdPbZ7PgRB3Y6hB5bTdB8s2zK1", "SOL", "SVM", "Raydium AMM", "DEX", ("solana", "raydium"), 85.0),
 ]

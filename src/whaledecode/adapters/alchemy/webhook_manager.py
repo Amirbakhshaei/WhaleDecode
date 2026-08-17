@@ -28,6 +28,59 @@ class AlchemyWebhookManager:
         webhook_ids = {chain: getattr(settings, f"ALCHEMY_WEBHOOK_ID_{chain}") for chain in _CHAINS}
         return cls(alchemy_auth_token=token, webhook_ids=webhook_ids)
 
+    async def list_addresses(self, webhook_id: str) -> list[str]:
+        """Return the lowercase addresses currently tracked in ``webhook_id``.
+
+        Follows Alchemy's paginated ``webhook-addresses`` endpoint; stops on the
+        first non-200 response (logging it) rather than raising.
+        """
+        url = f"{self.base_url}/webhook-addresses"
+        headers = {"X-Alchemy-Token": self.auth_token}
+        client = HttpClientManager.get_client("alchemy", timeout=30.0)
+        addresses: list[str] = []
+        next_page: str | None = url
+        while next_page:
+            response = await client.get(next_page, headers=headers, params={"webhook_id": webhook_id})
+            if not response.is_success:
+                logger.error(
+                    f"webhook {webhook_id}: list addresses failed: HTTP {response.status_code} {response.text}"
+                )
+                break
+            data = response.json()
+            addresses.extend(data.get("data", []))
+            next_page = (data.get("pagination") or {}).get("next")
+        return [a.lower().strip() for a in addresses if a]
+
+    async def remove_addresses(self, webhook_id: str, addresses: list[str]) -> bool:
+        """Remove ``addresses`` from ``webhook_id`` via PATCH ``addresses_to_remove``.
+
+        Batches in chunks of 500 (Alchemy's limit). Returns False on the first
+        failed batch so the caller can surface the partial failure.
+        """
+        if not addresses:
+            return True
+        endpoint = f"{self.base_url}/update-webhook-addresses"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Alchemy-Token": self.auth_token,
+        }
+        client = HttpClientManager.get_client("alchemy", timeout=30.0)
+        for start in range(0, len(addresses), 500):
+            chunk = addresses[start : start + 500]
+            payload = {
+                "webhook_id": webhook_id,
+                "addresses_to_add": [],
+                "addresses_to_remove": chunk,
+            }
+            response = await client.patch(endpoint, headers=headers, json=payload)
+            if not response.is_success:
+                logger.error(
+                    f"webhook {webhook_id}: remove failed: HTTP {response.status_code} {response.text}"
+                )
+                return False
+            logger.info(f"webhook {webhook_id}: removed {len(chunk)} addresses.")
+        return True
+
     async def sync_addresses(self, addresses: list[str]) -> None:
         """Add ``addresses`` to every configured chain webhook.
 

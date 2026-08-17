@@ -17,9 +17,12 @@ import logging
 import click
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-
 from whaledecode.adapters.alchemy.webhook_manager import AlchemyWebhookManager
-from whaledecode.adapters.curation import DefiLlamaAdapter, DuneSpellbookAdapter
+from whaledecode.adapters.curation import (
+    DefiLlamaAdapter,
+    DuneSpellbookAdapter,
+    is_webhook_eligible,
+)
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.config.logging import setup_logging
@@ -70,6 +73,7 @@ async def run_sync_pipeline() -> None:
     # Validate + dedupe by (address, chain).
     seen: set[tuple[str, str]] = set()
     valid: list[dict] = []
+    webhook_eligible_rows: list[dict] = []
     for seed in seeds:
         try:
             from whaledecode.adapters.curation import validate_seed
@@ -82,14 +86,19 @@ async def run_sync_pipeline() -> None:
         if key in seen:
             continue
         seen.add(key)
-        valid.append(_to_row(seed))
+        row = _to_row(seed)
+        valid.append(row)
+        # Only high-conviction, low-frequency seeds go to the Alchemy webhook;
+        # the rest stay in Postgres (for wallet lookups) but are never tracked.
+        if is_webhook_eligible(seed):
+            webhook_eligible_rows.append(row)
 
     if not valid:
         log.warning("sync_no_seeds", extra={"hint": "Dune baseline should always yield rows; check imports"})
         return
 
     evm_addresses = [
-        row["address"] for row in valid if row["network_family"] == "EVM"
+        row["address"] for row in webhook_eligible_rows if row["network_family"] == "EVM"
     ]
 
     async with session_factory() as session:

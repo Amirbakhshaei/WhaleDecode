@@ -186,6 +186,17 @@ def debug_pipeline(dry_run: bool, event_id: int | None):
 
 
 @cli.command()
+def prune_alchemy_webhooks():
+    """Remove blacklisted high-frequency addresses (tokens, routers, CEX sweepers) from Alchemy webhooks."""
+    settings = _load_settings()
+    setup_logging(settings)
+
+    from whaledecode.cli.prune_alchemy_webhooks import run_pruner
+
+    exit(asyncio.run(run_pruner()))
+
+
+@cli.command()
 def sync_curated():
     """Sync curated entities (Dune baseline + DefiLlama) into Postgres + Alchemy."""
     from whaledecode.cli.sync_curated_entities import run_sync_pipeline

@@ -158,7 +158,12 @@ async def alchemy_webhook(
     x_alchemy_signature: str = Header(None),
 ):
     raw_body = await request.body()
-    if not verify_alchemy_signature(raw_body, x_alchemy_signature, settings.webhook_signing_keys):
+    valid = verify_alchemy_signature(raw_body, x_alchemy_signature, settings.webhook_signing_keys)
+    logger.info(
+        "webhook_request",
+        extra={"signature_present": bool(x_alchemy_signature), "signature_valid": valid},
+    )
+    if not valid:
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = await request.json()
