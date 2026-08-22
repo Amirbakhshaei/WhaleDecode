@@ -16,6 +16,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.alchemy.webhook_manager import AlchemyWebhookManager
+from whaledecode.adapters.curation import is_safe_for_webhook_sync
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
@@ -31,12 +32,19 @@ def _session_factory(settings: Settings) -> async_sessionmaker[AsyncSession]:
     return create_session_factory(settings)
 
 
-async def _collect_evm_addresses(session: AsyncSession) -> list[str]:
-    """All unique 0x addresses currently tracked in curated_wallets."""
+async def _collect_evm_addresses(session: AsyncSession) -> list[dict]:
+    """All unique 0x addresses currently tracked in curated_wallets (with their category + score)."""
     result = await session.execute(
-        select(CuratedWalletModel.address).where(CuratedWalletModel.address.like("0x%")).distinct()
+        select(
+            CuratedWalletModel.address,
+            CuratedWalletModel.category,
+            CuratedWalletModel.quality_score,
+        ).where(CuratedWalletModel.address.like("0x%")).distinct()
     )
-    return sorted(address for (address,) in result.all())
+    return [
+        {"address": address, "category": category, "quality_score": quality_score}
+        for address, category, quality_score in result.all()
+    ]
 
 
 async def _ensure_all_chains(session: AsyncSession, addresses: list[str]) -> int:
@@ -65,30 +73,44 @@ async def _ensure_all_chains(session: AsyncSession, addresses: list[str]) -> int
     return result.rowcount or 0
 
 
-async def _migrate_wallets(settings: Settings) -> list[str]:
-    """Return the deduplicated EVM address list, ensured present on all three chains."""
+async def _migrate_wallets(settings: Settings) -> list[dict]:
+    """Return the EVM wallet rows, ensured present on all three chains."""
     factory = _session_factory(settings)
     async with factory() as session:
-        addresses = await _collect_evm_addresses(session)
-        if not addresses:
+        wallets = await _collect_evm_addresses(session)
+        if not wallets:
             logger.warning("No 0x curated wallets found; nothing to migrate.")
             return []
-        inserted = await _ensure_all_chains(session, addresses)
+        inserted = await _ensure_all_chains(session, [w["address"] for w in wallets])
         await session.commit()
-        logger.info(f"Found {len(addresses)} unique EVM addresses; inserted {inserted} missing (address, chain) rows.")
-    return addresses
+        logger.info(f"Found {len(wallets)} unique EVM addresses; inserted {inserted} missing (address, chain) rows.")
+    return wallets
+
+
+def _safe_webhook_addresses(wallets: list[dict]) -> list[str]:
+    """Filter wallets to the high-conviction, low-frequency subset safe for webhook sync."""
+    safe = [w["address"] for w in wallets if is_safe_for_webhook_sync(w)]
+    dropped = len(wallets) - len(safe)
+    if dropped:
+        logger.warning(
+            "sync_evm_wallets_safeguard_dropped",
+            extra={"dropped": dropped, "kept": len(safe)},
+        )
+    return safe
 
 
 async def _run() -> int:
     settings = Settings()
     setup_logging(settings)
 
-    addresses = await _migrate_wallets(settings)
-    if not addresses:
+    wallets = await _migrate_wallets(settings)
+    if not wallets:
         return 0
 
+    safe_addresses = _safe_webhook_addresses(wallets)
+
     manager = AlchemyWebhookManager.from_settings(settings)
-    await manager.sync_addresses(addresses)
+    await manager.sync_addresses(safe_addresses)
     return 0
 
 

@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.adapters.db.uow import UnitOfWork
@@ -25,7 +25,7 @@ from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
 from whaledecode.infrastructure.http import HttpClientManager
-from whaledecode.infrastructure.telemetry import init_sentry
+from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,9 @@ async def alchemy_webhook(
     background_tasks: BackgroundTasks,
     x_alchemy_signature: str = Header(None),
 ):
+    # Fast-Ack gate: acknowledge in <50ms and never 401. Returning 200 on an
+    # unauthenticated payload prevents Alchemy from retrying (and billing CU
+    # per retry byte); the request is simply dropped.
     raw_body = await request.body()
     valid = verify_alchemy_signature(raw_body, x_alchemy_signature, settings.webhook_signing_keys)
     logger.info(
@@ -164,15 +167,15 @@ async def alchemy_webhook(
         extra={"signature_present": bool(x_alchemy_signature), "signature_valid": valid},
     )
     if not valid:
-        raise HTTPException(status_code=401, detail="Invalid signature")
+        return {"status": "ignored", "reason": "invalid_signature"}
 
-    payload = await request.json()
-    background_tasks.add_task(
-        _process_webhook_payload,
-        payload,
-        settings,
-        session_factory,
-    )
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        logger.error("webhook_malformed_json", extra={"error": str(exc)})
+        return {"status": "ignored", "reason": "malformed_json"}
+
+    background_tasks.add_task(_process_webhook_payload, payload, settings, session_factory)
     return {"status": "accepted"}
 
 
@@ -181,57 +184,66 @@ async def _process_webhook_payload(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Process webhook payload in background - only ingest and persist as pending."""
-    if payload.get("type") != "ADDRESS_ACTIVITY":
-        return
-    event = payload.get("event") or {}
-    chain = _NETWORK_TO_CHAIN.get(event.get("network"))
-    if chain is None:
-        logger.warning("webhook_unknown_network", extra={"network": event.get("network")})
-        return
+    """Process webhook payload in background - only ingest and persist as pending.
 
-    # Early rejection: drop zero-value native transfers and empty contract calls
-    # before any DB session or candidate_event insert — this is the write-
-    # amplification guard that keeps dust/approve/zero-call spam off the queue.
-    raw_activities = event.get("activity") or []
-    activities = [a for a in raw_activities if a.get("hash") and not _is_ignorable_activity(a)]
-    if len(activities) != len(raw_activities):
-        logger.info("webhook_dropped_ignorable", extra={"dropped": len(raw_activities) - len(activities)})
+    Runs after the HTTP 200 is already sent, so it can never slow the ack. Any
+    failure is captured to Sentry and logged — never re-raised (a background task
+    exception would otherwise just be logged by Starlette, with no retry).
+    """
+    try:
+        if payload.get("type") != "ADDRESS_ACTIVITY":
+            return
+        event = payload.get("event") or {}
+        chain = _NETWORK_TO_CHAIN.get(event.get("network"))
+        if chain is None:
+            logger.warning("webhook_unknown_network", extra={"network": event.get("network")})
+            return
 
-    # Chain floor gate: drop sub-floor USD noise in memory before any DB session.
-    floored = [a for a in activities if not _below_chain_floor(a, chain)]
-    if len(floored) != len(activities):
-        logger.info(
-            "webhook_dropped_below_floor",
-            extra={"dropped": len(activities) - len(floored), "chain": chain.name},
-        )
-    activities = floored
-    if not activities:
-        return
+        # Early rejection: drop zero-value native transfers and empty contract calls
+        # before any DB session or candidate_event insert — this is the write-
+        # amplification guard that keeps dust/approve/zero-call spam off the queue.
+        raw_activities = event.get("activity") or []
+        activities = [a for a in raw_activities if a.get("hash") and not _is_ignorable_activity(a)]
+        if len(activities) != len(raw_activities):
+            logger.info("webhook_dropped_ignorable", extra={"dropped": len(raw_activities) - len(activities)})
 
-    async with UnitOfWork(session_factory) as uow:
-        wallets = await uow.curated_wallets.list_active(chain=chain.name)
-    wallet_map = {w.address.lower(): w for w in wallets if w.id is not None}
+        # Chain floor gate: drop sub-floor USD noise in memory before any DB session.
+        floored = [a for a in activities if not _below_chain_floor(a, chain)]
+        if len(floored) != len(activities):
+            logger.info(
+                "webhook_dropped_below_floor",
+                extra={"dropped": len(activities) - len(floored), "chain": chain.name},
+            )
+        activities = floored
+        if not activities:
+            return
 
-    for activity in activities:
-        wallet = None
-        for side in ("fromAddress", "toAddress"):
-            addr = activity.get(side)
-            if addr and addr.lower() in wallet_map:
-                wallet = wallet_map[addr.lower()]
-                break
-        if wallet is None:
-            continue
-
-        # Per-chain ingestion gate: price the move now and only persist as
-        # pending when it clears the chain's min_usd_threshold.
-        candidate_data = _build_candidate_data(activity, chain, wallet)
-        if not await _clears_chain_floor(candidate_data):
-            continue
         async with UnitOfWork(session_factory) as uow:
-            await uow.candidate_events.create_pending(candidate_data)
-            await uow.commit()
-        logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
+            wallets = await uow.curated_wallets.list_active(chain=chain.name)
+        wallet_map = {w.address.lower(): w for w in wallets if w.id is not None}
+
+        for activity in activities:
+            wallet = None
+            for side in ("fromAddress", "toAddress"):
+                addr = activity.get(side)
+                if addr and addr.lower() in wallet_map:
+                    wallet = wallet_map[addr.lower()]
+                    break
+            if wallet is None:
+                continue
+
+            # Per-chain ingestion gate: price the move now and only persist as
+            # pending when it clears the chain's min_usd_threshold.
+            candidate_data = _build_candidate_data(activity, chain, wallet)
+            if not await _clears_chain_floor(candidate_data):
+                continue
+            async with UnitOfWork(session_factory) as uow:
+                await uow.candidate_events.create_pending(candidate_data)
+                await uow.commit()
+            logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
+    except Exception as exc:  # noqa: BLE001 - background task must not crash silently
+        logger.exception("webhook_process_failed", extra={"error": str(exc)})
+        capture_exception(exc)
 
 
 async def _clears_chain_floor(candidate_data: dict[str, Any]) -> bool:

@@ -13,34 +13,15 @@ import asyncio
 import logging
 
 from whaledecode.adapters.alchemy.webhook_manager import AlchemyWebhookManager
+from whaledecode.adapters.curation.sources import DISALLOWED_WEBHOOK_ADDRESSES
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
 
-log = logging.getLogger(__name__)
+# Re-exported for the existing test / ad-hoc callers. The canonical set lives in
+# ``adapters.curation.sources`` so the pruner and the sync gate never diverge.
+BLACKLISTED_ADDRESSES = DISALLOWED_WEBHOOK_ADDRESSES
 
-# Hard blacklist: never monitor token contracts, DEX routers, or CEX hot
-# liquidity sweepers via webhooks — they generate firehose deliveries that burn
-# CUs (0.04 CU/byte) without producing actionable whale moves.
-BLACKLISTED_ADDRESSES: set[str] = {
-    # Common ERC-20 Token Contracts (global transfer firehoses)
-    "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT (Ethereum)
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC (Ethereum)
-    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH (Ethereum)
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831",  # USDC (Arbitrum)
-    "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",  # USDT (Arbitrum)
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",  # USDC (Base)
-    "0x4200000000000000000000000000000000000006",  # WETH (Base)
-    # High-Frequency DEX Aggregator & Router Contracts
-    "0x1111111254eeb25477b68fb85ed929f73a960582",  # 1inch v5 Router
-    "0x111111125421ca6dc452d289314280a0f8842a65",  # 1inch v6 Router
-    "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad",  # Uniswap Universal Router
-    "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45",  # Uniswap SwapRouter02
-    "0xe592427a0aece92de3edee1f18e0157c05861564",  # Uniswap v3 SwapRouter
-    "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",  # SushiSwap Router
-    # High-Frequency CEX Sweepers (100k+ txs/day)
-    "0x28c6c06298d514db089934071355e5743bf21d60",  # Binance Hot Wallet 14
-    "0x21a31ee1afc51d94c2efccaa2092ad1028285549",  # Binance Hot Wallet 15
-}
+log = logging.getLogger(__name__)
 
 
 async def run_pruner() -> int:

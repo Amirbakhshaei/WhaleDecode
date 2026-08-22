@@ -201,9 +201,36 @@ def test_fastapi_app_has_routes():
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-    # Webhook endpoint exists (returns 401 without signature, not 404)
+    # Webhook endpoint exists and fast-acks (HTTP 200) even without a signature:
+    # returning 200 (not 401) stops Alchemy from retrying and billing CU per byte.
     response = client.post("/webhook/alchemy", json={})
-    assert response.status_code == 401  # signature verification fails
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+
+def test_webhook_malformed_json_returns_200():
+    """Malformed payloads must ack 200 (never 500) to avoid Alchemy retry storms."""
+    client = TestClient(app)
+    response = client.post(
+        "/webhook/alchemy",
+        content=b"{not valid json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+
+def test_webhook_valid_signature_fast_acks_200(monkeypatch):
+    """A valid signature queues the background task and returns 200 immediately (no DB work on path)."""
+    from whaledecode.entrypoints import webhook
+
+    # webhook_signing_keys is a read-only property; patch the verifier instead.
+    monkeypatch.setattr(webhook, "verify_alchemy_signature", lambda body, sig, keys: True)
+    body = b'{"type":"ADDRESS_ACTIVITY","event":{"network":"ETH_MAINNET","activity":[]}}'
+    client = TestClient(webhook.app)
+    response = client.post("/webhook/alchemy", content=body, headers={"X-Alchemy-Signature": "x"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
 
 
 def test_ignorable_activity_zero_value_external():

@@ -2,7 +2,6 @@ import asyncio
 from pathlib import Path
 
 import click
-
 from whaledecode import __version__
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
@@ -32,10 +31,31 @@ def _load_settings() -> Settings:
     return settings
 
 
+def _check_rpc_isolation(settings: Settings) -> None:
+    """Warn loudly if any on-chain RPC URL points at Alchemy.
+
+    RPC telemetry (eth_getBalance, Multicall3, …) bills CUs on Alchemy; it must
+    route to a dedicated RPC provider (e.g. dRPC) so the CU budget is reserved
+    for webhook delivery only.
+    """
+    rpc_urls = [
+        ("ETH_RPC_URL", settings.ETH_RPC_URL),
+        ("ARB_RPC_URL", settings.ARB_RPC_URL),
+        ("BASE_RPC_URL", settings.BASE_RPC_URL),
+    ]
+    for name, url in rpc_urls:
+        if url and "alchemy.com" in str(url).lower():
+            raise click.ClickException(
+                f"CRITICAL CONFIG ERROR: {name} points at Alchemy ({url!r}).\n"
+                "RPC telemetry must route to a dedicated provider (e.g. dRPC) to prevent CU exhaustion."
+            )
+
+
 @cli.command()
 def serve():
     """Run FastAPI app (Telegram bot + webhook server) via Uvicorn."""
     settings = _load_settings()
+    _check_rpc_isolation(settings)
     setup_logging(settings)
 
     if not settings.BOT_TOKEN.get_secret_value():
@@ -54,6 +74,7 @@ def serve():
 def worker():
     """Start background worker (arq + APScheduler)."""
     settings = _load_settings()
+    _check_rpc_isolation(settings)
     setup_logging(settings)
 
     import structlog
@@ -89,9 +110,8 @@ def migrate():
     settings = _load_settings()
     setup_logging(settings)
 
-    from alembic.config import Config
-
     from alembic import command
+    from alembic.config import Config
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))

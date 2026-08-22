@@ -4,7 +4,6 @@ import json
 import httpx
 import pytest
 from sqlalchemy import select
-
 from whaledecode.adapters.alchemy.webhook_manager import AlchemyWebhookManager
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.cli.sync_evm_wallets import _CHAINS, _collect_evm_addresses, _ensure_all_chains
@@ -21,7 +20,8 @@ async def test_collect_evm_addresses_filters_non_hex(db_session):
     db_session.add(CuratedWalletModel(address="not-an-evm", chain="ETH", is_active=True))
     await db_session.commit()
 
-    assert await _collect_evm_addresses(db_session) == sorted([A, B])
+    collected = await _collect_evm_addresses(db_session)
+    assert sorted(w["address"] for w in collected) == sorted([A, B])
 
 
 @pytest.mark.asyncio
@@ -30,7 +30,8 @@ async def test_ensure_all_chains_inserts_missing_and_is_idempotent(db_session):
     db_session.add(CuratedWalletModel(address=B, chain="BASE", is_active=True))
     await db_session.commit()
 
-    addresses = await _collect_evm_addresses(db_session)
+    wallets = await _collect_evm_addresses(db_session)
+    addresses = [w["address"] for w in wallets]
     inserted = await _ensure_all_chains(db_session, addresses)
     await db_session.commit()
 
@@ -41,6 +42,18 @@ async def test_ensure_all_chains_inserts_missing_and_is_idempotent(db_session):
 
     again = await _ensure_all_chains(db_session, addresses)
     assert again == 0
+
+
+@pytest.mark.asyncio
+async def test_run_filters_unsafe_addresses_from_webhook_sync():
+    from whaledecode.cli.sync_evm_wallets import _safe_webhook_addresses
+
+    wallets = [
+        {"address": A, "category": "Notable Whale", "quality_score": 90.0},
+        {"address": B, "category": "Exchange", "quality_score": 95.0},  # hot wallet -> dropped
+        {"address": "0xdac17f958d2ee523a2206206994597c13d831ec7", "category": "Notable Whale", "quality_score": 99.0},  # USDT blacklist -> dropped
+    ]
+    assert _safe_webhook_addresses(wallets) == [A]
 
 
 @pytest.mark.asyncio

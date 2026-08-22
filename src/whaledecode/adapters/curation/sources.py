@@ -22,6 +22,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -71,16 +72,70 @@ def validate_seed(seed: CuratedSeed) -> CuratedSeed:
 # Only high-conviction, low-frequency categories are webhook-worthy. DEX
 # routers, token contracts, and CEX hot sweepers are excluded so the Alchemy
 # webhook never becomes a global transfer firehose.
-ALLOWED_WEBHOOK_CATEGORIES = {"CEX Reserve", "Venture Fund", "Notable Whale", "DAO Treasury"}
+ALLOWED_WEBHOOK_CATEGORIES = {
+    "CEX Reserve",
+    "Cold Storage",
+    "Venture Fund",
+    "Notable Whale",
+    "DAO Treasury",
+}
 MIN_WEBHOOK_QUALITY_SCORE = 85.0
+
+# Toxic contract addresses that must never be tracked via webhook: token
+# contracts (global transfer firehoses), DEX routers/aggregators, and
+# high-velocity CEX hot sweepers (>100k txs/day). This is the belt-and-suspenders
+# companion to the category gate — a blacklisted address is rejected even if it
+# ever carries a high-conviction category label.
+DISALLOWED_WEBHOOK_ADDRESSES: set[str] = {
+    # Token Contracts (ERC-20 transfers across all users)
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT (ETH)
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC (ETH)
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH (ETH)
+    "0xaf88d065e77c8cc2239327c5edb3a432268e5831",  # USDC (ARB)
+    "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",  # USDT (ARB)
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",  # USDC (BASE)
+    "0x4200000000000000000000000000000000000006",  # WETH (BASE)
+    # DEX Routers & Aggregators
+    "0x1111111254eeb25477b68fb85ed929f73a960582",  # 1inch v5
+    "0x111111125421ca6dc452d289314280a0f8842a65",  # 1inch v6
+    "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad",  # Uniswap Universal Router
+    "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45",  # Uniswap SwapRouter02
+    "0xe592427a0aece92de3edee1f18e0157c05861564",  # Uniswap v3 SwapRouter
+    "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",  # SushiSwap Router
+    # High-Velocity Exchange Hot Routers (>100k txs/day)
+    "0x28c6c06298d514db089934071355e5743bf21d60",  # Binance Hot 14
+    "0x21a31ee1afc51d94c2efccaa2092ad1028285549",  # Binance Hot 15
+}
 
 
 def is_webhook_eligible(seed: CuratedSeed) -> bool:
-    """True when a seed is worth tracking via Alchemy webhook (category + quality gate)."""
-    return (
-        seed.category in ALLOWED_WEBHOOK_CATEGORIES
-        and seed.quality_score >= MIN_WEBHOOK_QUALITY_SCORE
+    """True when a seed is worth tracking via Alchemy webhook (address + category + quality gate)."""
+    return is_safe_for_webhook_sync(
+        {
+            "address": seed.address,
+            "category": seed.category,
+            "quality_score": seed.quality_score,
+        }
     )
+
+
+def is_safe_for_webhook_sync(wallet: dict[str, Any]) -> bool:
+    """True when ``wallet`` is a safe, low-frequency, high-conviction webhook target.
+
+    Rejects blacklisted contracts, high-frequency/unspecified categories, and
+    low-conviction entries. Single source of truth shared by the sync CLIs and
+    the pruner blacklist.
+    """
+    addr = wallet.get("address", "").lower().strip()
+    category = wallet.get("category", "")
+    score = float(wallet.get("quality_score") or 0.0)
+    if addr in DISALLOWED_WEBHOOK_ADDRESSES:
+        return False
+    if category not in ALLOWED_WEBHOOK_CATEGORIES:
+        return False
+    if score < MIN_WEBHOOK_QUALITY_SCORE:
+        return False
+    return True
 
 
 class DuneSpellbookAdapter:
