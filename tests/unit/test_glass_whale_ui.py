@@ -35,13 +35,17 @@ def test_escape_roundtrip_premium_briefing() -> None:
 
 
 def test_cta_keyboard_deep_links() -> None:
-    from whaledecode.adapters.telegram.keyboards import build_keyboard
+    from whaledecode.adapters.telegram.keyboards import get_channel_alert_keyboard
 
-    kb = build_keyboard("0xabc123")
+    kb = get_channel_alert_keyboard("ethereum", "0xabc123", "0xdead")
     rows = kb.inline_keyboard
-    assert rows[0][0].url == "https://t.me/whaledecodebot?start=analyze_0xabc123"
-    assert rows[1][0].url == "https://etherscan.io/tx/0xabc123"
+    assert rows[0][0].url == "https://t.me/whaledecodebot?start=deepdive_ETH_0xabc123"
+    assert rows[0][1].url == "https://t.me/whaledecodebot?start=ask_ETH_0xabc123"
+    assert rows[1][0].url == "https://t.me/whaledecodebot?start=track_ETH_0xdead"
+    assert rows[1][1].url == "https://etherscan.io/tx/0xabc123"
 
-    kb_custom = build_keyboard("0xabc123", "MyBot")
-    rows_custom = kb_custom.inline_keyboard
-    assert rows_custom[0][0].url == "https://t.me/MyBot?start=analyze_0xabc123"
+    kb_arb = get_channel_alert_keyboard("arbitrum", "0xabc123", "0xdead")
+    assert kb_arb.inline_keyboard[1][1].url == "https://arbiscan.io/tx/0xabc123"
+
+    kb_custom = get_channel_alert_keyboard("base", "0xabc123", "0xdead", )
+    assert kb_custom.inline_keyboard[0][0].url == "https://t.me/whaledecodebot?start=deepdive_BASE_0xabc123"

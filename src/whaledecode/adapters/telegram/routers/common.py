@@ -20,14 +20,18 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
 
     payload = (command.args or "").strip()
     if payload:
-        # Intra-platform deep links: ?start=analyze_<tx> / ?start=track_<wallet>.
-        # analyze_ → on-chain event deep dive (existing chat path); track_ →
-        # a plain chat prompt about that entity until a one-tap track hook exists.
-        action, _, arg = payload.partition("_")
+        # Channel deep links: ?start=deepdive_<chain>_<tx> / ask_<chain>_<tx> /
+        # track_<chain>_<addr>; intra-platform legacy: analyze_<tx> / track_<wallet>.
+        # deepdive_/ask_ → on-chain event deep dive; track_ → a chat prompt about
+        # that entity (one-tap address tracking is not wired into WalletService yet).
+        parts = payload.split("_")
+        action = parts[0]
+        chain = parts[1] if len(parts) > 2 else "ETH"
+        target = parts[-1]
         if action == "track":
-            prompt = f"Analyze and describe this wallet: {arg}"
-        elif action == "analyze":
-            prompt = f"Deep dive into this on-chain event: {arg}"
+            prompt = f"Analyze and describe this wallet: {target}"
+        elif action in ("analyze", "deepdive", "ask"):
+            prompt = f"Deep dive into this on-chain event ({chain}): {target}"
         else:
             prompt = f"Deep dive into this on-chain event: {payload}"
         if investigation_service is None:

@@ -224,7 +224,7 @@ class BackgroundAIWorker:
             build_alert_data,
             format_alert,
         )
-        from whaledecode.adapters.telegram.keyboards import build_keyboard
+        from whaledecode.adapters.telegram.keyboards import get_channel_alert_keyboard
         from whaledecode.application.services.campaign_service import CampaignService
 
         # Resolve + publish inside one transaction: if Telegram is unreachable the
@@ -247,7 +247,12 @@ class BackgroundAIWorker:
                     chat_id=self._channel_id,
                     text=msg,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=build_keyboard(str(event.tx_hash), self._settings.BOT_USERNAME),
+                    reply_markup=get_channel_alert_keyboard(
+                        str(event.chain),
+                        str(event.tx_hash),
+                        str((event.raw_json or {}).get("from", "")) if isinstance(event.raw_json, dict) else "",
+                        self._settings.BOT_USERNAME,
+                    ),
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
                 msg_id = getattr(sent, "message_id", sent)
