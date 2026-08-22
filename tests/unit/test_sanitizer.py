@@ -1,6 +1,7 @@
 from whaledecode.adapters.llm_graph.formatting.sanitizer import (
     KEYS_TO_IGNORE,
     sanitize_event_payload,
+    strip_prompt_artifacts,
 )
 
 
@@ -42,3 +43,23 @@ def test_keeps_short_lists_intact() -> None:
 def test_ignores_keys_are_a_set() -> None:
     assert isinstance(KEYS_TO_IGNORE, set)
     assert "blockHash" in KEYS_TO_IGNORE
+
+
+def test_strip_prompt_artifacts_removes_formula_templates() -> None:
+    text = "[Vector: CEX Outflow] + [Entity Route] + [Supply Impact]."
+    assert strip_prompt_artifacts(text) == "CEX Outflow Entity Route Supply Impact."
+
+
+def test_strip_prompt_artifacts_removes_placeholder_labels_and_na() -> None:
+    text = "[Directional Bias: Bullish Accumulation] + N/A — no volume data."
+    cleaned = strip_prompt_artifacts(text)
+    assert "[" not in cleaned
+    assert "]" not in cleaned
+    assert "+" not in cleaned
+    assert "N/A" not in cleaned
+    assert "Directional Bias" not in cleaned
+    assert "Bullish Accumulation" in cleaned
+
+
+def test_strip_prompt_artifacts_collapses_whitespace() -> None:
+    assert strip_prompt_artifacts("  a   b  ") == "a b"

@@ -5,6 +5,7 @@ import re
 from html import escape
 from typing import Any
 
+from whaledecode.adapters.llm_graph.formatting.sanitizer import strip_prompt_artifacts
 from whaledecode.adapters.llm_graph.utils import extract_clean_json
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ def format_channel_post_markdown(
     """
     chain = chain or str(event_data.get("chain", "Unknown"))
     risk = float(analysis.get("risk_score", 0.0))
-    summary = escape_markdown_v2(_strip_hex(_strip_md(str(analysis.get("summary", "")))))
+    summary = str(analysis.get("summary", ""))
     event_type = str(event_data.get("event_type", "EVENT")).upper()
     amount, token = _asset(event_data)
     value = _value_usd(event_data, analysis)
@@ -224,7 +225,7 @@ def format_channel_post_markdown(
     if summary:
         lines.append("🧠 *SMC Intelligence*")
         for bullet in [s.strip() for s in summary.splitlines() if s.strip()]:
-            lines.append(f"  • {bullet}")
+            lines.append(f"  • {escape_markdown_v2(_strip_hex(_strip_md(strip_prompt_artifacts(bullet))))}")
         lines.append("")
 
     trace_parts = []
@@ -257,8 +258,8 @@ def format_premium_event_post(event_data: dict[str, Any], analysis: dict[str, An
     chain = str(event_data.get('chain', 'Unknown')).capitalize()
     value_usd = float(raw.get('value_usd', 0) or event_data.get('value_usd', 0))
 
-    summary = escape(_strip_hex(_strip_md(str(analysis.get('summary', 'No summary provided.')))))
-    thesis = escape(_strip_hex(_strip_md(str(analysis.get('thesis', 'No thesis formulated.')))))
+    summary = escape(_strip_hex(_strip_md(strip_prompt_artifacts(str(analysis.get('summary', 'No summary provided.'))))))
+    thesis = escape(_strip_hex(_strip_md(strip_prompt_artifacts(str(analysis.get('thesis', 'No thesis formulated.'))))))
 
     return f"""✦ <b>WHALEDECODE</b> PRO
 <i>On-Chain Event Analysis</i>
