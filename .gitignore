@@ -30,3 +30,9 @@ Thumbs.db
 pgdata/
 redisdata/
 backups/
+
+# Cloudflare & Node dependencies
+**/node_modules/
+**/.wrangler/
+**/.mf/
+**/dist/
