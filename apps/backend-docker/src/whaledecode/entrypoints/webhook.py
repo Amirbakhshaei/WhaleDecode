@@ -282,6 +282,11 @@ async def _process_webhook_payload(
             if wallet is None:
                 continue
 
+            logger.info(
+                f"[ATTRIBUTION] Match found! Wallet={wallet.address[:10]}... | "
+                f"Label='{wallet.label}' | Category='{wallet.category}' | Score={wallet.quality_score}"
+            )
+
             # Per-chain ingestion gate: price the move now and only persist as
             # pending when it clears the chain's min_usd_threshold AND the global
             # value-noise floor (MIN_ALERT_USD_THRESHOLD).
@@ -294,6 +299,10 @@ async def _process_webhook_payload(
                 continue
             async with UnitOfWork(session_factory) as uow:
                 await uow.candidate_events.create_pending(candidate_data)
+                logger.info(
+                    f"[EVENT_ENQUEUED] Event persisted to candidate_events for "
+                    f"tx={candidate_data['tx_hash'][:10]}... (dedupe_key={candidate_data['dedupe_key']})"
+                )
                 # Velocity telemetry: bump 30d tx count + decay penalty for both
                 # sides (passive attribution needs no CU spend). Best-effort —
                 # a telemetry failure must never block ingestion.
@@ -307,7 +316,7 @@ async def _process_webhook_payload(
                 await uow.commit()
             logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
     except Exception as exc:  # noqa: BLE001 - background task must not crash silently
-        logger.exception("webhook_process_failed", extra={"error": str(exc)})
+        logger.error(f"[PIPELINE_ERROR] Stage 'webhook_ingest' failed: {exc}", exc_info=True)
         capture_exception(exc)
 
 
@@ -331,8 +340,8 @@ async def _clears_chain_floor(candidate_data: dict[str, Any], min_usd_threshold:
         floor = max(floor, min_usd_threshold)
     if value_usd < floor:
         logger.info(
-            "webhook_dropped_below_chain_floor",
-            extra={"chain": candidate.chain, "value_usd": value_usd, "floor": floor},
+            f"[FILTER_SKIP] Tx {str(candidate.tx_hash)[:10]}... | "
+            f"Value ${value_usd:,.2f} < ${floor:,.2f} threshold"
         )
         return False
     return True

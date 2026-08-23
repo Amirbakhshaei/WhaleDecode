@@ -95,4 +95,6 @@ class TransactionDecoderService:
     ) -> None:
         from whaledecode.entrypoints.webhook import _process_webhook_payload
 
+        activities = (payload.get("event") or {}).get("activity") or []
+        logger.info(f"[INGEST] Webhook payload received with {len(activities)} raw activities")
         await _process_webhook_payload(payload, settings, session_factory)

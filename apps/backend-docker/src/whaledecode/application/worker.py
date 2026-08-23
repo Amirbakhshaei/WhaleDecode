@@ -69,7 +69,7 @@ class BackgroundAIWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.error("worker_loop_error", extra={"error": str(e)}, exc_info=True)
+                log.error(f"[PIPELINE_ERROR] Stage 'worker_loop' failed: {e}", exc_info=True)
                 capture_exception(e)
             try:
                 await asyncio.sleep(self._settings.POLL_INTERVAL_SECONDS)
@@ -162,7 +162,7 @@ class BackgroundAIWorker:
                 await uow.candidate_events.set_status(event.id, "pending")
                 await uow.commit()
         except Exception as e:
-            log.error("worker_event_failed", extra={"dedupe_key": event.dedupe_key, "error": str(e)}, exc_info=True)
+            log.error(f"[PIPELINE_ERROR] Stage 'process_pending' failed for tx {event.tx_hash}: {e}", exc_info=True)
             capture_exception(e)
             async with UnitOfWork(self._session_factory) as uow:
                 next_status = await uow.candidate_events.record_failure(event.id, max_attempts=MAX_ATTEMPTS)
@@ -261,6 +261,7 @@ class BackgroundAIWorker:
                 await uow.candidate_events.update(event)
                 await uow.commit()
                 log.info("worker_dispatched_campaign_created", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+                log.info(f"[TELEGRAM_DISPATCH] Successfully broadcasted Event ID={event.id} to Telegram channel={self._channel_id}")
                 return True
 
             if action == "MUTATED":
@@ -277,6 +278,7 @@ class BackgroundAIWorker:
                 await uow.candidate_events.update(event)
                 await uow.commit()
                 log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+                log.info(f"[TELEGRAM_DISPATCH] Successfully broadcasted Event ID={event.id} to Telegram channel={self._channel_id}")
                 return True
 
             # THREADED
@@ -293,4 +295,5 @@ class BackgroundAIWorker:
             await uow.candidate_events.update(event)
             await uow.commit()
             log.info("worker_dispatched_campaign_threaded", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+            log.info(f"[TELEGRAM_DISPATCH] Successfully broadcasted Event ID={event.id} to Telegram channel={self._channel_id}")
             return True

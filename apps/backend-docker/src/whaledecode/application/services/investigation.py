@@ -2,10 +2,10 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+import structlog
 from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.chain.normalizer import transfer_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm_graph.formatting.sanitizer import sanitize_event_payload
@@ -15,6 +15,8 @@ from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.ports.reasoner import ReasonerPort
 from whaledecode.domain.services.event_gate import EventGate, process_and_gate_candidate
+
+log = structlog.get_logger()
 
 
 def _unpad_address(address: str) -> str:
@@ -95,6 +97,7 @@ class InvestigationService:
     ) -> None:
         self._uow_factory = uow_factory
         self._reasoner = reasoner
+        self._settings = settings
         self._relay = RelayFormatter(settings)
         self._price_oracle = price_oracle
         self._gate = EventGate(
@@ -142,8 +145,14 @@ class InvestigationService:
         await self._enrich_market_context(event_dict)
 
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
+        model_name = self._settings.MODEL_HEAVY_REASONING if self._settings else "heavy_reasoning"
+        log.info(f"[LLM_SYNTHESIS] Generating analysis for Event ID={event.id} via model={model_name}...")
         async with self._rate_limiter:
             result = await self._reasoner.investigate_event(event_dict)
+        log.info(
+            f"[LLM_SYNTHESIS] Completed analysis for Event ID={event.id} "
+            f"in {result.get('latency_ms', 0)}ms"
+        )
 
         async with self._uow_factory() as uow:
             persisted = await self._persist_event(uow, event)
