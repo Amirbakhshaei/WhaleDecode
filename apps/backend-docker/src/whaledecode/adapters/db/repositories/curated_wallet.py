@@ -1,5 +1,5 @@
 from cachetools import TTLCache
-from sqlalchemy import func, or_, select
+from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
@@ -79,6 +79,9 @@ class CuratedWalletRepository:
             tags=",".join(wallet.tags),
             quality_score=wallet.quality_score,
             is_active=wallet.is_active,
+            is_monitored_active=wallet.is_monitored_active,
+            tx_count_30d=wallet.tx_count_30d,
+            velocity_penalty=wallet.velocity_penalty,
         )
         self._session.add(model)
         await self._session.flush()
@@ -101,6 +104,7 @@ class CuratedWalletRepository:
         model.label = wallet.label
         model.tags = ",".join(wallet.tags)
         model.quality_score = wallet.quality_score
+        model.is_monitored_active = wallet.is_monitored_active
         _ACTIVE_WALLET_CACHE.clear()
 
     async def get_by_address_and_chain(self, address: str, chain: str) -> CuratedWallet | None:
@@ -113,6 +117,26 @@ class CuratedWalletRepository:
         row = result.scalar_one_or_none()
         return self._to_domain(row) if row else None
 
+    async def set_monitored_flags(self, monitored_addresses: set[str]) -> None:
+        """Atomically reconcile ``is_monitored_active`` with the active 300 set.
+
+        Every address not in ``monitored_addresses`` is flipped to FALSE in the
+        same transaction, so the column always reflects exactly the wallets
+        currently registered on the Alchemy webhook.
+        """
+        normalized = {a.lower() for a in monitored_addresses}
+        await self._session.execute(
+            CuratedWalletModel.__table__.update()
+            .values(is_monitored_active=False)
+        )
+        if normalized:
+            stmt = text(
+                "UPDATE curated_wallets SET is_monitored_active = TRUE "
+                "WHERE lower(address) IN :addrs"
+            ).bindparams(bindparam("addrs", expanding=True))
+            await self._session.execute(stmt, {"addrs": list(normalized)})
+        _ACTIVE_WALLET_CACHE.clear()
+
     def _to_domain(self, model: CuratedWalletModel) -> CuratedWallet:
         return CuratedWallet(
             id=model.id,
@@ -122,4 +146,8 @@ class CuratedWalletRepository:
             tags=[t for t in model.tags.split(",") if t],
             quality_score=model.quality_score,
             is_active=model.is_active,
+            is_monitored_active=model.is_monitored_active,
+            tx_count_30d=model.tx_count_30d,
+            last_activity_at=str(model.last_activity_at) if model.last_activity_at else None,
+            velocity_penalty=model.velocity_penalty,
         )

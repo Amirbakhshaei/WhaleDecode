@@ -11,3 +11,7 @@ class CuratedWallet(BaseModel):
     tags: list[str] = []
     quality_score: float = 0.5
     is_active: bool = True
+    is_monitored_active: bool = False
+    tx_count_30d: int = 0
+    last_activity_at: str | None = None
+    velocity_penalty: float = 1.0

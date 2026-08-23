@@ -27,17 +27,17 @@ logger = logging.getLogger(__name__)
 
 # Resolve data/ next to this script regardless of cwd.
 _OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "alchemy_webhook_wallets.json"
-_MAX_WALLETS = 350
+_MAX_WALLETS = 300
 
 _QUERY = text(
     """
     SELECT lower(address) AS address, chain, label, category, quality_score
     FROM curated_wallets
     WHERE is_active = TRUE
-      AND category IN ('Smart Money', 'Notable Whale')
+      AND category IN ('Smart Money', 'Notable Whale', 'VC Fund', 'Kol Trader')
       AND category NOT IN ('Bridge', 'Exchange', 'CEX Reserve', 'DEX', 'Infrastructure', 'Dao')
       AND quality_score >= 80.0
-    ORDER BY quality_score DESC
+    ORDER BY (quality_score * velocity_penalty) DESC
     LIMIT :limit;
     """
 )

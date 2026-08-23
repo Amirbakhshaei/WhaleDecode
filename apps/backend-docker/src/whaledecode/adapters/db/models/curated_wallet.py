@@ -24,6 +24,11 @@ class CuratedWalletModel(Base):
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated
     quality_score: Mapped[float] = mapped_column(Float, default=80.0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Active-rotation lifecycle fields (migration 0010).
+    is_monitored_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    tx_count_30d: Mapped[int] = mapped_column(Integer, default=0)
+    last_activity_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    velocity_penalty: Mapped[float] = mapped_column(Float, default=1.0)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -27,6 +27,7 @@ from whaledecode.entrypoints.bot import build_telegram_app
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
 from whaledecode.infrastructure.http import HttpClientManager
 from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
+from whaledecode.services.decoder import apply_velocity_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +122,25 @@ async def lifespan(app: FastAPI):
     # token, …) the web server still binds and serves webhooks.
     try:
         await asyncio.wait_for(_start_bot_and_supervisor(), timeout=15)
-    except Exception as e:  # noqa: BLE001 - never let startup kill the web server
+    except Exception as e:  # noqa: E501 - never let startup kill the web server
         logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
 
+    # Daily active-rotation engine: reconcile the ≤300 monitored wallets with
+    # Alchemy on startup, then every 24h. Skipped when credentials are absent so
+    # local/dev runs don't error out.
+    rotator_task = None
+    if settings.ALCHEMY_API_KEY or settings.ALCHEMY_NOTIFY_TOKEN or settings.ALCHEMY_AUTH_TOKEN:
+        if settings.ALCHEMY_WEBHOOK_ID or settings.ALCHEMY_WEBHOOK_ID_ETH:
+            rotator_task = asyncio.create_task(_periodic_webhook_rotator(session_factory, settings))
+
     yield
+
+    if rotator_task is not None:
+        rotator_task.cancel()
+        try:
+            await rotator_task
+        except asyncio.CancelledError:
+            pass
 
     stop_event = getattr(app.state, "stop_event", None)
     if stop_event is not None:
@@ -146,6 +162,26 @@ async def lifespan(app: FastAPI):
     bot = getattr(app.state, "bot", None)
     if bot is not None:
         await bot.session.close()
+
+
+async def _periodic_webhook_rotator(
+    session_factory: async_sessionmaker[AsyncSession], settings: Settings
+) -> None:
+    """Run the rotation cycle once on startup, then every 24h.
+
+    Isolated in its own task; failures are logged and retried next cycle so a
+    transient Alchemy/Postgres error never kills the web server.
+    """
+    from whaledecode.services.webhook_rotator import WebhookRotationService
+
+    svc = WebhookRotationService(settings, session_factory)
+    while True:
+        try:
+            summary = await svc.sync_rotation_cycle()
+            logger.info("webhook_rotation_scheduled", extra=summary)
+        except Exception as e:  # noqa: BLE001 - never crash the rotator loop
+            logger.error(f"Scheduled webhook rotation error: {e}", exc_info=True)
+        await asyncio.sleep(86400)  # 24 hours
     await HttpClientManager.aclose()
 
 
@@ -257,6 +293,16 @@ async def _process_webhook_payload(
                 continue
             async with UnitOfWork(session_factory) as uow:
                 await uow.candidate_events.create_pending(candidate_data)
+                # Velocity telemetry: bump 30d tx count + decay penalty for both
+                # sides (passive attribution needs no CU spend). Best-effort —
+                # a telemetry failure must never block ingestion.
+                try:
+                    await apply_velocity_telemetry(
+                        uow.session,
+                        [activity.get("fromAddress"), activity.get("toAddress")],
+                    )
+                except Exception as exc:  # noqa: BLE001 - telemetry is non-critical
+                    logger.warning("webhook_telemetry_failed", extra={"error": str(exc)})
                 await uow.commit()
             logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
     except Exception as exc:  # noqa: BLE001 - background task must not crash silently
