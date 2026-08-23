@@ -1,7 +1,6 @@
 from cachetools import TTLCache
 from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
@@ -82,6 +81,7 @@ class CuratedWalletRepository:
             is_monitored_active=wallet.is_monitored_active,
             tx_count_30d=wallet.tx_count_30d,
             velocity_penalty=wallet.velocity_penalty,
+            category=wallet.category,
         )
         self._session.add(model)
         await self._session.flush()
@@ -104,6 +104,7 @@ class CuratedWalletRepository:
         model.label = wallet.label
         model.tags = ",".join(wallet.tags)
         model.quality_score = wallet.quality_score
+        model.category = wallet.category
         model.is_monitored_active = wallet.is_monitored_active
         _ACTIVE_WALLET_CACHE.clear()
 
@@ -145,6 +146,7 @@ class CuratedWalletRepository:
             label=model.label,
             tags=[t for t in model.tags.split(",") if t],
             quality_score=model.quality_score,
+            category=model.category,
             is_active=model.is_active,
             is_monitored_active=model.is_monitored_active,
             tx_count_30d=model.tx_count_30d,

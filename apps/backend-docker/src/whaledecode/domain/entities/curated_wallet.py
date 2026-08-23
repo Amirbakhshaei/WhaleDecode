@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-
 from whaledecode.domain.value_objects.chain import Chain
 
 
@@ -8,6 +7,7 @@ class CuratedWallet(BaseModel):
     address: str
     chain: Chain
     label: str = ""
+    category: str = "Unknown"
     tags: list[str] = []
     quality_score: float = 0.5
     is_active: bool = True

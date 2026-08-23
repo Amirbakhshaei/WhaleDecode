@@ -22,7 +22,7 @@ from whaledecode.domain.services.event_gate import (
 )
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
-from whaledecode.entrypoints.bot import build_telegram_app
+from whaledecode.entrypoints.bot import build_telegram_app, run_polling_with_retry
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
 from whaledecode.infrastructure.http import HttpClientManager
 from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
@@ -110,9 +110,8 @@ async def lifespan(app: FastAPI):
         app.state.dp = dp
         stop_event = asyncio.Event()
         app.state.stop_event = stop_event
-        await bot.delete_webhook(drop_pending_updates=True)
         await dp.emit_startup()
-        app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
+        app.state.polling_task = asyncio.create_task(run_polling_with_retry(bot, dp, stop_event))
         app.state.supervisor_tasks = launch_supervisor_tasks(
             session_factory, investigation_service, settings, bot, stop_event
         )
@@ -284,7 +283,8 @@ async def _process_webhook_payload(
 
             logger.info(
                 f"[ATTRIBUTION] Match found! Wallet={wallet.address[:10]}... | "
-                f"Label='{wallet.label}' | Category='{wallet.category}' | Score={wallet.quality_score}"
+                f"Label='{wallet.label}' | Category='{getattr(wallet, 'category', 'Unknown')}' | "
+                f"Score={wallet.quality_score}"
             )
 
             # Per-chain ingestion gate: price the move now and only persist as

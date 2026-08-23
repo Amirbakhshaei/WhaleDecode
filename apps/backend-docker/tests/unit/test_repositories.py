@@ -520,3 +520,31 @@ async def test_alert_purge_pending_deletes_only_pending(db_session):
     remaining = await repo.list_by_status("sent")
     assert [a.dedupe_key for a in remaining] == ["alert:sent"]
     assert len(await repo.list_by_status("pending")) == 0
+
+
+def test_curated_wallet_entity_has_category():
+    """Regression guard: webhook telemetry logs wallet.category, so the domain
+    entity must expose it (otherwise _process_webhook_payload raises
+    AttributeError on every matched wallet)."""
+    from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
+
+    wallet = CuratedWallet(address="0xabc", chain=Chain.ETH)
+    assert wallet.category == "Unknown"
+    assert getattr(wallet, "category", "Unknown") == "Unknown"
+
+    class _FakeModel:
+        id = 1
+        address = "0xABC"
+        chain = "ETH"
+        label = "whale"
+        tags = "a,b"
+        quality_score = 90.0
+        category = "Smart Money"
+        is_active = True
+        is_monitored_active = True
+        tx_count_30d = 5
+        last_activity_at = None
+        velocity_penalty = 1.0
+
+    dom = CuratedWalletRepository._to_domain(None, _FakeModel())
+    assert dom.category == "Smart Money"
