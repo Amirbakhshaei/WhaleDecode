@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Emit INSERT statements for curated_wallets from the repo's wallets_verified.json.
 // Pipe the output into D1:
-//   node scripts/seedWallets.mjs | wrangler d1 execute whaledecode --local --file=-
+//   node scripts/seedWallets.mjs | wrangler d1 execute whaledecode_db --remote --file=-
 
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const file = process.argv[2] || resolve(root, "wallets_verified.json");
 
 const CHAIN_MAP = {

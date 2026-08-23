@@ -2,31 +2,20 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "whaledecode-worker",
   "main": "src/index.ts",
-  "compatibility_date": "2026-08-20",
+  "compatibility_date": "2024-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "whaledecode",
-      "database_id": "00000000-0000-0000-0000-000000000001",
+      "database_name": "whaledecode_db",
+      "database_id": "28fbd1f7-8185-447d-b73c-f47c0b08cbdc",
       "migrations_dir": "migrations"
     }
   ],
-  "kv_namespaces": [
-    {
-      "binding": "KV",
-      "id": "0000000000000000000000000000000000000000000000000000000000000002"
-    }
-  ],
   "vars": {
-    "BOT_USERNAME": "whaledecodebot",
-    "CHANNEL_PUBLISH_ENABLED": "true"
-  },
-  "triggers": {
-    "crons": [
-      { "cron": "*/5 * * * *", "action": "drain" },
-      { "cron": "0 3 * * *", "action": "purge_stale" },
-      { "cron": "0 8 * * *", "action": "daily_briefing" }
-    ]
+    "TELEGRAM_BOT_USERNAME": "WhaleDecodeBot",
+    "LLM_MODEL": "gemini-2.5-flash",
+    "GROQ_MODEL": "llama-3.3-70b-versatile",
+    "DRPC_URL": "https://eth.llamarpc.com"
   }
 }

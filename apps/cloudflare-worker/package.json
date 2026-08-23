@@ -7,8 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "migrate:local": "wrangler d1 migrations apply whaledecode --local",
-    "migrate:remote": "wrangler d1 migrations apply whaledecode --remote",
+    "migrate:local": "wrangler d1 migrations apply whaledecode_db --local",
+    "migrate:remote": "wrangler d1 migrations apply whaledecode_db --remote",
     "register:webhooks": "node scripts/registerWebhooks.mjs"
   },
   "keywords": [],

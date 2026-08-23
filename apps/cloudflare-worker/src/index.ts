@@ -1,38 +1,25 @@
 import { Hono } from "hono";
-import type { Env } from "./env";
-import { alchemyWebhook } from "./routes/webhook";
-import { handleScheduled } from "./scheduled";
-import { loadConfig } from "./config";
-import { drain } from "./pipeline";
+import type { Env } from "./types";
+import { alchemyRouter } from "./routes/alchemy";
+import { telegramRouter } from "./routes/telegram";
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => c.text("WhaleDecode Worker is running!"));
+app.get("/", (c) => c.text("WhaleDecode Edge Worker Live"));
 
-app.get("/health", (c) => c.json({ ok: true }));
+app.route("/webhook/alchemy", alchemyRouter);
+app.route("/webhook/telegram", telegramRouter);
 
-app.post("/webhook/alchemy", alchemyWebhook);
+app.notFound((c) =>
+  c.json({ error: "not_found", path: c.req.path }, 404),
+);
 
-// Manual backlog drain (e.g. triggered by a monitor or cron outside CF).
-app.post("/drain", async (c) => {
-  const cfg = loadConfig(c.env);
-  const processed = await drain(c.env.DB, cfg, 20);
-  return c.json({ ok: true, processed });
+app.onError((err, c) => {
+  console.error("worker_error", { message: String(err?.message ?? err) });
+  return c.json(
+    { error: "internal_error", message: String(err?.message ?? err) },
+    500,
+  );
 });
 
-export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<Response> {
-    return app.fetch(request, env, ctx);
-  },
-  async scheduled(
-    controller: ScheduledController,
-    env: Env,
-    _ctx: ExecutionContext,
-  ): Promise<void> {
-    await handleScheduled(controller, env);
-  },
-};
+export default app;
