@@ -1,14 +1,33 @@
 import asyncio
 import os
+import sys
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from dotenv import load_dotenv
 
-load_dotenv("apps/backend-docker/.env")
+# Try multiple locations for .env depending on whether running in Docker or locally
+for path in [".env", "apps/backend-docker/.env", "/app/.env"]:
+    if os.path.exists(path):
+        load_dotenv(path)
+        break
+else:
+    load_dotenv()
 
-ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY")
+ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY") or os.getenv("ALCHEMY_AUTH_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
+
+# Railway's public Postgres proxy requires SSL. asyncpg rejects psycopg's
+# `sslmode`; pass `ssl` via connect_args (ignored for localhost/dev).
+_ssl_required = bool(DATABASE_URL) and "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL
+
+if not ALCHEMY_API_KEY:
+    print("❌ ERROR: ALCHEMY_API_KEY (or ALCHEMY_AUTH_TOKEN) is not set in environment or .env file.")
+    sys.exit(1)
+
+if not DATABASE_URL:
+    print("❌ ERROR: DATABASE_URL is not set.")
+    sys.exit(1)
 
 WEBHOOK_MAP = {
     "ETH": os.getenv("ALCHEMY_WEBHOOK_ID_ETH", "wh_w3gp4gipi8x5xive"),
@@ -21,7 +40,7 @@ async def fetch_current_alchemy_addrs(client: httpx.AsyncClient, webhook_id: str
     resp = await client.get(url, headers={"X-Alchemy-Token": ALCHEMY_API_KEY})
     if resp.status_code == 200:
         return set(addr.lower() for addr in resp.json().get("addresses", []))
-    print(f"❌ Error fetching {webhook_id}: {resp.status_code} {resp.text}")
+    print(f"❌ Error fetching {webhook_id}: {resp.status_code} - {resp.text}")
     return set()
 
 async def sync_chain(client: httpx.AsyncClient, chain: str, target_addrs: set[str]):
@@ -54,10 +73,10 @@ async def sync_chain(client: httpx.AsyncClient, chain: str, target_addrs: set[st
     if resp.status_code == 200:
         print(f"✅ [{chain}] Successfully synced to Alchemy!")
     else:
-        print(f"❌ [{chain}] Sync failed: {resp.status_code} {resp.text}")
+        print(f"❌ [{chain}] Sync failed: {resp.status_code} - {resp.text}")
 
 async def main():
-    engine = create_async_engine(DATABASE_URL)
+    engine = create_async_engine(DATABASE_URL, connect_args={"ssl": "require"} if _ssl_required else {})
     
     # 1. Fetch active targets per chain from Postgres
     async with engine.connect() as conn:
