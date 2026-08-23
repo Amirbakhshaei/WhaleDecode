@@ -12,33 +12,54 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.config.settings import Settings
 from whaledecode.infrastructure.http import HttpClientManager
 
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://dashboard.alchemy.com/api"
-_ACTIVE_CATEGORIES = ("Smart Money", "Notable Whale", "VC Fund", "Kol Trader")
-_EXCLUDED_CATEGORIES = ("Bridge", "Exchange", "CEX Reserve", "DEX", "Infrastructure", "Dao")
 _BATCH = 500
 
+# Per-chain seat quotas so a deep Ethereum pool can't crowd out ARB/BASE.
+# Tuned to the 300-wallet budget: 180 ETH + 60 ARB + 60 BASE.
+_CHAIN_QUOTAS = {"ETH": 180, "ARB": 60, "BASE": 60}
+
+# Balanced selection via a CTE + window function: rank within each chain by
+# (quality_score * velocity_penalty) DESC, then take the top N per chain. This
+# prevents a large Ethereum pool from starving L2 coverage — the previous global
+# ORDER BY ... LIMIT 300 picked almost all ETH and left ARB/BASE under-monitored.
+# Category lists are code constants inlined into the SQL; chain seat quotas are
+# scalar binds. ``velocity_penalty`` is carried through the CTE so the outer
+# ORDER BY can resolve it (it is ranked on but not projected).
 _SELECT_TOP = text(
     """
-    SELECT lower(address) AS address, quality_score, category
-    FROM curated_wallets
-    WHERE is_active = TRUE
-      AND category IN :cats
-      AND category NOT IN :excluded
-      AND tx_count_30d < 600
+    WITH ranked AS (
+        SELECT
+            lower(address) AS address,
+            upper(chain) AS chain,
+            quality_score,
+            category,
+            velocity_penalty,
+            ROW_NUMBER() OVER (
+                PARTITION BY upper(chain)
+                ORDER BY (quality_score * velocity_penalty) DESC
+            ) AS rn
+        FROM curated_wallets
+        WHERE is_active = TRUE
+          AND category IN ('Smart Money', 'Notable Whale', 'VC Fund', 'Kol Trader')
+          AND category NOT IN ('Bridge', 'Exchange', 'CEX Reserve', 'DEX', 'Infrastructure', 'Dao')
+          AND tx_count_30d < 600
+    )
+    SELECT address, chain, quality_score, category
+    FROM ranked
+    WHERE (chain = 'ETH' AND rn <= :eth_limit)
+       OR (chain = 'ARB' AND rn <= :arb_limit)
+       OR (chain = 'BASE' AND rn <= :base_limit)
     ORDER BY (quality_score * velocity_penalty) DESC
-    LIMIT :limit;
+    LIMIT :total_limit;
     """
-).bindparams(
-    bindparam("cats", expanding=True),
-    bindparam("excluded", expanding=True),
 )
 
 
@@ -105,19 +126,32 @@ class WebhookRotationService:
 
     # -- Postgres selection ---------------------------------------------------
 
-    async def select_top_candidates(self, session: AsyncSession, limit: int = 300) -> list[dict[str, Any]]:
-        """Top ``limit`` active, low-velocity, high-conviction wallets."""
+    async def select_top_candidates(
+        self,
+        session: AsyncSession,
+        total_limit: int = 300,
+        chain_quotas: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Top wallets with balanced per-chain quotas (default 180 ETH / 60 ARB / 60 BASE).
+
+        Within each chain wallets are ranked by ``quality_score * velocity_penalty``
+        so noisy/bot wallets sink, then clamped to that chain's seat count. The
+        result set is bounded by ``total_limit`` overall.
+        """
+        quotas = chain_quotas or _CHAIN_QUOTAS
         result = await session.execute(
             _SELECT_TOP,
             {
-                "cats": list(_ACTIVE_CATEGORIES),
-                "excluded": list(_EXCLUDED_CATEGORIES),
-                "limit": limit,
+                "eth_limit": quotas.get("ETH", 180),
+                "arb_limit": quotas.get("ARB", 60),
+                "base_limit": quotas.get("BASE", 60),
+                "total_limit": total_limit,
             },
         )
         return [
             {
                 "address": str(r["address"]).lower().strip(),
+                "chain": str(r["chain"] or ""),
                 "quality_score": float(r["quality_score"]),
                 "category": str(r["category"] or ""),
             }

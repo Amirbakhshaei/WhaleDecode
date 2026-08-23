@@ -112,12 +112,39 @@ async def test_select_top_candidates_velocity_and_filters(db_session):
     await db_session.commit()
 
     svc = WebhookRotationService(_settings(), _Factory(db_session), auth_token="tok", webhook_id="wh_1")
-    top = await svc.select_top_candidates(db_session, limit=3)
+    top = await svc.select_top_candidates(db_session, total_limit=3)
     assert [w["address"] for w in top] == [A_H0, A_C0, A_A0]
     addresses = [w["address"] for w in top]
     assert A_G0 not in addresses  # velocity penalty dropped it
     assert A_E0 not in addresses  # excluded category
     assert A_I0 not in addresses  # tx_count_30d filter
+
+
+@pytest.mark.asyncio
+async def test_select_top_candidates_balances_chains(db_session):
+    # 250 high-scoring ETH wallets plus 100 each on ARB/BASE. With a global
+    # ORDER BY ... LIMIT 300 the ETH pool would starve the L2s; the per-chain
+    # quotas must guarantee 180 ETH / 60 ARB / 60 BASE even when ETH outranks.
+    rows = []
+    for i in range(250):
+        rows.append({"address": f"0xeth{i:039d}", "chain": "ETH", "category": "Smart Money", "quality_score": 100.0})
+    for i in range(100):
+        rows.append({"address": f"0xarb{i:039d}", "chain": "ARB", "category": "Smart Money", "quality_score": 100.0})
+    for i in range(100):
+        rows.append({"address": f"0xbase{i:038d}", "chain": "BASE", "category": "Smart Money", "quality_score": 100.0})
+    _seed(db_session, rows)
+    await db_session.commit()
+
+    svc = WebhookRotationService(_settings(), _Factory(db_session), auth_token="tok", webhook_id="wh_1")
+    top = await svc.select_top_candidates(db_session, total_limit=300)
+
+    by_chain: dict[str, int] = {}
+    for w in top:
+        by_chain[w["chain"]] = by_chain.get(w["chain"], 0) + 1
+    assert by_chain.get("ETH", 0) == 180
+    assert by_chain.get("ARB", 0) == 60
+    assert by_chain.get("BASE", 0) == 60
+    assert len(top) == 300
 
 
 @pytest.mark.asyncio

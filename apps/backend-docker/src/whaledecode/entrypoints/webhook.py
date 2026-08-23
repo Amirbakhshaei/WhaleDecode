@@ -6,7 +6,6 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import (
@@ -225,7 +224,7 @@ async def alchemy_webhook(
         return {"status": "ignored", "reason": "malformed_json"}
 
     background_tasks.add_task(_process_webhook_payload, payload, settings, session_factory)
-    return {"status": "accepted"}
+    return {"status": "accepted", "queued": True}
 
 
 async def _process_webhook_payload(

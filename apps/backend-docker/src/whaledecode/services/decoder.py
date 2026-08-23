@@ -13,7 +13,6 @@ import logging
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
@@ -64,9 +63,14 @@ async def apply_velocity_telemetry(session: AsyncSession, addresses: list[str]) 
 
 
 async def resolve_entity(session: AsyncSession, address: str) -> CuratedWallet | None:
-    """Passive attribution: resolve a label for ``address`` from Postgres only."""
+    """Passive attribution: resolve a label for ``address`` from Postgres only.
+
+    Case-insensitive (the repo lowercases) and restricted to ``is_active`` wallets
+    so dormant/excluded entities never get attributed to a live whale move.
+    """
     if not address:
         return None
     repo = CuratedWalletRepository(session)
     matches = await repo.find_by_addresses([address])
-    return matches[0] if matches else None
+    active = [m for m in matches if m.is_active]
+    return active[0] if active else None
