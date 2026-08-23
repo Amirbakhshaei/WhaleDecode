@@ -17,8 +17,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ADMIN_USER_IDS: list[int] = []
     PORT: int = 8080
-    ALCHEMY_WEBHOOK_SIGNING_KEY: SecretStr | None = None
-    ALCHEMY_WEBHOOK_SIGNING_KEYS: str = ""
+    ALCHEMY_SIGNING_KEY_ETH: SecretStr | None = None
+    ALCHEMY_SIGNING_KEY_ARB: SecretStr | None = None
+    ALCHEMY_SIGNING_KEY_BASE: SecretStr | None = None
     ALCHEMY_AUTH_TOKEN: SecretStr | None = None
     ALCHEMY_NOTIFY_TOKEN: SecretStr | None = None
     # Single webhook sync credentials (Notify API Auth Token + target webhook id).
@@ -37,13 +38,16 @@ class Settings(BaseSettings):
 
     @property
     def webhook_signing_keys(self) -> list[str]:
-        """Return list of signing keys from ALCHEMY_WEBHOOK_SIGNING_KEYS (comma-separated),
-        falling back to the single ALCHEMY_WEBHOOK_SIGNING_KEY if provided."""
-        if self.ALCHEMY_WEBHOOK_SIGNING_KEYS:
-            return [k.strip() for k in self.ALCHEMY_WEBHOOK_SIGNING_KEYS.split(",") if k.strip()]
-        if self.ALCHEMY_WEBHOOK_SIGNING_KEY:
-            return [self.ALCHEMY_WEBHOOK_SIGNING_KEY.get_secret_value()]
-        return []
+        """Return the configured per-chain Alchemy signing keys (ETH/ARB/BASE)."""
+        keys: list[str] = []
+        for secret in (
+            self.ALCHEMY_SIGNING_KEY_ETH,
+            self.ALCHEMY_SIGNING_KEY_ARB,
+            self.ALCHEMY_SIGNING_KEY_BASE,
+        ):
+            if secret:
+                keys.append(secret.get_secret_value())
+        return keys
 
     # Telegram
     BOT_TOKEN: SecretStr
