@@ -1,8 +1,13 @@
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from whaledecode.config.settings import Settings
+
+# ponytail: worker polls every few seconds; silence SQLAlchemy's per-statement
+# INFO logs in prod so they don't flood deployment logs (app logs stay at INFO).
+_SQLALCHEMY_NOISY_LOGGERS = ("sqlalchemy.engine", "sqlalchemy.pool")
 
 
 def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSession]:
@@ -16,6 +21,9 @@ def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSessio
         echo=settings.ENV == "dev",
         connect_args={"timeout": 10},
     )
+    if settings.ENV != "dev":
+        for name in _SQLALCHEMY_NOISY_LOGGERS:
+            logging.getLogger(name).setLevel(logging.WARNING)
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
