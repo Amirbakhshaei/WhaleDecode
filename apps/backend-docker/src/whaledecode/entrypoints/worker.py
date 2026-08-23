@@ -6,12 +6,9 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
-from whaledecode.adapters.llm.factory import LLMFactory
-from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
 from whaledecode.application.fetcher import LiveBlockchainFetcher
-from whaledecode.application.services.investigation import InvestigationService
+from whaledecode.application.services.investigation import build_investigation_service
 from whaledecode.application.worker import BackgroundAIWorker
 from whaledecode.config.settings import Settings
 from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
@@ -21,19 +18,14 @@ log = structlog.get_logger()
 
 async def run_worker(settings: Settings) -> None:
     init_sentry(settings)
-    session_factory = create_session_factory(settings)
+    session_factory, investigation_service, reasoner = build_investigation_service(settings)
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    llm_factory = LLMFactory(settings)
-    reasoner = LangGraphReasoner(settings, llm_factory)
-
     def _uow() -> UnitOfWork:
         return UnitOfWork(session_factory)
-
-    investigation_service = InvestigationService(_uow, reasoner, settings)
 
     log.info("worker_started")
 

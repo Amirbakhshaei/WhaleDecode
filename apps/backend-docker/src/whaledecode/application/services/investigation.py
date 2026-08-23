@@ -235,9 +235,10 @@ class InvestigationService:
                 raise
             return existing
 
-    async def chat(self, user_message: str, context: dict[str, Any] | None = None, thread_id: str | None = None) -> str:
+    async def chat(self, user_message: str, context: dict[str, Any] | None = None, thread_id: str | None = None, model: str = "chat") -> str:
         result = await self._reasoner.investigate_chat(
-            {"message": user_message, "context": context or {}, "thread_id": thread_id}
+            {"message": user_message, "context": context or {}, "thread_id": thread_id},
+            model=model,
         )
         return self._relay.format_chat_response(result)
 

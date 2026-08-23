@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
     MAX_COST_PER_RUN_USD: float = 0.03
 
+    # LLM — /ask bot (OpenAI gpt-oss-20b, Groq Llama-70b fallback when no OpenAI key)
+    MODEL_ASK: str = "gpt-oss-20b"
+
     # Fallback LLMs
     OPENAI_API_KEY: SecretStr | None = None
     ANTHROPIC_API_KEY: SecretStr | None = None

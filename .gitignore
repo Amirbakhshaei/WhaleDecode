@@ -36,3 +36,4 @@ backups/
 **/.wrangler/
 **/.mf/
 **/dist/
+**/.dev.vars

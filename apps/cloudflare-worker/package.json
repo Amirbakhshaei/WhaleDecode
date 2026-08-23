@@ -1,10 +1,15 @@
 {
   "name": "cloudflare-worker",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "WhaleDecode ingestion -> channel publishing pipeline on Cloudflare Workers",
+  "main": "src/index.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "migrate:local": "wrangler d1 migrations apply whaledecode --local",
+    "migrate:remote": "wrangler d1 migrations apply whaledecode --remote",
+    "register:webhooks": "node scripts/registerWebhooks.mjs"
   },
   "keywords": [],
   "author": "",

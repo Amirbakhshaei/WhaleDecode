@@ -115,7 +115,7 @@ async def cmd_ask(message: Message, command: CommandObject, investigation_servic
 
     await message.answer("🧠 Thinking...")
     try:
-        result = await investigation_service.chat(prompt, thread_id=str(message.from_user.id))
+        result = await investigation_service.chat(prompt, thread_id=str(message.from_user.id), model="ask")
         await message.answer(result[:4000])
     except ConnectionError as e:
         log.error("ask_connection_error", user_id=message.from_user.id, error=str(e))

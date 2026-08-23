@@ -29,7 +29,8 @@ def test_factory_returns_correct_model_types(settings: Settings) -> None:
     assert isinstance(fast, BaseChatModel)
     assert settings.MODEL_HEAVY_REASONING in heavy.model
     assert structured.model == settings.MODEL_STRUCTURED_DATA
-    assert fast.model == settings.MODEL_FAST_CHAT
+    # Bot general chat now routes through Gemini (3.5 flash-lite) + Llama-70b fallback.
+    assert settings.MODEL_HEAVY_REASONING in fast.model
 
 
 def test_factory_uses_correct_model_strings(settings: Settings) -> None:
@@ -41,7 +42,19 @@ def test_factory_uses_correct_model_strings(settings: Settings) -> None:
 
     assert "gemini" in heavy.model.lower()
     assert structured.model == "llama-3.3-70b-versatile"
-    assert fast.model == "llama-3.1-8b-instant"
+    assert "gemini" in fast.model.lower()
+
+
+def test_factory_ask_llm_uses_gpt_oss(settings: Settings) -> None:
+    settings = Settings(
+        BOT_TOKEN="test-token",
+        GROQ_API_KEY="test-groq-key",
+        GEMINI_API_KEY="test-gemini-key",
+        OPENAI_API_KEY="test-openai-key",
+    )
+    factory = LLMFactory(settings)
+    ask = factory.get_ask_llm()
+    assert "gpt-oss" in ask.model.lower()
 
 
 @patch("whaledecode.adapters.llm_graph.reasoner.build_investigation_graph")
@@ -52,6 +65,7 @@ def test_reasoner_uses_factory_llms(mock_chat_build, mock_invest_build, settings
     fast_llm = MagicMock(spec=BaseChatModel)
     mock_factory.get_heavy_reasoning_llm.return_value = heavy_llm
     mock_factory.get_fast_chat_llm.return_value = fast_llm
+    mock_factory.get_ask_llm.return_value = MagicMock(spec=BaseChatModel)
 
     reasoner = LangGraphReasoner(settings, mock_factory)
 
