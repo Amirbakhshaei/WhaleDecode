@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     ENV: Literal["dev", "stage", "prod"] = "dev"
     LOG_LEVEL: str = "INFO"
     ADMIN_USER_IDS: list[int] = []
-    PORT: int = 8000
+    PORT: int = 8080
     ALCHEMY_WEBHOOK_SIGNING_KEY: SecretStr | None = None
     ALCHEMY_WEBHOOK_SIGNING_KEYS: str = ""
     ALCHEMY_AUTH_TOKEN: SecretStr | None = None

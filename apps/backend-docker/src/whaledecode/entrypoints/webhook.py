@@ -26,7 +26,7 @@ from whaledecode.entrypoints.bot import build_telegram_app
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
 from whaledecode.infrastructure.http import HttpClientManager
 from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
-from whaledecode.services.decoder import apply_velocity_telemetry
+from whaledecode.services.decoder import TransactionDecoderService, apply_velocity_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +223,9 @@ async def alchemy_webhook(
         logger.error("webhook_malformed_json", extra={"error": str(exc)})
         return {"status": "ignored", "reason": "malformed_json"}
 
-    background_tasks.add_task(_process_webhook_payload, payload, settings, session_factory)
+    background_tasks.add_task(
+        TransactionDecoderService.process_payload, payload, settings, session_factory
+    )
     return {"status": "accepted", "queued": True}
 
 
