@@ -1,6 +1,7 @@
 from cachetools import TTLCache
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
@@ -105,8 +106,8 @@ class CuratedWalletRepository:
     async def get_by_address_and_chain(self, address: str, chain: str) -> CuratedWallet | None:
         result = await self._session.execute(
             select(CuratedWalletModel).where(
-                CuratedWalletModel.address == address,
-                CuratedWalletModel.chain == chain,
+                func.lower(CuratedWalletModel.address) == func.lower(address),
+                func.upper(CuratedWalletModel.chain) == func.upper(chain),
             )
         )
         row = result.scalar_one_or_none()

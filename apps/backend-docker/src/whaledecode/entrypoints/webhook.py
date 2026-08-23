@@ -246,9 +246,14 @@ async def _process_webhook_payload(
                 continue
 
             # Per-chain ingestion gate: price the move now and only persist as
-            # pending when it clears the chain's min_usd_threshold.
+            # pending when it clears the chain's min_usd_threshold AND the global
+            # value-noise floor (MIN_ALERT_USD_THRESHOLD).
             candidate_data = _build_candidate_data(activity, chain, wallet)
-            if not await _clears_chain_floor(candidate_data):
+            if not await _clears_chain_floor(candidate_data, settings.MIN_ALERT_USD_THRESHOLD):
+                logger.debug(
+                    "webhook_dropped_below_alert_threshold",
+                    extra={"dedupe_key": candidate_data["dedupe_key"]},
+                )
                 continue
             async with UnitOfWork(session_factory) as uow:
                 await uow.candidate_events.create_pending(candidate_data)
@@ -259,12 +264,15 @@ async def _process_webhook_payload(
         capture_exception(exc)
 
 
-async def _clears_chain_floor(candidate_data: dict[str, Any]) -> bool:
+async def _clears_chain_floor(candidate_data: dict[str, Any], min_usd_threshold: float | None = None) -> bool:
     """True when the move prices above its chain's ingestion floor.
 
     Reuses the investigation gate's pricing so ingestion and investigation
     agree on value; the priced ``value_usd`` is written back into ``raw_json``
     so pending rows carry a real USD figure. Sub-floor moves never enter pending.
+
+    ``min_usd_threshold`` (the ``MIN_ALERT_USD_THRESHOLD`` env control) lifts the
+    effective floor to at least this global noise gate when supplied.
     """
     candidate = CandidateEvent(**candidate_data)
     await process_and_gate_candidate(candidate, _price_oracle)
@@ -272,6 +280,8 @@ async def _clears_chain_floor(candidate_data: dict[str, Any]) -> bool:
     candidate_data["raw_json"]["value_usd"] = value_usd
     policy = policy_for(candidate.chain)
     floor = policy.min_usd_threshold if policy else MIN_WHALE_THRESHOLD_USD
+    if min_usd_threshold is not None:
+        floor = max(floor, min_usd_threshold)
     if value_usd < floor:
         logger.info(
             "webhook_dropped_below_chain_floor",

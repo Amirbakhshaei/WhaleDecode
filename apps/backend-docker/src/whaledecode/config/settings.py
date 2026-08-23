@@ -21,9 +21,16 @@ class Settings(BaseSettings):
     ALCHEMY_WEBHOOK_SIGNING_KEYS: str = ""
     ALCHEMY_AUTH_TOKEN: SecretStr | None = None
     ALCHEMY_NOTIFY_TOKEN: SecretStr | None = None
+    # Single webhook sync credentials (Notify API Auth Token + target webhook id).
+    ALCHEMY_API_KEY: SecretStr | None = None
+    ALCHEMY_WEBHOOK_ID: str = ""
     ALCHEMY_WEBHOOK_ID_ETH: str = ""
     ALCHEMY_WEBHOOK_ID_ARB: str = ""
     ALCHEMY_WEBHOOK_ID_BASE: str = ""
+
+    # Value Threshold & Noise Filter — global USD floor; events below this are
+    # dropped at ingestion (no candidate_event, no LLM synthesis, no alert).
+    MIN_ALERT_USD_THRESHOLD: float = 50_000.0
 
     # Curated-wallet sources
     DUNE_API_KEY: SecretStr | None = None  # live Dune Spellbook labels (free tier, then falls back to static seed)
