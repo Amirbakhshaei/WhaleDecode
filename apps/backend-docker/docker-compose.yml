@@ -15,18 +15,9 @@ services:
       timeout: 5s
       retries: 5
 
-  bot:
+  web:
     build: .
-    command: bot
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-
-  worker:
-    build: .
-    command: worker
+    command: serve
     env_file: .env
     depends_on:
       postgres:

@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import (
@@ -87,7 +88,12 @@ def _coerce_numeric(value: Any, default: float = 0.0) -> float:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: start bot polling + consumer supervisor on startup, stop on shutdown."""
+    """FastAPI lifespan: start bot polling + consumer supervisor on startup, stop on shutdown.
+
+    The bot + supervisor run in this same process, but their startup is bounded
+    and failure-tolerant so it can never block uvicorn from binding — an outage
+    in Telegram or the worker loop must not 502 inbound Alchemy webhooks.
+    """
     # ``Settings`` is cheap to build at import time; only the DB/LLM service build
     # is deferred here so a connectivity failure surfaces at startup, not at import.
     global session_factory, _price_oracle
@@ -98,41 +104,48 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = session_factory
     app.state.investigation_service = investigation_service
 
-    logger.info("Starting Telegram Bot in the background...")
-    bot, dp = build_telegram_app(settings)
-    await dp.emit_startup()
-    await bot.delete_webhook(drop_pending_updates=True)
-    app.state.bot = bot
-    app.state.dp = dp
-    app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
-    logger.info("Bot polling started")
+    async def _start_bot_and_supervisor() -> None:
+        bot, dp = build_telegram_app(settings)
+        app.state.bot = bot
+        app.state.dp = dp
+        stop_event = asyncio.Event()
+        app.state.stop_event = stop_event
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.emit_startup()
+        app.state.polling_task = asyncio.create_task(dp.start_polling(bot))
+        app.state.supervisor_tasks = launch_supervisor_tasks(
+            session_factory, investigation_service, settings, bot, stop_event
+        )
 
-    # Start consumer supervisor (BackgroundAIWorker + alert loop + cron jobs)
-    stop_event = asyncio.Event()
-    app.state.stop_event = stop_event
-    app.state.supervisor_tasks = launch_supervisor_tasks(
-        session_factory,
-        investigation_service,
-        settings,
-        bot,
-        stop_event,
-    )
-    logger.info("Consumer supervisor started")
+    # Bound + tolerant: if the bot/supervisor can't start (Telegram down, bad
+    # token, …) the web server still binds and serves webhooks.
+    try:
+        await asyncio.wait_for(_start_bot_and_supervisor(), timeout=15)
+    except Exception as e:  # noqa: BLE001 - never let startup kill the web server
+        logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
 
     yield
 
-    logger.info("Shutting down Telegram Bot and consumer supervisor...")
-    stop_event.set()
-    app.state.polling_task.cancel()
-    for task in app.state.supervisor_tasks:
+    stop_event = getattr(app.state, "stop_event", None)
+    if stop_event is not None:
+        stop_event.set()
+    polling_task = getattr(app.state, "polling_task", None)
+    if polling_task is not None:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+    supervisor_tasks = getattr(app.state, "supervisor_tasks", None) or []
+    for task in supervisor_tasks:
         task.cancel()
-    try:
-        await app.state.polling_task
-    except asyncio.CancelledError:
-        pass
-    await asyncio.gather(*app.state.supervisor_tasks, return_exceptions=True)
-    await dp.emit_shutdown()
-    await bot.session.close()
+    await asyncio.gather(*supervisor_tasks, return_exceptions=True)
+    dp = getattr(app.state, "dp", None)
+    if dp is not None:
+        await dp.emit_shutdown()
+    bot = getattr(app.state, "bot", None)
+    if bot is not None:
+        await bot.session.close()
     await HttpClientManager.aclose()
 
 
