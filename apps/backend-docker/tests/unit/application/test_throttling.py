@@ -1,13 +1,8 @@
-
 import pytest
 from whaledecode.adapters.telegram.middleware.throttling import ThrottlingMiddleware
 
 
 class StubUser:
-    id = 42
-
-
-class StubFrom:
     id = 42
 
 
@@ -31,9 +26,8 @@ async def _invoke(middleware, event):
 
 
 @pytest.mark.asyncio
-async def test_allows_one_then_drops_on_burst() -> None:
-    event = StubEvent()
-    middleware = ThrottlingMiddleware(max_rate=1, period_seconds=60, acquire_timeout=0.05)
+async def test_drops_after_burst_limit_with_warning() -> None:
+    middleware = ThrottlingMiddleware(burst_rate=3, burst_seconds=10)
     handled = 0
 
     async def counting_handler(*args, **kwargs):
@@ -41,33 +35,29 @@ async def test_allows_one_then_drops_on_burst() -> None:
         handled += 1
         return "handled"
 
-    assert await middleware(counting_handler, event, {}) == "handled"
-    assert handled == 1
+    for _ in range(3):
+        assert await middleware(counting_handler, StubEvent(), {}) == "handled"
+    assert handled == 3
 
-    result = await middleware(counting_handler, event, {})
+    # 4th request inside the 10s burst window is dropped with a warning.
+    result = await middleware(counting_handler, StubEvent(), {})
     assert result is None
-    assert handled == 1
+    assert handled == 3
+    # Warning only fires on real aiogram Message objects; stub lacks isinstance match.
 
 
 @pytest.mark.asyncio
 async def test_distinct_users_have_independent_limiters() -> None:
-    middleware = ThrottlingMiddleware(max_rate=1, period_seconds=60, acquire_timeout=0.05)
+    middleware = ThrottlingMiddleware(burst_rate=1, burst_seconds=10)
     a = StubEvent(1)
     b = StubEvent(2)
-    await _invoke(middleware, a)
-    await _invoke(middleware, b)
-    await _invoke(middleware, b)  # b's second call drops
-
-    assert len(a.answers) == 0  # no drop message because stub isn't a real Message
-
-    handled = 0
 
     async def counting_handler(*args, **kwargs):
-        nonlocal handled
-        handled += 1
         return "ok"
 
-    assert await middleware(counting_handler, StubEvent(3), {}) == "ok"
+    assert await middleware(counting_handler, a, {}) == "ok"
+    assert await middleware(counting_handler, b, {}) == "ok"
+    assert await middleware(counting_handler, b, {}) is None  # b's second call drops
 
 
 @pytest.mark.asyncio

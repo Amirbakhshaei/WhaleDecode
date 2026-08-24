@@ -2,7 +2,6 @@ import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from whaledecode.config.settings import Settings
 
 # ponytail: worker polls every few seconds; silence SQLAlchemy's per-statement
@@ -18,6 +17,10 @@ def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSessio
     engine = create_async_engine(
         url,
         pool_size=settings.DATABASE_POOL_SIZE,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=1800,
+        pool_pre_ping=True,
         echo=settings.ENV == "dev",
         connect_args={"timeout": 10},
     )

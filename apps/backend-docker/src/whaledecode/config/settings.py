@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     GROQ_API_KEY_SECONDARY: SecretStr | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     MODEL_STRUCTURED_DATA: str = "llama-3.3-70b-versatile"
-    MODEL_FAST_CHAT: str = "llama-3.1-8b-instant"
-    DEFAULT_CHEAP_MODEL: str = "llama-3.1-8b-instant"
+    MODEL_FAST_CHAT: str = "llama-3.3-70b-versatile"
+    DEFAULT_CHEAP_MODEL: str = "llama-3.3-70b-versatile"
     DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
     # LLM — Groq chat model for the bot conversational path (deep links, /ask, /decode).
     # llama-3.1-8b-instant 404s on Groq, so the default is the 70b versatile model.

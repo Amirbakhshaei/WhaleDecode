@@ -1,52 +1,39 @@
-"""Ephemeral burst limiter for interactive Telegram users.
+"""Two-tier ephemeral burst limiter for interactive Telegram users.
 
-Each user gets a token-bucket ``AsyncLimiter`` (default 10 requests / 60 s).
-When the burst limit forces the handler to wait longer than ``acquire_timeout``,
-the request is dropped and the user is told to cool down.
+Per user: max 3 requests / 10 seconds AND max 15 requests / minute.
+Either limit tripping drops the request with a cooldown warning.
 """
 import asyncio
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
 from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 from aiolimiter import AsyncLimiter
 
-COOLING_DOWN_MSG = "🫧 System cooling down, please wait a moment."
-
-
-class BurstRateLimitError(Exception):
-    """Raised when a user exceeds the burst rate limit."""
+RATE_LIMIT_MSG = "⚠️ Rate limit exceeded. Please wait a moment before sending more queries."
 
 
 class ThrottlingMiddleware(BaseMiddleware):
     def __init__(
         self,
-        max_rate: float = 10,
-        period_seconds: float = 60,
-        acquire_timeout: float = 1.0,
+        burst_rate: int = 3,
+        burst_seconds: float = 10,
+        minute_rate: int = 15,
     ) -> None:
-        self._max_rate = max_rate
-        self._period = period_seconds
-        self._timeout = acquire_timeout
-        self._limiters: dict[int, AsyncLimiter] = {}
+        self._burst = (burst_rate, burst_seconds)
+        self._minute = minute_rate
+        self._limiters: dict[int, tuple[AsyncLimiter, AsyncLimiter]] = {}
 
-    def _limiter_for(self, user_id: int) -> AsyncLimiter:
-        limiter = self._limiters.get(user_id)
-        if limiter is None:
-            limiter = AsyncLimiter(self._max_rate, self._period)
-            self._limiters[user_id] = limiter
-        return limiter
-
-    @asynccontextmanager
-    async def _burst(self, user_id: int):
-        limiter = self._limiter_for(user_id)
-        try:
-            await asyncio.wait_for(limiter.acquire(), timeout=self._timeout)
-        except (TimeoutError, asyncio.CancelledError) as exc:
-            raise BurstRateLimitError from exc
-        yield
+    def _limiters_for(self, user_id: int) -> tuple[AsyncLimiter, AsyncLimiter]:
+        pair = self._limiters.get(user_id)
+        if pair is None:
+            pair = (
+                AsyncLimiter(self._burst[0], self._burst[1]),
+                AsyncLimiter(self._minute, 60),
+            )
+            self._limiters[user_id] = pair
+        return pair
 
     async def __call__(
         self,
@@ -57,10 +44,12 @@ class ThrottlingMiddleware(BaseMiddleware):
         user_id = getattr(getattr(event, "from_user", None), "id", None)
         if user_id is None:
             return await handler(event, data)
-        try:
-            async with self._burst(user_id):
-                return await handler(event, data)
-        except BurstRateLimitError:
+        burst, minute = self._limiters_for(user_id)
+        # has_capacity() probes without consuming a token, so a blocked request
+        # is dropped without burning quota on either tier.
+        if not (burst.has_capacity() and minute.has_capacity()):
             if isinstance(event, Message):
-                await event.answer(COOLING_DOWN_MSG)
+                await event.answer(RATE_LIMIT_MSG)
             return None
+        await asyncio.gather(burst.acquire(), minute.acquire())
+        return await handler(event, data)

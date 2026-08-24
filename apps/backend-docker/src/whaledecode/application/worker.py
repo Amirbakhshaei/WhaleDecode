@@ -254,6 +254,7 @@ class BackgroundAIWorker:
             log.warning("worker_dispatch_empty_summary", extra={"dedupe_key": event.dedupe_key})
             return False
 
+        from whaledecode.adapters.telegram.dispatcher import safe_telegram_send
         from whaledecode.adapters.telegram.formatters.campaign_formatter import (
             format_mutated_campaign_alert,
             format_threaded_campaign_alert,
@@ -281,9 +282,10 @@ class BackgroundAIWorker:
                         bot_username=self._settings.BOT_USERNAME,
                     )
                 )
-                sent = await self._bot.send_message(
-                    chat_id=self._channel_id,
-                    text=msg,
+                sent = await safe_telegram_send(
+                    self._bot,
+                    self._channel_id,
+                    msg,
                     parse_mode=ParseMode.HTML,
                     reply_markup=get_channel_alert_keyboard(
                         str(event.chain),
@@ -320,9 +322,10 @@ class BackgroundAIWorker:
                 return True
 
             # THREADED
-            sent = await self._bot.send_message(
-                chat_id=self._channel_id,
-                text=format_threaded_campaign_alert(event, campaign),
+            sent = await safe_telegram_send(
+                self._bot,
+                self._channel_id,
+                format_threaded_campaign_alert(event, campaign),
                 reply_to_message_id=campaign.telegram_message_id,
                 parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),

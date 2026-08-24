@@ -1,8 +1,8 @@
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
-
 from whaledecode.adapters.db.session import async_sessionmaker
+from whaledecode.adapters.telegram.dispatcher import safe_telegram_send
 from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
 from whaledecode.config.settings import Settings
 
@@ -38,7 +38,7 @@ async def send_alerts(session_factory: async_sessionmaker, bot: Bot, settings: S
 
             msg = relay.format_alert(event.model_dump(), report)
             try:
-                await bot.send_message(chat_id=user.tg_id, text=msg)
+                await safe_telegram_send(bot, user.tg_id, msg)
                 alert.status = "sent"
                 log.info("alert_sent", alert_id=alert.id, user_id=user.id)
             except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter):

@@ -1,9 +1,33 @@
 import asyncio
-import structlog
 import time
-from aiogram import Bot
+from typing import Any
 
+import structlog
+from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from whaledecode.domain.ports.alert_dispatcher import AlertDispatcherPort
+
+log = structlog.get_logger()
+
+
+async def safe_telegram_send(bot: Bot, chat_id: int | str, text: str, **kwargs: Any):
+    """Send with flood-control backoff.
+
+    On a 429 (``TelegramRetryAfter``) sleeps the server-mandated window; other
+    Telegram API errors get exponential backoff (4 attempts total).
+    """
+    for attempt in range(4):
+        try:
+            return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        except TelegramRetryAfter as e:
+            log.warning("telegram_flood_control", chat_id=chat_id, retry_after=e.retry_after)
+            await asyncio.sleep(e.retry_after + 1)
+        except TelegramAPIError as e:
+            log.error("telegram_dispatch_failed", chat_id=chat_id, error=str(e))
+            if attempt == 3:
+                raise
+            await asyncio.sleep(2**attempt)
+    return None
 
 
 class TokenBucketRateLimiter:
