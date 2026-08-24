@@ -372,6 +372,16 @@ def build_alert_data(
     action, context, bias = _smc_fields(report)
     risk_score = report.get("risk_score", 0.0)
     synthesis = parse_synthesis_points(report)
+
+    # Edge Intelligence fields: persisted entity columns first, LLM context second.
+    def _intel(key: Any, report_key: str = "") -> Any:
+        return key if key is not None else (report.get(report_key) if report_key else None)
+
+    coordinated = bool(_intel(event_data.get("coordinated_flag"), "coordinated"))
+    conviction_ctx = report.get("conviction") if isinstance(report.get("conviction"), dict) else {}
+    pool_impact = _as_float(
+        _intel(event_data.get("pool_impact_percentage"), "") or conviction_ctx.get("pool_impact_ratio_pct", 0)
+    )
     return {
         "value_usd": _value_usd(event_data, report),
         "token_amount_formatted": f"{amount:,.0f} {asset}".strip() if amount > 0 else "",
@@ -386,6 +396,12 @@ def build_alert_data(
         "fundamental_summary": action,
         "technical_summary": context,
         "bias_summary": bias,
+        # Edge Intelligence (predictive alpha).
+        "win_rate": _opt_float(_intel(event_data.get("win_rate"))),
+        "pool_impact_percentage": pool_impact,
+        "cluster_origin": _intel(event_data.get("cluster_origin"), "funding_attribution"),
+        "hop_count": int(_as_float(_intel(event_data.get("hop_count")))),
+        "coordinated_flag": coordinated,
         "tx_hash": tx_hash,
         "from_address": from_addr,
         "to_address": to_addr,
@@ -400,6 +416,14 @@ def build_alert_data(
     }
 
 
+def _opt_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
 def deep_link(payload: str, bot_username: str = "") -> str:
     """Intra-platform deep link back into our own Telegram bot.
 
@@ -411,50 +435,62 @@ def deep_link(payload: str, bot_username: str = "") -> str:
 
 
 def format_alert(alert_data: dict[str, Any]) -> str:
-    """Deterministic Template A (L1 Mainnet) or Template B (L2 Velocity) channel alert.
+    """Alpha-first channel alert: predictive intelligence over description.
 
-    Renders directly from ``build_alert_data`` output so every section is built from
-    structured fields, never from the legacy verbose paragraph body."""
+    Deterministic conditional rendering from ``build_alert_data`` output:
+      * coordinated_flag -> 🔥 header; else 🐋 strategic-transfer header
+      * pool_impact_percentage >= 1.5% -> ⚠️ liquidity-absorption warning
+      * hop_count > 0 -> 🕸️ funding-cluster line
+      * Entity/Context/Impact bullets replaced by 🧠 Predictive Intelligence
+        (win rate + pool impact). All in-body links removed — actions live
+        exclusively in the parameterized inline keyboard.
+    """
     value_usd = _as_float(alert_data.get("value_usd", 0.0))
     asset = escape(str(alert_data.get("asset", "UNKNOWN")))
     chain = _normalize_chain(alert_data.get("chain", "ETH"))
     action = str(alert_data.get("action", "TRANSFER")).upper()
     score = int(_as_float(alert_data.get("score", 0)))
 
-    profile = escape(str(alert_data.get("profile") or "High-value institutional entity."))
-    context = escape(str(alert_data.get("context") or "Off-exchange liquidity positioning."))
-    impact = escape(str(alert_data.get("impact") or "Reduces immediate exchange-held supply."))
+    coordinated = bool(alert_data.get("coordinated_flag"))
+    pool_impact = _as_float(alert_data.get("pool_impact_percentage"))
+    win_rate = alert_data.get("win_rate")
+    cluster_origin = str(alert_data.get("cluster_origin") or "")
+    hop_count = int(_as_float(alert_data.get("hop_count")))
 
-    from_label = escape(str(alert_data.get("from_label") or "Unknown Wallet"))
-    to_label = escape(str(alert_data.get("to_label") or "Unknown Wallet"))
+    if coordinated:
+        header = f"🔥 <b>COORDINATED ACCUMULATION | {chain}</b>"
+    else:
+        header = f"🐋 <b>STRATEGIC {action} | {chain}</b>"
 
-    # ------------------------------------------------------------------
-    # TEMPLATE A: L1 Mainnet (ETH)
-    # ------------------------------------------------------------------
-    if chain.upper() in ("ETH", "ETHEREUM"):
-        return (
-            f"🐋 <b>STRATEGIC {action} | {chain}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 <b>Total Value:</b> <b>${value_usd:,.2f} USD</b>\n"
-            f"🪙 <b>Asset:</b> {asset}\n"
-            f"🛣️ <b>Flow:</b> <code>{from_label}</code> ➔ <code>{to_label}</code>\n"
-            f"🎯 <b>Conviction Score:</b> {score}/100\n\n"
-            f"🧠 <b>Agentic Synthesis:</b>\n"
-            f"• <b>Entity:</b> {profile}\n"
-            f"• <b>Context:</b> {context}\n"
-            f"• <b>Impact:</b> {impact}\n"
+    volume_warning = " ⚠️" if pool_impact >= 1.5 else ""
+
+    lines: list[str] = [
+        header,
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"💰 <b>Total Value:</b> <b>${value_usd:,.2f} USD</b>{volume_warning}",
+        f"🪙 <b>Asset:</b> {asset}",
+        f"🎯 <b>Conviction Score:</b> {score}/100",
+    ]
+
+    # Module 2 alpha: obscured institutional money leaves a funding trail.
+    if hop_count > 0 and cluster_origin:
+        lines.append(
+            f"🕸️ <b>Cluster Origin:</b> Funded by {escape(cluster_origin)} ({hop_count} hops)"
         )
 
-    # ------------------------------------------------------------------
-    # TEMPLATE B: L2 / High Velocity (BASE, ARB, SOL, ...)
-    # ------------------------------------------------------------------
-    return (
-        f"⚡ <b>SMART MONEY {action} | {chain}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 <b>Total Value:</b> <b>${value_usd:,.2f} USD</b>\n"
-        f"🪙 <b>Asset:</b> {asset}\n"
-        f"🎯 <b>Conviction Score:</b> {score}/100\n\n"
-        f"🧠 <b>Agentic Synthesis:</b>\n"
-        f"• <b>Profile:</b> {profile}\n"
-        f"• <b>Impact:</b> {impact}\n"
-    )
+    # Predictive intelligence replaces the descriptive synthesis bullets.
+    lines.append("")
+    lines.append("🧠 <b>Predictive Intelligence:</b>")
+    if win_rate is not None and win_rate > 0:
+        win_pct = round(win_rate * 100)
+        verdict = "high-conviction operator" if win_pct >= 60 else "mixed performer"
+        lines.append(f"• <b>Win Rate:</b> {win_pct}% of tracked accumulations profitable (90d) — {verdict}")
+    else:
+        lines.append("• <b>Win Rate:</b> Untracked wallet — baseline confidence")
+    if pool_impact > 0:
+        flag = " — anomalous absorption" if pool_impact >= 1.5 else ""
+        lines.append(f"• <b>Pool Impact:</b> absorbed {pool_impact:g}% of DEX liquidity{flag}")
+    else:
+        lines.append("• <b>Pool Impact:</b> below anomaly threshold")
+
+    return "\n".join(lines) + "\n"

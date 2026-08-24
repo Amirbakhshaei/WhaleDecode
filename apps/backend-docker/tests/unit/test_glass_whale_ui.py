@@ -39,14 +39,27 @@ def test_cta_keyboard_deep_links() -> None:
 
     kb = get_channel_alert_keyboard("ethereum", "0xabc123", "0xdead")
     rows = kb.inline_keyboard
-    # Row 0: Intelligence Hub (tx_) + Entity Dossier (wallet_) deep links.
+    # Phase 3 spec: Hub row, then Track Cluster + View Graph.
     assert rows[0][0].url == "https://t.me/whaledecodebot?start=tx_ETH_0xabc123"
-    assert rows[0][1].url == "https://t.me/whaledecodebot?start=wallet_ETH_0xdead"
-    # Row 1: block explorer.
-    assert rows[1][0].url == "https://etherscan.io/tx/0xabc123"
+    track_row = next(r for r in rows if r[0].text == "🕵️ Track Cluster")
+    graph_btn = next(b for r in rows for b in r if b.text == "🔍 View Graph")
+    assert track_row[0].url == "https://t.me/whaledecodebot?start=wallet_ETH_0xdead"
+    assert graph_btn.url == "https://etherscan.io/tx/0xabc123"
+
+    # Token present -> 1-Click Swap deep link in spec order (row 1).
+    kb_swap = get_channel_alert_keyboard("base", "0xabc123", "0xdead", token_address="0xtoken")
+    swap_rows = [r for r in kb_swap.inline_keyboard if r[0].text == "🛒 1-Click Swap"]
+    assert len(swap_rows) == 1
+    assert swap_rows[0][0].url == "https://t.me/whaledecodebot?start=swap_0xtoken"
+    # No token -> no swap button (e.g. plain transfers).
+    assert all(r[0].text != "🛒 1-Click Swap" for r in kb.inline_keyboard)
 
     kb_arb = get_channel_alert_keyboard("arbitrum", "0xabc123", "0xdead")
-    assert kb_arb.inline_keyboard[1][0].url == "https://arbiscan.io/tx/0xabc123"
+    graph_arb = next(b for r in kb_arb.inline_keyboard for b in r if b.text == "🔍 View Graph")
+    assert graph_arb.url == "https://arbiscan.io/tx/0xabc123"
 
-    kb_custom = get_channel_alert_keyboard("base", "0xabc123", "0xdead")
-    assert kb_custom.inline_keyboard[0][0].url == "https://t.me/whaledecodebot?start=tx_BASE_0xabc123"
+    kb_custom = get_channel_alert_keyboard("base", "0xabc123", "0xdead", bot_username="custombot")
+    hub_custom = next(
+        b for r in kb_custom.inline_keyboard for b in r if b.text == "⚡ Open Intelligence Hub"
+    )
+    assert hub_custom.url == "https://t.me/custombot?start=tx_BASE_0xabc123"

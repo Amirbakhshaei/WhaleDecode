@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from whaledecode.adapters.db.models.base import Base
 
@@ -29,5 +29,13 @@ class CandidateEventModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    # Edge Intelligence enrichment (migration 0012) — nullable so legacy rows
+    # and skipped events never pay the enrichment cost.
+    win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pool_impact_percentage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cluster_origin: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    hop_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    coordinated_flag: Mapped[bool] = mapped_column(Boolean, default=False, server_default="FALSE")
 
     campaign: Mapped["CampaignModel"] = relationship("CampaignModel", back_populates="events")  # noqa: F821

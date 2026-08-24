@@ -237,16 +237,41 @@ class TestFormatAlert:
         assert "$124,900.99 USD" in html
         assert "Conviction Score:</b> 72/100" in html
 
-    def test_template_a_synthesis_bullets(self):
+    def test_predictive_intelligence_replaces_synthesis_bullets(self):
+        # Phase 3: Entity/Context/Impact bullets are replaced by the
+        # deterministic Predictive Intelligence block.
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "🧠 <b>Agentic Synthesis:</b>" in html
-        assert "<b>Entity:</b> whale swept USDC toward a Binance-linked addr" in html
-        assert "<b>Context:</b> consolidation of a liquidity node" in html
-        assert "<b>Impact:</b> neutral, likely accumulation" in html
+        assert "Agentic Synthesis" not in html
+        assert "🧠 <b>Predictive Intelligence:</b>" in html
+        assert "<b>Win Rate:</b> Untracked wallet — baseline confidence" in html
+        assert "<b>Pool Impact:</b> below anomaly threshold" in html
 
-    def test_template_a_flow_line(self):
+    def test_flow_line_removed(self):
         html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
-        assert "<code>0xdfd5…963d</code> ➔ <code>0xd862…42e2</code>" in html
+        assert "🛣️ <b>Flow:</b>" not in html
+
+    def test_coordinated_header(self):
+        event = {**TRACE_EVENT, "coordinated_flag": True}
+        html = format_alert(build_alert_data(event, TRACE_ANALYSIS))
+        assert "🔥 <b>COORDINATED ACCUMULATION | Ethereum</b>" in html
+        assert "STRATEGIC" not in html
+
+    def test_pool_impact_warning_and_line(self):
+        event = {**TRACE_EVENT, "pool_impact_percentage": 2.3, "win_rate": 0.75}
+        html = format_alert(build_alert_data(event, TRACE_ANALYSIS))
+        assert "$124,900.99 USD</b> ⚠️" in html
+        assert "<b>Win Rate:</b> 75%" in html
+        assert "high-conviction operator" in html
+        assert "absorbed 2.3% of DEX liquidity — anomalous absorption" in html
+
+    def test_cluster_origin_rendered_when_hops_present(self):
+        event = {**TRACE_EVENT, "cluster_origin": "Paradigm Sub-Wallet", "hop_count": 2}
+        html = format_alert(build_alert_data(event, TRACE_ANALYSIS))
+        assert "🕸️ <b>Cluster Origin:</b> Funded by Paradigm Sub-Wallet (2 hops)" in html
+
+    def test_no_cluster_line_without_hops(self):
+        html = format_alert(build_alert_data(TRACE_EVENT, TRACE_ANALYSIS))
+        assert "Cluster Origin" not in html
 
     def test_template_a_footer_links(self):
         data = build_alert_data(TRACE_EVENT, TRACE_ANALYSIS)
@@ -264,11 +289,9 @@ class TestFormatAlert:
     def test_template_b_l2_velocity(self):
         event_l2 = {**TRACE_EVENT, "chain": "base"}
         html = format_alert(build_alert_data(event_l2, TRACE_ANALYSIS))
-        assert "⚡" in html
-        assert "SMART MONEY TRANSFER | Base" in html
-        assert "🛣️ <b>Flow:</b>" not in html  # L2 omits the flow line
-        assert "<b>Profile:</b>" in html
-        assert "<b>Impact:</b>" in html
+        assert "🐋" in html
+        assert "STRATEGIC TRANSFER | Base" in html
+        assert "🛣️ <b>Flow:</b>" not in html  # unified template omits the flow line
         # In-body action links removed; they live in the inline keyboard.
         assert "Auto-Track Wallet" not in html
         assert "Deep Dive Tx" not in html
@@ -296,8 +319,10 @@ class TestFormatAlert:
         assert is_valid_synthesis(combined) is False
 
     def test_html_escaping(self):
-        analysis = {"risk_score": 0.3, "summary": "**Action:** <script>alert(1)</script>"}
-        html = format_alert(build_alert_data(TRACE_EVENT, analysis))
+        # Predictive fields are user/LLM-facing surfaces — cluster origin must
+        # be HTML-escaped in the rendered post.
+        event = {**TRACE_EVENT, "cluster_origin": "<script>alert(1)</script>", "hop_count": 1}
+        html = format_alert(build_alert_data(event, TRACE_ANALYSIS))
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
 
@@ -319,11 +344,12 @@ class TestFormatAlert:
             "technical_summary": "Broke the daily support zone. Volume confirmed the move. Momentum is fading.",
             "bias_summary": "Bullish accumulation. Favor long setups. Invalidated below support.",
         }
-        html = format_alert(build_alert_data(TRACE_EVENT, report))
-        assert html.count("It landed") == 0
-        assert "Whale swept a large USDC block." in html
-        assert "Broke the daily support zone." in html
-        assert "Bullish accumulation." in html
+        data = build_alert_data(TRACE_EVENT, report)
+        # Synthesis is no longer rendered verbatim; the synthesis points must
+        # still be shortened to one sentence at the data layer.
+        assert data["profile"] == "Whale swept a large USDC block."
+        assert data["context"] == "Broke the daily support zone."
+        assert data["impact"] == "Bullish accumulation."
 
     def test_na_sentinel_normalized_to_neutral_fallback(self):
         # LLM returned literal "N/A" / "[ N/A ]" for some synthesis fields.
@@ -333,11 +359,14 @@ class TestFormatAlert:
             "technical_summary": "[ N/A ]",
             "bias_summary": "Neutral rebalancing between unlabeled wallets.",
         }
-        html = format_alert(build_alert_data(TRACE_EVENT, report))
+        data = build_alert_data(TRACE_EVENT, report)
+        html = format_alert(data)
         assert "N/A" not in html
-        assert "Entity under analysis." in html
-        assert "Market context unavailable." in html
-        assert "Neutral rebalancing between unlabeled wallets." in html
+        # Neutral fallbacks stay at the data layer; the rendered post shows the
+        # deterministic Predictive Intelligence block instead.
+        assert data["profile"] == "Entity under analysis."
+        assert data["context"] == "Market context unavailable."
+        assert "Predictive Intelligence" in html
 
     def test_empty_fields_use_neutral_fallback_not_na(self):
         # Empty structured fields AND a summary with no Action/Context/Bias bullets.
@@ -362,7 +391,9 @@ class TestFormatAlert:
         assert out["impact"] == "Impact under assessment."
 
     def test_fenced_json_with_preamble_is_parsed(self):
-        from whaledecode.adapters.telegram.formatters.channel_formatter import parse_synthesis_points
+        from whaledecode.adapters.telegram.formatters.channel_formatter import (
+            parse_synthesis_points,
+        )
         raw = (
             "Here is my analysis:\n"
             "```json\n"

@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
-
 from whaledecode.domain.value_objects.chain import Chain
 
 

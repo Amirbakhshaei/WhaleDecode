@@ -205,6 +205,11 @@ class CandidateEventRepository:
             status=event.status,
             published_at=event.published_at,
             campaign_id=event.campaign_id,
+            win_rate=event.win_rate,
+            pool_impact_percentage=event.pool_impact_percentage,
+            cluster_origin=event.cluster_origin,
+            hop_count=event.hop_count,
+            coordinated_flag=event.coordinated_flag,
         )
         self._session.add(model)
         await self._session.flush()
@@ -293,6 +298,13 @@ class CandidateEventRepository:
         model.status = event.status
         model.score = event.score
         model.raw_json = json.dumps(event.raw_json)
+        # Edge Intelligence enrichment — persist so the formatter can render
+        # predictive fields on retry paths without recomputing.
+        model.win_rate = event.win_rate
+        model.pool_impact_percentage = event.pool_impact_percentage
+        model.cluster_origin = event.cluster_origin
+        model.hop_count = event.hop_count
+        model.coordinated_flag = event.coordinated_flag
         if event.campaign_id is not None:
             model.campaign_id = event.campaign_id
         await self._session.flush()
@@ -317,6 +329,11 @@ class CandidateEventRepository:
             attempt_count=model.attempt_count,
             published_at=model.published_at,
             campaign_id=model.campaign_id,
+            win_rate=model.win_rate,
+            pool_impact_percentage=model.pool_impact_percentage,
+            cluster_origin=model.cluster_origin,
+            hop_count=model.hop_count,
+            coordinated_flag=bool(model.coordinated_flag),
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

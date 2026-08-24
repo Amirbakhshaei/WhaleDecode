@@ -49,7 +49,7 @@ def test_empty_ledger_yields_nothing():
 
 
 @pytest.mark.asyncio
-async def test_enrich_returns_empty_for_unknown_wallet(session_factory):
+async def test_enrich_cold_miss_returns_instant_baseline(session_factory):
     calls = []
 
     def uow_factory():
@@ -70,7 +70,11 @@ async def test_enrich_returns_empty_for_unknown_wallet(session_factory):
         return fake
 
     profiler = BehavioralProfiler(uow_factory)
-    assert await profiler.enrich("base", "0xdead") == {}
+    ctx = await profiler.enrich("base", "0xdead")
+    # Zero-latency directive: cold miss returns a baseline immediately
+    # (0ms third-party blocking) and backfills in the background.
+    assert ctx["wallet_win_rate_30d"] == 0.0
+    assert ctx["wallet_profile_cold_start"] is True
     assert calls == [("base", "0xdead")]
 
 

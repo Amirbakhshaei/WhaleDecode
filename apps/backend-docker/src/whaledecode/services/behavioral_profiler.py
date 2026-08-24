@@ -11,6 +11,7 @@ snapshot so the LLM still has intent context.
 Profiles are pre-computed rows — alert-time enrichment is one cached DB read,
 zero LLM tool latency.
 """
+import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Callable
@@ -148,11 +149,23 @@ class BehavioralProfiler:
             await uow.commit()
 
     async def enrich(self, chain: str, address: str) -> dict[str, Any]:
-        """Alert-time context: one cached read, no external calls."""
+        """Alert-time context: one cached read, no blocking third-party calls.
+
+        Cold miss → instant baseline (win_rate 0.0, 0ms third-party latency)
+        plus a fire-and-forget background task that backfills the profile from
+        our own ledger + price oracle so the next event for this wallet is warm.
+        """
+        chain, address = chain.lower(), address.lower()
         async with self._uow_factory() as uow:
             profile = await uow.wallet_profiles.get(chain, address)
         if profile is None:
-            return {}
+            asyncio.create_task(self._backfill(chain, address))
+            return {
+                "wallet_strategy": "Unknown",
+                "wallet_win_rate_30d": 0.0,
+                "wallet_intent_hint": "No tracked history yet; baseline confidence.",
+                "wallet_profile_cold_start": True,
+            }
         ctx: dict[str, Any] = {
             "wallet_strategy": profile.primary_strategy,
             "wallet_total_pnl_usd": profile.total_pnl_usd,
@@ -166,6 +179,13 @@ class BehavioralProfiler:
                 f"of tracked accumulations over the last 90 days."
             )
         return ctx
+
+    async def _backfill(self, chain: str, address: str) -> None:
+        """Background ledger rebuild — never blocks the alert pipeline."""
+        try:
+            await self.refresh_profile(chain, address)
+        except Exception as exc:
+            logger.warning(f"profile backfill failed for {address}: {exc}")
 
 
 def _row_to_ledger_entry(row: Any) -> dict[str, Any]:

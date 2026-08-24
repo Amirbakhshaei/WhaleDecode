@@ -95,45 +95,27 @@ def get_channel_alert_keyboard(
     bot_username: str = "",
     token_address: str = "",
 ) -> InlineKeyboardMarkup:
-    """URL deep-link buttons for public channel broadcasts.
+    """Parameterized inline keyboard for public channel broadcasts (Phase 3 spec).
 
-    Never use callback_data on public channel messages: anyone can click them and
-    callback payloads are not private. Each button opens a t.me deep link that
-    re-enters the bot via /start with a routed payload (tx_/wallet_).
-    Token purchases on EVM chains get a 1-click swap row (Module 4).
+    Strictly URL deep links into @WhaleDecodeBot (callback_data is forbidden on
+    public channel messages): Intelligence Hub, 1-Click Swap, Track Cluster,
+    and the on-chain graph explorer view.
     """
-    bot = (bot_username or Settings().BOT_USERNAME).strip().lstrip("@")
+    bot = (bot_username or Settings().BOT_USERNAME).strip().lstrip("@") or "whaledecodebot"
     code = _chain_code(chain)
     hub_url = f"https://t.me/{bot}?start=tx_{code}_{tx_hash}"
-    dossier_url = f"https://t.me/{bot}?start=wallet_{code}_{from_addr}"
+    cluster_url = f"https://t.me/{bot}?start=wallet_{code}_{from_addr}"
     explorer_url = explorer_tx_url(chain, tx_hash)
 
-    from whaledecode.services.swap_router import build_swap_links
-
-    settings = Settings()
-    links = list(
-        build_swap_links(
-            chain,
-            token_address,
-            fee_recipient=settings.SWAP_FEE_RECIPIENT,
-            fee_bps=settings.SWAP_FEE_BPS,
-        ).items()
-    )
-    # Two buy presets on the first row, custom amount on its own row.
-    swap_rows: list[list[InlineKeyboardButton]] = []
-    if links:
-        swap_rows.append([InlineKeyboardButton(text=label, url=url) for label, url in links[:2]])
-    if len(links) > 2:
-        swap_rows.append([InlineKeyboardButton(text=label, url=url) for label, url in links[2:]])
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⚡ Open Intelligence Hub", url=hub_url),
-                InlineKeyboardButton(text="🕵️ View Entity Dossier", url=dossier_url),
-            ],
-            [
-                InlineKeyboardButton(text="🔍 View on Explorer", url=explorer_url),
-            ],
-            *swap_rows,
-        ]
-    )
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="⚡ Open Intelligence Hub", url=hub_url)],
+        [
+            InlineKeyboardButton(text="🕵️ Track Cluster", url=cluster_url),
+            InlineKeyboardButton(text="🔍 View Graph", url=explorer_url),
+        ],
+    ]
+    if (token_address or "").strip():
+        swap_url = f"https://t.me/{bot}?start=swap_{token_address.strip()}"
+        # Spec order: swap row sits directly under the hub.
+        rows.insert(1, [InlineKeyboardButton(text="🛒 1-Click Swap", url=swap_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

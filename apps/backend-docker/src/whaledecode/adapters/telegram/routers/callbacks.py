@@ -151,3 +151,63 @@ async def handle_hub_actions(
         return
 
     await callback.message.answer("Unknown action.")
+
+
+@callback_router.callback_query(lambda c: c.data and c.data.startswith("swapsel:"))
+async def handle_swap_selection(callback: types.CallbackQuery, settings=None, **kwargs) -> None:
+    """Module 4 execution: user picked an amount -> live 0x Swap API v2 quote.
+
+    Runs strictly on-demand (user tap), never on the alert critical path. The
+    0.8% protocol fee is embedded in the quote via swapFeeBps/swapFeeRecipient;
+    execution happens in the user's own wallet via Permit2 — we stay
+    non-custodial end to end.
+    """
+    from whaledecode.adapters.zerox.client import ZeroXClient, wei
+    from whaledecode.services.swap_router import DEFAULT_FEE_BPS
+
+    parts = (callback.data or "").split(":")
+    if len(parts) != 4:
+        await callback.answer("Invalid swap selection.")
+        return
+    _, amount_str, chain_code, token = parts
+    try:
+        amount_eth = float(amount_str)
+    except ValueError:
+        await callback.answer("Invalid amount.")
+        return
+
+    chain = {"ETH": "ethereum", "BASE": "base", "ARB": "arbitrum"}.get(chain_code.upper(), "base")
+    fee_recipient = settings.SWAP_FEE_RECIPIENT if settings else ""
+    fee_bps = int(getattr(settings, "SWAP_FEE_BPS", DEFAULT_FEE_BPS)) if settings else DEFAULT_FEE_BPS
+
+    await callback.answer("Fetching 0x quote…")
+    client = ZeroXClient.from_settings(settings) if settings else ZeroXClient("")
+    quote = await client.quote(
+        chain,
+        token,
+        wei(amount_eth),
+        fee_recipient_bps=(fee_recipient, fee_bps) if fee_recipient else None,
+    )
+    buy_amount_wei = quote.get("buyAmount") or quote.get("grossBuyAmount") or ""
+    lines = [
+        f"🛒 <b>0x v2 Quote</b> — Buy for {amount_eth:g} ETH",
+        f"🪙 Token: <code>{token[:16]}…{token[-6:]}</code>",
+        f"🏦 Protocol fee: {fee_bps / 100:.1f}% (included)",
+    ]
+    markup = None
+    tx_to = quote.get("transaction", {}).get("data") if isinstance(quote.get("transaction"), dict) else None
+    if buy_amount_wei:
+        # Token decimals are unknown here; show raw units + the deterministic
+        # Matcha fallback where the wallet completes execution.
+        lines.append(f"📦 Expected out: <code>{int(buy_amount_wei):,}</code> base units (pre-decimals)")
+    if tx_to:
+        lines.append("✅ Quote ready — open it on Matcha to execute with your connected wallet.")
+    from whaledecode.services.swap_router import build_swap_links
+
+    links = build_swap_links(chain, token, fee_recipient=fee_recipient, fee_bps=fee_bps)
+    if links:
+        execute_url = links.get("⚡ Custom Swap") or next(iter(links.values()))
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🛒 Execute Swap", url=execute_url)]]
+        )
+    await callback.message.answer("\n".join(lines), reply_markup=markup)

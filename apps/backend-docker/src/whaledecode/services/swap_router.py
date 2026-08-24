@@ -1,19 +1,16 @@
-"""In-Bot 1-Click DEX Routing via aggregator deep-links (Module 4).
+"""In-Bot 1-Click DEX Routing (Module 4).
 
-Non-custodial: we only build URLs. The user's browser/wallet opens the
-aggregator with WhaleDecode's fee parameters baked in — no keys, no gas
-sponsorship, no swap infrastructure to operate.
-
-Fee capture:
-* 1inch (EVM): ``fee=<bps>`` + ``referrer=<address>`` query params.
-* Jupiter (Solana): fee taken via platform fee account; configured at the
-  Jupiter dashboard level, so the link just needs the t.me referrer marker.
+Two layers:
+* Deterministic deep-links (no I/O, used on the alert keyboard): execution
+  happens on Matcha — 0x's consumer app — with WhaleDecode's affiliate fee
+  parameters in the URL. Non-custodial, zero server-side latency.
+* On-demand 0x Swap API v2 quotes (``ZeroXClient``) when a user actually taps
+  a swap flow inside the bot: deterministic rate + fee preview before they
+  execute.
 """
 from urllib.parse import quote_plus
 
-# ponytail: single flat fee for all aggregators; per-chain fee overrides if
-# finance ever wants them.
-DEFAULT_FEE_BPS = 80  # 0.8%
+DEFAULT_FEE_BPS = 80  # 0.8% protocol value capture
 
 
 def _chain_slug(chain: str) -> str:
@@ -39,8 +36,8 @@ def build_swap_links(
 ) -> dict[str, str]:
     """Return {label: url} one-click buy buttons for a token purchase alert.
 
-    EVM chains route through 1inch Classic swap with affiliate fee params;
-    Solana falls back to Jupiter. Empty ``token_address`` yields {} (no button).
+    EVM chains route through Matcha (0x v2 frontend) carrying the affiliate
+    fee params; Solana falls back to Jupiter. Empty ``token_address`` → {}.
     """
     token_address = (token_address or "").strip()
     if not token_address:
@@ -57,15 +54,20 @@ def build_swap_links(
             "⚡ Custom Swap": base,
         }
     native = {"ethereum": "ETH", "base": "ETH", "arbitrum": "ETH"}[slug]
-    params = f"referrer={quote_plus(fee_recipient)}&fee={fee_bps}" if fee_recipient else ""
-    sep = "&" if params else ""
+    # Fee capture requires a registered recipient; without one the link is
+    # fee-free rather than mis-attributed.
+    fee_qs = (
+        f"feeBps={fee_bps}&affiliateAddress={quote_plus(fee_recipient)}"
+        if fee_recipient
+        else ""
+    )
 
-    def _oneinch(amount: float) -> str:
-        return (
-            f"https://app.1inch.io/#{slug}/swap/{native}/{token_address}"
-            f"?amount={amount}{sep}{params}"
-        )
+    def _matcha(amount: float | None) -> str:
+        url = f"https://matcha.xyz/swap/{slug}?sellToken={native}&buyToken={quote_plus(token_address)}"
+        if amount is not None:
+            url += f"&sellAmount={amount}"
+        return f"{url}&{fee_qs}" if fee_qs else url
 
-    links = {f"⚡ Buy {amount} {native}": _oneinch(amount) for amount in PRESETS}
-    links["⚡ Custom Swap"] = _oneinch(1.0).split("?")[0] + ("?" + params if params else "")
+    links = {f"⚡ Buy {amount} {native}": _matcha(amount) for amount in PRESETS}
+    links["⚡ Custom Swap"] = _matcha(None)
     return links

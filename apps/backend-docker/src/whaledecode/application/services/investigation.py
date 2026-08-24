@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import Callable
 from typing import Any
@@ -26,6 +27,13 @@ def _unpad_address(address: str) -> str:
     body = address[2:] if address.lower().startswith("0x") else address
     body = body.lower()
     return "0x" + body[-40:] if len(body) >= 40 else body
+
+
+def _opt_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _counterparty(event: dict[str, Any], side: str) -> str:
@@ -154,7 +162,11 @@ class InvestigationService:
         # Stage 2.5: Resolve counterparties to human-readable entity labels and derive
         # market context (CEX flow category) so the LLM reasons like a trader.
         await self._enrich_market_context(event_dict)
+        # Edge Intelligence fast path (deterministic pre-enrichment, no blocking
+        # third-party calls), then spawn the multi-hop cluster trace as a
+        # prefetch task — it runs concurrently with the LLM synthesis below.
         await self._enrich_edge_intelligence(event_dict)
+        trace_task = self._spawn_cluster_trace(event_dict)
 
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
         model_name = self._settings.MODEL_HEAVY_REASONING if self._settings else "heavy_reasoning"
@@ -165,6 +177,16 @@ class InvestigationService:
             f"[LLM_SYNTHESIS] Completed analysis for Event ID={event.id} "
             f"in {result.get('latency_ms', 0)}ms"
         )
+        if trace_task is not None:
+            # The trace had the whole LLM latency to finish; cap the wait so a
+            # slow RPC can never stall dispatch.
+            try:
+                await asyncio.wait_for(asyncio.shield(trace_task), timeout=5.0)
+            except (asyncio.TimeoutError, Exception) as exc:
+                log.warning(f"[EDGE_INTEL] cluster trace incomplete: {exc}")
+                trace_task.cancel()
+        # Copy deterministic enrichment onto the persisted entity.
+        self._sync_intel_fields(event, event_dict)
 
         async with self._uow_factory() as uow:
             persisted = await self._persist_event(uow, event)
@@ -233,8 +255,11 @@ class InvestigationService:
                 event["price_levels"] = levels
 
     async def _enrich_edge_intelligence(self, event: dict[str, Any]) -> None:
-        """Modules 1-3 pre-LLM enrichment. Every stage is best-effort and additive:
-        a failure stamps nothing rather than breaking the investigation."""
+        """Modules 1-3 fast enrichment. Deterministic, additive, fail-soft.
+
+        Only cached reads + one cached DexScreener call — the multi-hop trace
+        is spawned separately as a prefetch task (zero-latency critical path).
+        """
         raw_value = event.get("raw_json")
         raw: dict[str, Any] = dict(raw_value) if isinstance(raw_value, dict) else {}
         token = str(raw.get("address") or "").lower()
@@ -247,6 +272,7 @@ class InvestigationService:
             labels = {w.address.lower(): (w.label or w.category) for w in wallets}
         except Exception as exc:
             log.warning(f"[EDGE_INTEL] curated wallet lookup failed: {exc}")
+        event["_known_labels"] = labels
 
         # Module 3a — Pool Impact Ratio (DexScreener TVL, cached).
         value_usd = float(raw.get("value_usd") or 0.0)
@@ -254,8 +280,13 @@ class InvestigationService:
         purchases = await self._recent_smart_purchases(token, now_unix, set(labels))
         conviction = score_conviction(value_usd, pool_tvl, purchases, now_unix, smart_wallets=set(labels))
         event["conviction"] = conviction.to_context()
+        event["pool_impact_percentage"] = round(conviction.pool_impact_ratio * 100, 3) if pool_tvl > 0 else None
+        event["coordinated_flag"] = conviction.coordinated_wallets > 0
+        if conviction.badges:
+            event["intel_badges"] = conviction.badges
 
-        # Module 1 — behavioral profile (one cached read; no external calls here).
+        # Module 1 — behavioral profile (one cached read; cold miss returns a
+        # baseline instantly and backfills in the background).
         if self._profiler is not None:
             wallet_addr = _counterparty(event, "to")
             try:
@@ -263,21 +294,44 @@ class InvestigationService:
             except Exception as exc:
                 log.warning(f"[EDGE_INTEL] profiler enrich failed: {exc}")
 
-        # Module 2 — multi-hop funding attribution for unlabeled actors (async
-        # cost ~1-3s; only paid when the actor is genuinely unknown).
-        if self._graph_tracer is not None:
-            from_addr = _counterparty(event, "from")
-            if from_addr and from_addr not in labels:
-                try:
-                    trace = await self._graph_tracer.trace(chain, from_addr, known_labels=labels, now_unix=now_unix)
-                    if trace.attributed_label:
-                        cluster = f"Child of {trace.attributed_label}"
-                        if trace.stealth_accumulation:
-                            cluster += f" [stealth cluster of {trace.siblings_in_cluster} wallets]"
-                        event["funding_attribution"] = cluster
-                        event["funding_hops"] = trace.hops
-                except Exception as exc:
-                    log.warning(f"[EDGE_INTEL] graph trace failed: {exc}")
+    def _spawn_cluster_trace(self, event: dict[str, Any]) -> asyncio.Task | None:
+        """Module 2 prefetch: multi-hop funding attribution for unlabeled actors.
+
+        Runs while the LLM synthesizes (~seconds), so the ~1-3s Alchemy BFS adds
+        zero wall-clock latency to the alert pipeline."""
+        if self._graph_tracer is None:
+            return None
+        from_addr = _counterparty(event, "from")
+        labels = event.get("_known_labels") or {}
+        if not from_addr or from_addr in labels:
+            return None
+
+        async def _run() -> None:
+            trace = await self._graph_tracer.trace(
+                str(event.get("chain") or ""),
+                from_addr,
+                known_labels=labels,
+                now_unix=time.time(),
+            )
+            if trace.attributed_label:
+                cluster = f"Child of {trace.attributed_label}"
+                if trace.stealth_accumulation:
+                    cluster += f" [stealth cluster of {trace.siblings_in_cluster} wallets]"
+                event["funding_attribution"] = cluster
+                event["cluster_origin"] = trace.attributed_label
+                event["hop_count"] = trace.hops
+            event.pop("_known_labels", None)
+
+        return asyncio.create_task(_run())
+
+    @staticmethod
+    def _sync_intel_fields(event: CandidateEvent, event_dict: dict[str, Any]) -> None:
+        """Copy deterministic Edge Intelligence fields onto the persisted entity."""
+        event.win_rate = _opt_float(event_dict.get("wallet_win_rate_30d"))
+        event.pool_impact_percentage = _opt_float(event_dict.get("pool_impact_percentage"))
+        event.cluster_origin = event_dict.get("cluster_origin") or None
+        event.hop_count = event_dict.get("hop_count")
+        event.coordinated_flag = bool(event_dict.get("coordinated_flag"))
 
     async def _pool_tvl_usd(self, chain: str, token: str) -> float:
         """Deepest DexScreener pool liquidity for ``token`` on ``chain`` (0.0 unknown)."""

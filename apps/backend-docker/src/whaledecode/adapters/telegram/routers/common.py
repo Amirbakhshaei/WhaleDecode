@@ -1,6 +1,6 @@
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from whaledecode.adapters.telegram.keyboards import build_tx_action_hub, build_wallet_dossier_hub
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.application.services.user_service import (
@@ -11,6 +11,26 @@ from whaledecode.config.tiers import PLAN_LIMITS, PlanTier, get_limits
 from whaledecode.domain.exceptions import QuotaExceededError
 
 common_router = Router(name="common")
+
+
+def build_swap_amount_keyboard(token: str, chain_code: str = "BASE") -> InlineKeyboardMarkup:
+    """Quick-amount picker for the ``swap_{token}`` deep-link flow.
+
+    callback_data carries the full token address (chain code + amount + 42-char
+    address ≈ 57 bytes, within Telegram's 64-byte limit); the selected amount
+    triggers an on-demand 0x v2 quote in the callback handler.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚡ Buy 0.1 ETH", callback_data=f"swapsel:0.1:{chain_code}:{token}"),
+                InlineKeyboardButton(text="⚡ Buy 0.5 ETH", callback_data=f"swapsel:0.5:{chain_code}:{token}"),
+            ],
+            [
+                InlineKeyboardButton(text="⚡ Buy 1 ETH", callback_data=f"swapsel:1:{chain_code}:{token}"),
+            ],
+        ]
+    )
 
 
 @common_router.message(Command("start"))
@@ -48,6 +68,30 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
                 f"👛 Address: <code>{wallet}</code>\n\n"
                 f"Select an action to inspect or monitor this entity:",
                 reply_markup=build_wallet_dossier_hub(chain, wallet),
+            )
+            return
+
+        # Module 4: swap_{token_address} (optionally swap_{chain}_{token}) —
+        # one-click execution entry point from a channel purchase alert. The
+        # quote itself is fetched on demand when the user picks an amount,
+        # never during this handler.
+        if payload.startswith("swap_"):
+            from whaledecode.adapters.zerox.client import chain_id as zerox_chain_id
+
+            parts = payload.split("_")
+            if len(parts) == 2:
+                chain, token = "base", parts[1].lower()
+            else:
+                chain, token = parts[1].lower(), parts[-1].lower()
+            code = {"eth": "ETH", "ethereum": "ETH", "base": "BASE", "arb": "ARB", "arbitrum": "ARB"}.get(chain, "BASE")
+            supported = bool(zerox_chain_id(chain))
+            note = "" if supported else "\n⚠️ Live quotes unavailable on this chain — links only."
+            await message.answer(
+                f"🛒 <b>1-Click Swap</b>\n\n"
+                f"🔗 Chain: <code>{chain.upper()}</code>\n"
+                f"🪙 Token: <code>{token[:16]}…{token[-6:]}</code>{note}\n\n"
+                f"Pick an amount for a live 0x quote:",
+                reply_markup=build_swap_amount_keyboard(token, code),
             )
             return
 
