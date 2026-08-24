@@ -1,6 +1,7 @@
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
+from whaledecode.adapters.telegram.keyboards import build_tx_action_hub, build_wallet_dossier_hub
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.application.services.user_service import (
     UPGRADE_CTA_MESSAGE,
@@ -21,9 +22,38 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
     admin_ids = settings.ADMIN_USER_IDS if settings else []
     payload = (command.args or "").strip()
     if payload:
-        # Channel deep links: ?start=deepdive_<chain>_<tx> / ask_<chain>_<tx> /
-        # track_<chain>_<addr>; intra-platform legacy: analyze_<tx> / track_<wallet>.
-        # deepdive_/ask_ → on-chain event deep dive; track_ → a chat prompt about
+        # New Intelligence Hub deep links: present an inline action menu instead of
+        # executing a fixed command. tx-hash actions are URL deep links (the hash
+        # exceeds callback_data's 64-byte limit); wallet actions use callbacks.
+        if payload.startswith("tx_"):
+            parts = payload.split("_", 2)
+            chain = parts[1] if len(parts) > 2 else "ETH"
+            tx_hash = parts[-1]
+            await message.answer(
+                f"⚡ <b>WhaleDecode Intelligence Hub</b>\n\n"
+                f"🔗 Chain: <code>{chain.upper()}</code>\n"
+                f"📜 Tx: <code>{tx_hash[:12]}…{tx_hash[-8:]}</code>\n\n"
+                f"👇 Choose an investigation action:",
+                reply_markup=build_tx_action_hub(chain, tx_hash),
+            )
+            return
+
+        if payload.startswith("wallet_"):
+            parts = payload.split("_", 2)
+            chain = parts[1] if len(parts) > 2 else "ETH"
+            wallet = parts[-1].lower()
+            await message.answer(
+                f"👤 <b>Wallet Dossier Hub</b>\n\n"
+                f"🔗 Chain: <code>{chain.upper()}</code>\n"
+                f"👛 Address: <code>{wallet}</code>\n\n"
+                f"Select an action to inspect or monitor this entity:",
+                reply_markup=build_wallet_dossier_hub(chain, wallet),
+            )
+            return
+
+        # Channel / legacy deep links: ?start=deepdive_<chain>_<tx> / ask_<chain>_<tx> /
+        # net_<chain>_<tx> / track_<chain>_<addr>; intra-platform: analyze_<tx>.
+        # deepdive_/ask_/net_ → on-chain event analysis; track_ → a chat prompt about
         # that entity (one-tap address tracking is not wired into WalletService yet).
         parts = payload.split("_")
         action = parts[0]
@@ -31,6 +61,8 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
         target = parts[-1]
         if action == "track":
             prompt = f"Analyze and describe this wallet: {target}"
+        elif action == "net":
+            prompt = f"Map the counterparty network for this on-chain event ({chain}): {target}"
         elif action in ("analyze", "deepdive", "ask"):
             prompt = f"Deep dive into this on-chain event ({chain}): {target}"
         else:

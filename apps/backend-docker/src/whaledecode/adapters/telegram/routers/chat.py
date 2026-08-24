@@ -215,3 +215,52 @@ async def cmd_briefing(message: Message, investigation_service, uow_factory, set
         await message.answer(briefing[:4000])
     except Exception as e:
         await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")
+
+
+@chat_router.message()
+async def cmd_chat_text(message: Message, investigation_service, uow_factory, settings=None, **kwargs) -> None:
+    """Catch-all free-text handler: route any non-command message to the chat agent.
+
+    Powers the Intelligence Hub "Ask AI" flow — after clicking a button the user
+    types a follow-up and it is answered here.
+    """
+    question = (message.text or "").strip()
+    if not question:
+        return
+
+    async with uow_factory() as uow:
+        user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
+        limits = get_limits(user.plan)
+        is_admin = bool(settings and message.from_user.id in settings.ADMIN_USER_IDS)
+        if not is_admin and user.daily_chat_count >= limits.chat_per_day:
+            await message.answer(f"You've used {user.daily_chat_count}/{limits.chat_per_day} chats today. Upgrade for more.")
+            return
+        if not is_admin:
+            user.daily_chat_count += 1
+            await uow.users.update(user)
+        await uow.commit()
+
+    if is_greeting(question):
+        await message.answer(
+            "👋 Hey! I'm WhaleDecode — your on-chain intelligence bot.\n\n"
+            "Send me a wallet address, transaction hash, or token symbol to investigate!\n\n"
+            "Examples:\n"
+            "• <code>/ask 0x742d...</code>\n"
+            "• <code>/ask binance</code>\n"
+            "• <code>/decode 0x1234...</code>"
+        )
+        return
+
+    if not await _spend_quota(message, uow_factory, settings):
+        return
+
+    await message.answer("🧠 Thinking...")
+    try:
+        result = await investigation_service.chat(question, thread_id=str(message.from_user.id))
+        await message.answer(result[:4000])
+    except ConnectionError as e:
+        log.error("chat_text_connection_error", user_id=message.from_user.id, error=str(e))
+        await message.answer("LLM connection failed — check GROQ_API_KEY or try again shortly.")
+    except Exception as e:
+        log.error("chat_text_error", user_id=message.from_user.id, error=str(e))
+        await message.answer(f"Sorry, I encountered an error: {escape(str(e)[:200])}")

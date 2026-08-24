@@ -120,7 +120,7 @@ class _FakeUow:
 
 
 class _FakeInvestigation:
-    async def chat(self, msg, context=None, thread_id=None):
+    async def chat(self, msg, context=None, thread_id=None, model=None):
         return "Investigation result text."
 
     async def generate_briefing(self, user_id):
@@ -167,18 +167,37 @@ class _MatchUow(_FakeUow):
         self.curated_wallets = _MatchingWallets()
 
 
+# Routers are module-level singletons and may only attach to ONE Dispatcher.
+# Build a single shared dispatcher once and reuse it across every test in this
+# module (re-attaching to a second Dispatcher raises).
+_SHARED_DP: Dispatcher | None = None
+_SHARED_BOT: Bot | None = None
+_SHARED_SESSION: _RecordingSession | None = None
+
+
+def _get_shared_dp() -> tuple[Bot, Dispatcher, _RecordingSession]:
+    global _SHARED_DP, _SHARED_BOT, _SHARED_SESSION
+    if _SHARED_DP is None:
+        _SHARED_SESSION = _RecordingSession()
+        _SHARED_BOT = Bot(token="123456:FAKE", session=_SHARED_SESSION)
+        _SHARED_DP = Dispatcher()
+        _SHARED_DP["uow_factory"] = _FakeUow
+        _SHARED_DP["investigation_service"] = _FakeInvestigation()
+        _SHARED_DP["wallet_service"] = _FakeWalletService()
+        _SHARED_DP["settings"] = _FakeSettings()
+        _SHARED_DP.errors.register(_on_error)
+        _SHARED_DP.include_routers(
+            common_router, wallet_router, chat_router, admin_router, callback_router, payments_router
+        )
+    return _SHARED_BOT, _SHARED_DP, _SHARED_SESSION
+
+
 def _build_dp() -> tuple[Bot, Dispatcher, _RecordingSession]:
-    session = _RecordingSession()
-    bot = Bot(token="123456:FAKE", session=session)
-    dp = Dispatcher()
+    bot, dp, session = _get_shared_dp()
     dp["uow_factory"] = _FakeUow
     dp["investigation_service"] = _FakeInvestigation()
     dp["wallet_service"] = _FakeWalletService()
     dp["settings"] = _FakeSettings()
-    dp.errors.register(_on_error)
-    dp.include_routers(
-        common_router, wallet_router, chat_router, admin_router, callback_router, payments_router
-    )
     return bot, dp, session
 
 
@@ -262,3 +281,75 @@ async def test_all_commands_produce_replies_and_errors_surface():
     tx = "0x" + "a" * 64
     await _send(bot, dp, f"/ask {tx}")
     assert any("Investigation result text." in s for s in session.sent), session.sent
+
+
+class _HubCuratedWallets(_FakeWallets):
+    async def get_by_address_and_chain(self, address, chain):
+        return CuratedWallet(id=1, address=address, chain=Chain.ETH, label="Test Whale")
+
+
+class _HubUow(_FakeUow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.curated_wallets = _HubCuratedWallets()
+
+
+class _RecordingWalletService:
+    def __init__(self) -> None:
+        self.tracked: list = []
+        self.untracked: list = []
+
+    async def track(self, uid, wid, chain):
+        self.tracked.append((uid, wid, str(chain)))
+
+    async def untrack(self, uid, wid):
+        self.untracked.append((uid, wid))
+
+
+async def _send_callback(bot, dp, data: str) -> None:
+    from aiogram.types import CallbackQuery
+
+    msg = Message(
+        message_id=1, date=0, chat={"id": 1, "type": "private"},
+        from_user={"id": 42, "is_bot": False, "first_name": "tester"}, text="hub",
+    )
+    cb = CallbackQuery(
+        id="1", from_user={"id": 42, "is_bot": False, "first_name": "tester"},
+        chat_instance="x", message=msg, data=data,
+    )
+    await dp.feed_update(bot, Update(update_id=1, callback_query=cb))
+
+
+def _hub_dp(wallet_service) -> tuple[Bot, Dispatcher, _RecordingSession]:
+    bot, dp, session = _get_shared_dp()
+    dp["uow_factory"] = _HubUow
+    dp["investigation_service"] = _FakeInvestigation()
+    dp["wallet_service"] = wallet_service
+    dp["settings"] = _FakeSettings()
+    return bot, dp, session
+
+
+async def test_tx_deep_link_shows_intelligence_hub():
+    bot, dp, session = _hub_dp(_FakeWalletService())
+    session.sent.clear()
+    await _send(bot, dp, "/start tx_ETH_0x" + "a" * 62)
+    assert any("Intelligence Hub" in s for s in session.sent), session.sent
+    assert any("Choose an investigation action" in s for s in session.sent), session.sent
+
+
+async def test_wallet_deep_link_shows_dossier_hub():
+    bot, dp, session = _hub_dp(_FakeWalletService())
+    session.sent.clear()
+    await _send(bot, dp, "/start wallet_ETH_0x" + "a" * 40)
+    assert any("Wallet Dossier Hub" in s for s in session.sent), session.sent
+    assert any("Select an action" in s for s in session.sent), session.sent
+
+
+async def test_hub_track_callback_toggles_subscription():
+    wsvc = _RecordingWalletService()
+    bot, dp, session = _hub_dp(wsvc)
+    session.sent.clear()
+    await _send_callback(bot, dp, "act:track:ETH:0x" + "a" * 40)
+    assert wsvc.tracked, session.sent
+    assert wsvc.tracked[0][0] == 1  # fake user.id
+    assert wsvc.tracked[0][1] == 1  # curated wallet id

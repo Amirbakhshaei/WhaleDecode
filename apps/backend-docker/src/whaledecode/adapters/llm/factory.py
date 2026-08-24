@@ -76,7 +76,7 @@ class LLMFactory:
         )
         return create_groq_with_key_fallback(
             primary_key=groq_key,
-            model=self._settings.MODEL_FAST_CHAT,
+            model=self._settings.GROQ_MODEL,
             secondary_key=secondary_key,
             temperature=0.3,
         )

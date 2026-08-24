@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     MODEL_FAST_CHAT: str = "llama-3.1-8b-instant"
     DEFAULT_CHEAP_MODEL: str = "llama-3.1-8b-instant"
     DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
+    # LLM — Groq chat model for the bot conversational path (deep links, /ask, /decode).
+    # llama-3.1-8b-instant 404s on Groq, so the default is the 70b versatile model.
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
     MAX_COST_PER_RUN_USD: float = 0.03
 
     # LLM — /ask bot (OpenAI gpt-oss-20b, Groq Llama-70b fallback when no OpenAI key)
