@@ -48,9 +48,15 @@ _SELECT_TOP = text(
             ) AS rn
         FROM curated_wallets
         WHERE is_active = TRUE
+          -- Strict whitelist: human smart money only
           AND category IN ('Smart Money', 'Notable Whale', 'VC Fund', 'Kol Trader')
-          AND category NOT IN ('Bridge', 'Exchange', 'CEX Reserve', 'DEX', 'Infrastructure', 'Dao')
-          AND tx_count_30d < 600
+          -- Explicit blacklists
+          AND category NOT IN ('Bridge', 'Exchange', 'CEX Reserve', 'DEX', 'Infrastructure', 'Dao', 'MEV Bot')
+          -- Velocity ceiling: max ~10 tx/day (300 in 30 days)
+          AND tx_count_30d < 300
+          AND label NOT ILIKE '%hot wallet%'
+          AND label NOT ILIKE '%binance%'
+          AND label NOT ILIKE '%coinbase%'
     )
     SELECT address, chain, quality_score, category
     FROM ranked
