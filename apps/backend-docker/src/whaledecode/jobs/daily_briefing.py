@@ -1,6 +1,5 @@
 import structlog
 from aiogram import Bot
-
 from whaledecode.adapters.db.session import async_sessionmaker
 from whaledecode.config.settings import Settings
 

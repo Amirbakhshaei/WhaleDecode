@@ -427,11 +427,11 @@ def build_investigation_service(
 ) -> tuple[async_sessionmaker[AsyncSession], InvestigationService, ReasonerPort]:
     """Wire DB session + LLM graph into an InvestigationService."""
     from whaledecode.adapters.alchemy.transfers import AlchemyTransfersClient
-    from whaledecode.adapters.arkham.client import ArkhamClient
     from whaledecode.adapters.db.session import create_session_factory
     from whaledecode.adapters.llm.factory import LLMFactory
     from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
     from whaledecode.adapters.pricing.oracle import PriceOracle
+    from whaledecode.adapters.zerion.client import ZerionClient
     from whaledecode.services.behavioral_profiler import BehavioralProfiler
     from whaledecode.services.graph_tracer import GraphTracer
 
@@ -440,10 +440,8 @@ def build_investigation_service(
     reasoner = LangGraphReasoner(settings, llm_factory)
     price_oracle = PriceOracle()
     uow_factory = lambda: UnitOfWork(session_factory)  # noqa: E731
-    arkham = ArkhamClient(
-        settings.ARKHAM_API_KEY.get_secret_value() if settings.ARKHAM_API_KEY else ""
-    )
-    profiler = BehavioralProfiler(uow_factory, price_oracle, arkham)
+    zerion = ZerionClient.from_settings(settings)
+    profiler = BehavioralProfiler(uow_factory, price_oracle, zerion)
     graph_tracer = GraphTracer(uow_factory, AlchemyTransfersClient.from_settings(settings))
     return (
         session_factory,

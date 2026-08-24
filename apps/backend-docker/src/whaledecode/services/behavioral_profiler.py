@@ -5,8 +5,8 @@ Win-rate = share of the wallet's past accumulations whose token is up >= 10%
 since entry (entry price at event time, current price as the mark — ponytail
 approximation; a proper 72h-window backtest needs stored price series).
 
-Option B fallback: wallets with no self-observed history get an Arkham
-snapshot so the LLM still has intent context.
+Option B fallback: wallets with no self-observed history get a Zerion PnL
+snapshot (free tier, background-only) so the LLM still has intent context.
 
 Profiles are pre-computed rows — alert-time enrichment is one cached DB read,
 zero LLM tool latency.
@@ -103,11 +103,11 @@ class BehavioralProfiler:
         self,
         uow_factory: Callable[[], Any],
         price_oracle: Any | None = None,
-        arkham_client: Any | None = None,
+        zerion_client: Any | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._price_oracle = price_oracle
-        self._arkham = arkham_client
+        self._zerion = zerion_client
 
     async def refresh_profile(self, chain: str, address: str) -> None:
         """Recompute one wallet's profile from its own ledger; upsert idempotently."""
@@ -135,13 +135,13 @@ class BehavioralProfiler:
             "recent_actions_summary": _summarize(events),
             "source": "self_observed",
         }
-        if not computed and self._arkham is not None:
-            snapshot = await self._arkham.wallet_snapshot(chain, address)
+        if not computed and self._zerion is not None:
+            snapshot = await self._zerion.wallet_snapshot(chain, address)
             values.update(
                 {
                     "total_pnl_usd": snapshot.get("pnl_usd", 0.0),
                     "primary_strategy": snapshot.get("label") or "Unknown",
-                    "source": "arkham",
+                    "source": "zerion",
                 }
             )
         async with self._uow_factory() as uow:

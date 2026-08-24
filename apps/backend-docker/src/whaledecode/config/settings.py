@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     DUNE_API_KEY: SecretStr | None = None  # live Dune Spellbook labels (free tier, then falls back to static seed)
 
     # Edge Intelligence
-    ARKHAM_API_KEY: SecretStr | None = None  # Module 1 fallback for unobserved wallets
+    ZERION_API_KEY: SecretStr | None = None  # Module 1 cold-start PnL fallback (free tier: 2K req/day)
     ZEROX_API_KEY: SecretStr | None = None  # Module 4 0x Swap API v2 quotes
     SWAP_FEE_BPS: int = 80  # Module 4 value capture (80 bps = 0.8%)
     SWAP_FEE_RECIPIENT: str = ""  # fee-refundable address registered with the aggregator
