@@ -128,11 +128,13 @@ class InvestigationService:
             event.status = "skipped"
             async with self._uow_factory() as uow:
                 await self._persist_skipped(uow, event)
+            log.info(f"[FILTER_SKIP] Event ID={event.id} marked as skipped. Reason='Below $50k USD gate' | Tx={event.tx_hash}")
             return {"status": "skipped", "reason": "Below $50k USD gate"}
         if not self._gate.should_investigate(event):
             event.status = "skipped"
             async with self._uow_factory() as uow:
                 await self._persist_skipped(uow, event)
+            log.info(f"[FILTER_SKIP] Event ID={event.id} marked as skipped. Reason='Below gate threshold' | Tx={event.tx_hash}")
             return {"status": "skipped", "reason": "Below gate threshold"}
 
         # Stage 2: Payload sanitization — compact raw RPC data for token efficiency.

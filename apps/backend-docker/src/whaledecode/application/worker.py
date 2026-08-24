@@ -98,7 +98,15 @@ class BackgroundAIWorker:
                 async with UnitOfWork(self._session_factory) as uow:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
-                log.info("worker_event_skipped", extra={"dedupe_key": event.dedupe_key, "status": "skipped"})
+                log.info(
+                    "worker_event_skipped",
+                    extra={
+                        "dedupe_key": event.dedupe_key,
+                        "status": "skipped",
+                        "reason": result.get("reason", "unknown"),
+                        "tx": str(event.tx_hash),
+                    },
+                )
                 return
 
             score, value_usd = self._channel_metrics(event, result)
@@ -113,10 +121,12 @@ class BackgroundAIWorker:
                     "worker_event_below_channel_floor",
                     extra={
                         "dedupe_key": event.dedupe_key,
+                        "reason": "Below channel publish floor (score/value)",
                         "score": score,
                         "value_usd": value_usd,
                         "min_score": min_score,
                         "min_usd": min_usd,
+                        "tx": str(event.tx_hash),
                     },
                 )
                 return
@@ -142,9 +152,11 @@ class BackgroundAIWorker:
                         "worker_event_capped",
                         extra={
                             "dedupe_key": event.dedupe_key,
+                            "reason": "Anti-fatigue alert cap reached",
                             "hourly": hourly,
                             "daily": daily,
                             "chain_daily": chain_daily,
+                            "tx": str(event.tx_hash),
                         },
                     )
                     return
@@ -261,7 +273,7 @@ class BackgroundAIWorker:
                 await uow.candidate_events.update(event)
                 await uow.commit()
                 log.info("worker_dispatched_campaign_created", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
-                log.info(f"[TELEGRAM_DISPATCH] Successfully broadcasted Event ID={event.id} to Telegram channel={self._channel_id}")
+                log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={msg_id}")
                 return True
 
             if action == "MUTATED":
@@ -278,7 +290,7 @@ class BackgroundAIWorker:
                 await uow.candidate_events.update(event)
                 await uow.commit()
                 log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
-                log.info(f"[TELEGRAM_DISPATCH] Successfully broadcasted Event ID={event.id} to Telegram channel={self._channel_id}")
+                log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={campaign.telegram_message_id}")
                 return True
 
             # THREADED
@@ -295,5 +307,5 @@ class BackgroundAIWorker:
             await uow.candidate_events.update(event)
             await uow.commit()
             log.info("worker_dispatched_campaign_threaded", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
-            log.info(f"[TELEGRAM_DISPATCH] Successfully broadcasted Event ID={event.id} to Telegram channel={self._channel_id}")
+            log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={new_msg_id}")
             return True
