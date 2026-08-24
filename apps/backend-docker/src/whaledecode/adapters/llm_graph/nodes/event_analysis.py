@@ -5,87 +5,57 @@ from langchain_core.messages import AIMessage, SystemMessage
 from whaledecode.adapters.llm_graph.utils import trim_history
 from whaledecode.domain.schemas.llm_outputs import EventAnalysisResult
 
-SYSTEM_PROMPT = """YOU ARE THE WHALEDECODE ON-CHAIN REASONING AGENT.
-Analyze the provided transaction data and telemetry as trader-intelligence, not data echo.
 
-# RULES (STRICT)
-1. ZERO RAW HEX ADDRESSES (0x...) or hashes in your analysis.
-2. USE RESOLVED ENTITY LABELS (e.g., "Binance 16", "Wintermute MM", "Unlabeled Cold Wallet") or macro terms ("CEX Outflow", "Cold Storage").
-3. DO NOT repeat basic transaction metrics ("X transferred Y to Z"). Provide MARKET CONTEXT.
-4. Base every number ONLY on the provided data or tool results. Never fabricate percentages, price levels, or volume figures.
-5. Describe the financial significance and market impact in plain English for professional traders.
+def build_synthesis_prompt(event_data: dict) -> str:
+    """Build a fully self-contained Tier 1 synthesis prompt.
 
-# FORMATTING (CRITICAL)
-- Write clean, natural, high-signal financial intelligence in full sentences.
-- NEVER output brackets ('[', ']'), plus signs ('+'), or placeholder labels (e.g. 'Vector:', 'Directional Bias:', 'From Entity').
-- NEVER output 'N/A' or mention that a data point is missing. If a figure is genuinely absent, reason qualitatively in prose instead of naming the absence.
+    All verified on-chain facts are inlined as a structured block so the LLM
+    needs no external lookups to reason about the transaction."""
+    raw = event_data.get("raw_json") if isinstance(event_data.get("raw_json"), dict) else {}
+    chain = event_data.get("chain") or raw.get("chain") or "Unknown"
+    asset = event_data.get("asset") or raw.get("symbol") or raw.get("token") or "Unknown Token"
+    value = event_data.get("total_value_usd") or event_data.get("value_usd") or raw.get("value_usd") or 0.0
+    try:
+        value_fmt = f"${float(value):,.2f}"
+    except (TypeError, ValueError):
+        value_fmt = "$0.00"
+    from_label = event_data.get("from_label") or "Unknown Wallet"
+    to_label = event_data.get("to_label") or "Unknown Wallet"
+    from_category = event_data.get("from_category") or "Unlabeled"
+    to_category = event_data.get("to_category") or "Unlabeled"
+    from_addr = str(event_data.get("from_address") or raw.get("from") or "")
+    to_addr = str(event_data.get("to_address") or raw.get("to") or "")
+    flow_type = event_data.get("flow_type") or event_data.get("event_category") or "Unknown"
+    sender_tx = event_data.get("sender_tx_count_30d") or raw.get("tx_count_30d") or event_data.get("tx_count_30d") or 0
+    return f"""You are a quantitative on-chain intelligence analyst.
+Analyze the transaction strictly based on the verified on-chain parameters below.
 
-# OUTPUT
-Respond with a valid JSON object containing exactly these four fields (the runtime enforces the schema):
+STRICT RULES:
+1. ZERO RAW HEX ADDRESSES (0x...) or hashes in your analysis. Use resolved entity labels or macro terms.
+2. NEVER invent off-chain orderbook mechanics or liquidity depth (do not claim "cleared orderbooks" for wallet transfers).
+3. Clearly classify the flow:
+   - CEX Outflow (Exchange -> Wallet): Spot accumulation / custody withdrawal.
+   - CEX Inflow (Wallet -> Exchange): Sell preparation / liquidity provision.
+   - Internal Rebalancing (Exchange -> Exchange): Neutral exchange infrastructure maintenance.
+   - Smart Money Transfer (Whale -> Whale): Strategic OTC or treasury movement.
+4. Base every number ONLY on the data block below. Never fabricate percentages, price levels, or volume figures.
+5. NEVER output brackets ('[', ']'), plus signs ('+'), or 'N/A'. Reason qualitatively if a figure is absent.
 
-- entity_profile: 1 sentence stating the attribution flow (e.g. Binance 16 to Cold Storage) and the behavioral archetype (e.g. Fresh Accumulator, MM Rebalancing).
+OUTPUT (respond with a valid JSON object, exactly these four fields — the runtime enforces the schema):
+- entity_profile: 1 sentence stating the attribution flow and behavioral archetype.
 - context: 1 sentence on market context, execution timing, or volume magnitude.
 - impact: 1 sentence on supply shock, orderbook drain, or directional buy/sell bias.
 - conviction_score: integer 0-100 confidence based on entity quality and volume.
 
-# DATA GROUNDING
-Use the entity labels and exact event data provided in the appended context blocks. Do NOT invent, hallucinate, or assume wallet labels, token amounts, or USD values.
-Never fabricate a transaction hash, block number, address, or value that is not present in the event payload or tool responses."""
-
-
-def _entity_context(event: dict) -> str:
-    """Render the resolved entity labels for the event into a prompt block.
-
-    Enrichment happens upstream (InvestigationService) and lands on the event dict
-    as from_entity/to_entity; this node only injects what is already there.
-    """
-    lines = [f"{side}_entity: {event.get(f'{side}_entity')}" for side in ("from", "to") if event.get(f"{side}_entity")]
-    return "\n".join(lines)
-
-
-def _market_context(event: dict) -> str:
-    """Render the market-context slot values for the event into a prompt block."""
-    return "\n".join(
-        f"{key}: {event.get(key) or 'Unavailable'}"
-        for key in ("from_label", "to_label", "event_category", "24h_vol_usd")
-    )
-
-
-def prepare_llm_context(event: dict) -> dict:
-    """Build the exact-amount + price-level facts the LLM must anchor on.
-
-    Every field comes from the enriched event payload (stamped by
-    InvestigationService) or the raw RPC log — never fabricated. Values are
-    rendered for human reading so the LLM quotes them verbatim instead of
-    guessing from memory. Deliberately lean: high/low levels only, no raw
-    candle dumps.
-    """
-    raw = event.get("raw_json") if isinstance(event.get("raw_json"), dict) else {}
-    token_amount = event.get("token_amount")
-    if token_amount is None:
-        token_amount = _first_present(raw, ("token_amount", "amount"))
-    asset = event.get("asset") or raw.get("symbol") or raw.get("token") or "Unknown Token"
-    value_usd = event.get("total_value_usd")
-    if value_usd is None:
-        value_usd = _first_present(raw, ("value_usd", "total_value_usd"))
-    price_at = event.get("price_at_timestamp")
-
-    def _fmt(value, fmt):
-        try:
-            return fmt(float(value))
-        except (TypeError, ValueError):
-            return "Unavailable"
-
-    levels_text = _render_price_levels(event.get("price_levels"))
-    return {
-        "asset": asset,
-        "token_amount_formatted": _fmt(token_amount, lambda v: f"{v:,.4f}"),
-        "total_value_usd": _fmt(value_usd, lambda v: f"${v:,.0f}"),
-        "price_at_timestamp": _fmt(price_at, lambda v: f"${v:,.6f}"),
-        "chain": event.get("chain") or raw.get("chain") or "Unknown",
-        "flow_type": event.get("flow_type") or event.get("event_category") or "Unknown",
-        "key_price_levels": levels_text,
-    }
+TRANSACTION DATA:
+- Chain: {chain}
+- Asset: {asset}
+- Total Value USD: {value_fmt}
+- Sender: {from_label} ({from_category}) [{from_addr[:10]}...]
+- Receiver: {to_label} ({to_category}) [{to_addr[:10]}...]
+- Flow Classification: {flow_type}
+- Historical Activity (30d): {sender_tx} txs
+"""
 
 
 def _render_price_levels(levels) -> str:
@@ -109,14 +79,6 @@ def _render_price_levels(levels) -> str:
     )
 
 
-def _first_present(raw: dict, keys: tuple[str, ...]):
-    for key in keys:
-        value = raw.get(key)
-        if value is not None and value != "":
-            return value
-    return None
-
-
 def create_analysis_node(llm: BaseChatModel):
     structured_llm = llm.with_structured_output(EventAnalysisResult)
 
@@ -125,19 +87,10 @@ def create_analysis_node(llm: BaseChatModel):
         # before this node ran. Pass the history through as-is so tool calls stay
         # paired with their tool responses — no manual re-injection of the event.
         history = trim_history(state.get("messages", []))
-        entities = _entity_context(state.get("event_data", {}))
-        market = _market_context(state.get("event_data", {}))
-        exact = prepare_llm_context(state.get("event_data", {}))
-        levels = exact.pop("key_price_levels", "Unavailable")
-        prompt = SYSTEM_PROMPT
-        if entities:
-            prompt += f"\n\n# EVENT ENTITIES\n{entities}"
-        if market:
-            prompt += f"\n\n# MARKET CONTEXT\n{market}"
-        prompt += "\n\n# EXACT AMOUNTS (cite these verbatim)\n" + "\n".join(
-            f"{key}: {value}" for key, value in exact.items()
-        )
-        prompt += f"\n\n# KEY PRICE LEVELS (USD, cite these)\n{levels}"
+        prompt = build_synthesis_prompt(state.get("event_data", {}))
+        levels = _render_price_levels(state.get("event_data", {}).get("price_levels"))
+        if levels != "Unavailable":
+            prompt += f"\n\n# KEY PRICE LEVELS (USD, cite these)\n{levels}"
         result: EventAnalysisResult = await structured_llm.ainvoke(
             [SystemMessage(content=prompt), *history]
         )

@@ -188,8 +188,10 @@ class InvestigationService:
         for side in ("from", "to"):
             address = _counterparty(event, side)
             label, tags = labels.get(address, ("", []))
-            kinds.append(_wallet_kind(label, tags))
+            kind = _wallet_kind(label, tags)
+            kinds.append(kind)
             event[f"{side}_label"] = label or "Unlabeled EOA"
+            event[f"{side}_category"] = {"cex": "CEX", "cold": "Cold Storage"}.get(kind, label or "Unlabeled EOA")
             event[f"{side}_entity"] = f"{event[f'{side}_label']} ({address[:6]}...{address[-4:]})" if address else event[f"{side}_label"]
         event["event_category"] = _event_category(*kinds)
         event["flow_type"] = event["event_category"]

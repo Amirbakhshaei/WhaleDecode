@@ -22,6 +22,27 @@ _NEUTRAL_FALLBACK = {
 # Sentinels the LLM uses for "data missing" — treated as absent, not surfaced.
 _MISSING_RE = re.compile(r"^\s*\[?\s*(n/?a|none|null|-|tbd)\s*\]?\s*$", re.IGNORECASE)
 
+# Placeholder / fallback phrases that must NEVER be broadcast to the live channel.
+FALLBACK_PHRASES = {
+    "entity under analysis",
+    "market context unavailable",
+    "impact under assessment",
+    "unknown context",
+    "context unavailable",
+}
+
+
+def is_valid_synthesis(summary_text: str | None) -> bool:
+    """Gate broadcast: reject empty / placeholder / partial LLM synthesis.
+
+    Prevents neutral fallback strings (or truncated output) from reaching the
+    public channel when synthesis times out or schema parsing partially fails.
+    """
+    if not summary_text or len(summary_text.strip()) < 40:
+        return False
+    lowered = summary_text.lower()
+    return not any(phrase in lowered for phrase in FALLBACK_PHRASES)
+
 
 def _is_missing(text: Any) -> bool:
     """True when the LLM returned an explicit 'no data' sentinel or nothing."""
@@ -406,24 +427,6 @@ def format_alert(alert_data: dict[str, Any]) -> str:
 
     from_label = escape(str(alert_data.get("from_label") or "Unknown Wallet"))
     to_label = escape(str(alert_data.get("to_label") or "Unknown Wallet"))
-    track_link = escape(str(alert_data.get("track_link") or ""), quote=True)
-    analyze_link = escape(str(alert_data.get("analyze_link") or ""), quote=True)
-
-    # Intra-platform actions footer: route users back into our own bot.
-    action_line = ""
-    if track_link and analyze_link:
-        if chain.upper() in ("ETH", "ETHEREUM"):
-            action_line = (
-                f"👇 <b>WhaleDecode Platform Actions:</b>\n"
-                f"🕵️‍♂️ <a href=\"{track_link}\">Track This Entity</a> | "
-                f"💬 <a href=\"{analyze_link}\">Ask AI About Tx</a>"
-            )
-        else:
-            action_line = (
-                f"👇 <b>WhaleDecode Platform Actions:</b>\n"
-                f"⚡ <a href=\"{track_link}\">Auto-Track Wallet</a> | "
-                f"💬 <a href=\"{analyze_link}\">Deep Dive Tx</a>"
-            )
 
     # ------------------------------------------------------------------
     # TEMPLATE A: L1 Mainnet (ETH)
@@ -439,8 +442,7 @@ def format_alert(alert_data: dict[str, Any]) -> str:
             f"🧠 <b>Agentic Synthesis:</b>\n"
             f"• <b>Entity:</b> {profile}\n"
             f"• <b>Context:</b> {context}\n"
-            f"• <b>Impact:</b> {impact}\n\n"
-            f"{action_line}"
+            f"• <b>Impact:</b> {impact}\n"
         )
 
     # ------------------------------------------------------------------
@@ -454,6 +456,5 @@ def format_alert(alert_data: dict[str, Any]) -> str:
         f"🎯 <b>Conviction Score:</b> {score}/100\n\n"
         f"🧠 <b>Agentic Synthesis:</b>\n"
         f"• <b>Profile:</b> {profile}\n"
-        f"• <b>Impact:</b> {impact}\n\n"
-        f"{action_line}"
+        f"• <b>Impact:</b> {impact}\n"
     )

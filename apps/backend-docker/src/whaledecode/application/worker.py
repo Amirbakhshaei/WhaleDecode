@@ -16,6 +16,10 @@ from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, Telegra
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.db.uow import UnitOfWork
+from whaledecode.adapters.telegram.formatters.channel_formatter import (
+    is_valid_synthesis,
+    parse_synthesis_points,
+)
 from whaledecode.application.services.investigation import InvestigationService
 from whaledecode.config.alert_policy import GLOBAL_POLICY, policy_for
 from whaledecode.config.settings import Settings
@@ -160,6 +164,28 @@ class BackgroundAIWorker:
                         },
                     )
                     return
+
+            # Pre-publish gatekeeper: never broadcast placeholder/fallback synthesis.
+            synthesis = parse_synthesis_points(result)
+            if not is_valid_synthesis(
+                " ".join([synthesis["profile"], synthesis["context"], synthesis["impact"]])
+            ):
+                async with UnitOfWork(self._session_factory) as uow:
+                    await uow.candidate_events.set_status(event.id, "skipped")
+                    await uow.commit()
+                log.info(
+                    "worker_event_synthesis_invalid",
+                    extra={
+                        "dedupe_key": event.dedupe_key,
+                        "reason": "Synthesis contains fallback/placeholder text",
+                        "tx": str(event.tx_hash),
+                    },
+                )
+                log.info(
+                    f"[DISPATCH_SKIP] Event ID={event.id} suppressed: synthesis failed validation "
+                    f"(fallback/placeholder). Tx={event.tx_hash}"
+                )
+                return
 
             dispatched = await self._dispatch(event, result)
             async with UnitOfWork(self._session_factory) as uow:

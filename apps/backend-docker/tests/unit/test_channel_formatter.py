@@ -4,6 +4,8 @@ from whaledecode.adapters.telegram.formatters.channel_formatter import (
     format_alert,
     format_channel_post_markdown,
     format_premium_event_post,
+    is_valid_synthesis,
+    parse_synthesis_points,
     truncate_hash,
 )
 
@@ -251,9 +253,11 @@ class TestFormatAlert:
         html = format_alert(data)
         raw = TRACE_EVENT["raw_json"]
         tx = TRACE_EVENT["tx_hash"]
-        assert "WhaleDecode Platform Actions" in html
-        assert "Track This Entity" in html
-        assert "Ask AI About Tx" in html
+        # In-body duplicate action links are removed; deep links live in the
+        # inline keyboard (see get_channel_alert_keyboard).
+        assert "WhaleDecode Platform Actions" not in html
+        assert "Track This Entity" not in html
+        assert "Ask AI About Tx" not in html
         assert data["track_link"] == f"https://t.me/whaledecodebot?start=track_{raw['from']}"
         assert data["analyze_link"] == f"https://t.me/whaledecodebot?start=analyze_{tx}"
 
@@ -265,8 +269,31 @@ class TestFormatAlert:
         assert "🛣️ <b>Flow:</b>" not in html  # L2 omits the flow line
         assert "<b>Profile:</b>" in html
         assert "<b>Impact:</b>" in html
-        assert "Auto-Track Wallet" in html
-        assert "Deep Dive Tx" in html
+        # In-body action links removed; they live in the inline keyboard.
+        assert "Auto-Track Wallet" not in html
+        assert "Deep Dive Tx" not in html
+
+    def test_is_valid_synthesis_rejects_fallback(self):
+        # Fallback/placeholder synthesis must never be broadcast.
+        assert is_valid_synthesis(None) is False
+        assert is_valid_synthesis("") is False
+        assert is_valid_synthesis("Entity under analysis.") is False
+        assert is_valid_synthesis("Market context unavailable for this tx.") is False
+        # A real, complete synthesis passes.
+        good = (
+            "Binance 16 moved 12.4M USDC to a fresh cold wallet. "
+            "Spot accumulation signals reduced immediate exchange supply. "
+            "Bullish Accumulation."
+        )
+        assert is_valid_synthesis(good) is True
+
+    def test_dispatch_gate_suppresses_fallback_card(self):
+        # When the three synthesis points collapse to neutral fallbacks, the
+        # combined text trips is_valid_synthesis and the worker skips broadcast.
+        report = {"entity_profile": "Entity under analysis.", "context": "Market context unavailable.", "impact": "Impact under assessment."}
+        synthesis = parse_synthesis_points(report)
+        combined = " ".join([synthesis["profile"], synthesis["context"], synthesis["impact"]])
+        assert is_valid_synthesis(combined) is False
 
     def test_html_escaping(self):
         analysis = {"risk_score": 0.3, "summary": "**Action:** <script>alert(1)</script>"}
