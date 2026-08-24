@@ -6,6 +6,10 @@ from whaledecode.adapters.db.repositories.briefing import BriefingRepository
 from whaledecode.adapters.db.repositories.campaign import CampaignRepository
 from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
+from whaledecode.adapters.db.repositories.edge_intelligence import (
+    FundingEdgeRepository,
+    WalletProfileRepository,
+)
 from whaledecode.adapters.db.repositories.tracked_wallet import TrackedWalletRepository
 from whaledecode.adapters.db.repositories.user import UserRepository
 
@@ -26,6 +30,8 @@ class UnitOfWork:
         self.agent_runs = AgentRunRepository(self._session)
         self.briefings = BriefingRepository(self._session)
         self.admin_audit_logs = AdminAuditLogRepository(self._session)
+        self.wallet_profiles = WalletProfileRepository(self._session)
+        self.funding_edges = FundingEdgeRepository(self._session)
         return self
 
     @property

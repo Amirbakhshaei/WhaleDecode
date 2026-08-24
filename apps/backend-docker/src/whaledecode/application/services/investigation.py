@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from aiolimiter import AsyncLimiter
+from cachetools import TTLCache  # type: ignore[import-untyped]
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from whaledecode.adapters.chain.normalizer import transfer_amount
@@ -13,6 +14,7 @@ from whaledecode.adapters.telegram.formatters.relay import RelayFormatter
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
+from whaledecode.domain.policies.conviction import Purchase, score_conviction
 from whaledecode.domain.ports.reasoner import ReasonerPort
 from whaledecode.domain.services.event_gate import EventGate, process_and_gate_candidate
 
@@ -94,6 +96,8 @@ class InvestigationService:
         settings: Settings | None = None,
         rate_limit_rpm: int = 14,
         price_oracle: Any | None = None,
+        profiler: Any | None = None,
+        graph_tracer: Any | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._reasoner = reasoner
@@ -109,6 +113,11 @@ class InvestigationService:
         # worker/bot processes and chat/briefing calls are ungated — tighten if quota
         # exhaustion still bites in production.
         self._rate_limiter = AsyncLimiter(rate_limit_rpm, 60.0)
+        # DexScreener pool-TVL cache (Module 3): (chain:token) -> tvl_usd, 5 min TTL
+        # — same staleness budget as the price oracle.
+        self._pool_tvl_cache: TTLCache[str, float] = TTLCache(maxsize=512, ttl=300)
+        self._profiler = profiler
+        self._graph_tracer = graph_tracer
 
     async def process_event(self, event: CandidateEvent) -> dict[str, Any]:
         # Idempotent fast path: already investigated under this dedupe key → reuse stored analysis.
@@ -145,6 +154,7 @@ class InvestigationService:
         # Stage 2.5: Resolve counterparties to human-readable entity labels and derive
         # market context (CEX flow category) so the LLM reasons like a trader.
         await self._enrich_market_context(event_dict)
+        await self._enrich_edge_intelligence(event_dict)
 
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
         model_name = self._settings.MODEL_HEAVY_REASONING if self._settings else "heavy_reasoning"
@@ -222,6 +232,104 @@ class InvestigationService:
             if levels:
                 event["price_levels"] = levels
 
+    async def _enrich_edge_intelligence(self, event: dict[str, Any]) -> None:
+        """Modules 1-3 pre-LLM enrichment. Every stage is best-effort and additive:
+        a failure stamps nothing rather than breaking the investigation."""
+        raw_value = event.get("raw_json")
+        raw: dict[str, Any] = dict(raw_value) if isinstance(raw_value, dict) else {}
+        token = str(raw.get("address") or "").lower()
+        chain = str(event.get("chain") or "")
+        now_unix = time.time()
+        labels: dict[str, str] = {}
+        try:
+            async with self._uow_factory() as uow:
+                wallets = await uow.curated_wallets.list_active()
+            labels = {w.address.lower(): (w.label or w.category) for w in wallets}
+        except Exception as exc:
+            log.warning(f"[EDGE_INTEL] curated wallet lookup failed: {exc}")
+
+        # Module 3a — Pool Impact Ratio (DexScreener TVL, cached).
+        value_usd = float(raw.get("value_usd") or 0.0)
+        pool_tvl = await self._pool_tvl_usd(chain, token) if token else 0.0
+        purchases = await self._recent_smart_purchases(token, now_unix, set(labels))
+        conviction = score_conviction(value_usd, pool_tvl, purchases, now_unix, smart_wallets=set(labels))
+        event["conviction"] = conviction.to_context()
+
+        # Module 1 — behavioral profile (one cached read; no external calls here).
+        if self._profiler is not None:
+            wallet_addr = _counterparty(event, "to")
+            try:
+                event.update(await self._profiler.enrich(chain, wallet_addr))
+            except Exception as exc:
+                log.warning(f"[EDGE_INTEL] profiler enrich failed: {exc}")
+
+        # Module 2 — multi-hop funding attribution for unlabeled actors (async
+        # cost ~1-3s; only paid when the actor is genuinely unknown).
+        if self._graph_tracer is not None:
+            from_addr = _counterparty(event, "from")
+            if from_addr and from_addr not in labels:
+                try:
+                    trace = await self._graph_tracer.trace(chain, from_addr, known_labels=labels, now_unix=now_unix)
+                    if trace.attributed_label:
+                        cluster = f"Child of {trace.attributed_label}"
+                        if trace.stealth_accumulation:
+                            cluster += f" [stealth cluster of {trace.siblings_in_cluster} wallets]"
+                        event["funding_attribution"] = cluster
+                        event["funding_hops"] = trace.hops
+                except Exception as exc:
+                    log.warning(f"[EDGE_INTEL] graph trace failed: {exc}")
+
+    async def _pool_tvl_usd(self, chain: str, token: str) -> float:
+        """Deepest DexScreener pool liquidity for ``token`` on ``chain`` (0.0 unknown)."""
+        key = f"{chain.lower()}:{token}"
+        cached = self._pool_tvl_cache.get(key)
+        if cached is not None:
+            return float(cached)
+        try:
+            import httpx
+
+            client = httpx.AsyncClient(timeout=5.0)
+            try:
+                response = await client.get(f"https://api.dexscreener.com/latest/dex/tokens/{token}")
+                response.raise_for_status()
+                pairs = response.json().get("pairs") or []
+            finally:
+                await client.aclose()
+        except Exception as exc:
+            log.warning(f"[EDGE_INTEL] dexscreener tvl failed for {token}: {exc}")
+            return 0.0
+        chain_slug = {"ethereum": "ethereum", "eth": "ethereum", "arbitrum": "arbitrum", "arb": "arbitrum", "base": "base"}
+        want = chain_slug.get(chain.lower(), "")
+        best = 0.0
+        for pair in pairs:
+            if want and str(pair.get("chainId", "")).lower() != want:
+                continue
+            best = max(best, float((pair.get("liquidity") or {}).get("usd") or 0.0))
+        if best > 0:
+            self._pool_tvl_cache[key] = best
+        return best
+
+    async def _recent_smart_purchases(self, token: str, now_unix: float, smart_addresses: set[str]) -> list[Purchase]:
+        """SWAPs of ``token`` in the coordination window by known smart wallets."""
+        if not token or not smart_addresses:
+            return []
+        from datetime import UTC, datetime, timedelta
+
+        since = datetime.now(UTC) - timedelta(minutes=60)
+        async with self._uow_factory() as uow:
+            rows = await uow.candidate_events.recent_swaps_for_token(token, since)
+            wallet_ids = {r.wallet_id for r in rows}
+            addr_by_id: dict[int, str] = {}
+            for wid in wallet_ids:
+                wallet = await uow.curated_wallets.get(wid) if wid is not None else None
+                if wallet is not None and wallet.id is not None:
+                    addr_by_id[wallet.id] = wallet.address.lower()
+        return [
+            Purchase(addr_by_id[r.wallet_id], token, r.chain, r.created_at.timestamp())
+            for r in rows
+            if r.created_at and r.wallet_id in addr_by_id
+        ]
+
     @staticmethod
     async def _persist_skipped(uow: UnitOfWork, event: CandidateEvent) -> None:
         """Persist the skipped status, tolerating a concurrent insert on uq_candidate_dedupe."""
@@ -264,21 +372,34 @@ def build_investigation_service(
     settings: Settings,
 ) -> tuple[async_sessionmaker[AsyncSession], InvestigationService, ReasonerPort]:
     """Wire DB session + LLM graph into an InvestigationService."""
+    from whaledecode.adapters.alchemy.transfers import AlchemyTransfersClient
+    from whaledecode.adapters.arkham.client import ArkhamClient
     from whaledecode.adapters.db.session import create_session_factory
     from whaledecode.adapters.llm.factory import LLMFactory
     from whaledecode.adapters.llm_graph.reasoner import LangGraphReasoner
     from whaledecode.adapters.pricing.oracle import PriceOracle
+    from whaledecode.services.behavioral_profiler import BehavioralProfiler
+    from whaledecode.services.graph_tracer import GraphTracer
 
     session_factory = create_session_factory(settings)
     llm_factory = LLMFactory(settings)
     reasoner = LangGraphReasoner(settings, llm_factory)
+    price_oracle = PriceOracle()
+    uow_factory = lambda: UnitOfWork(session_factory)  # noqa: E731
+    arkham = ArkhamClient(
+        settings.ARKHAM_API_KEY.get_secret_value() if settings.ARKHAM_API_KEY else ""
+    )
+    profiler = BehavioralProfiler(uow_factory, price_oracle, arkham)
+    graph_tracer = GraphTracer(uow_factory, AlchemyTransfersClient.from_settings(settings))
     return (
         session_factory,
         InvestigationService(
             lambda: UnitOfWork(session_factory),
             reasoner,
             settings,
-            price_oracle=PriceOracle(),
+            price_oracle=price_oracle,
+            profiler=profiler,
+            graph_tracer=graph_tracer,
         ),
         reasoner,
     )

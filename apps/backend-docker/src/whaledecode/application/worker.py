@@ -292,6 +292,7 @@ class BackgroundAIWorker:
                         str(event.tx_hash),
                         str((event.raw_json or {}).get("from", "")) if isinstance(event.raw_json, dict) else "",
                         self._settings.BOT_USERNAME,
+                        token_address=str((event.raw_json or {}).get("address", "")) if isinstance(event.raw_json, dict) else "",
                     ),
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )

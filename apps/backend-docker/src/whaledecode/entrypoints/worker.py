@@ -102,6 +102,15 @@ def launch_supervisor_tasks(
         id="purge_stale_events",
         misfire_grace_time=3600,
     )
+    scheduler.add_job(
+        _refresh_profiles,
+        trigger="cron",
+        hour=4,
+        minute=30,
+        args=[session_factory, settings],
+        id="refresh_wallet_profiles",
+        misfire_grace_time=3600,
+    )
 
     scheduler.start()
 
@@ -156,6 +165,16 @@ async def _purge_stale_events(session_factory) -> None:
         purged = await uow.candidate_events.purge_stale_events(days=3)
         await uow.commit()
     log.info("purged_stale_events", count=purged)
+
+
+async def _refresh_profiles(session_factory, settings) -> None:
+    from whaledecode.jobs.refresh_profiles import refresh_wallet_profiles
+
+    try:
+        await refresh_wallet_profiles(session_factory, settings)
+    except Exception as e:
+        log.error("profile_refresh_job_error", error=str(e))
+        capture_exception(e)
 
 
 async def _reset_daily_counters(session_factory) -> None:

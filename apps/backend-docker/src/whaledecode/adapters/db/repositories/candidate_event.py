@@ -243,6 +243,24 @@ class CandidateEventRepository:
         )
         return [self._to_domain(row) for row in result.scalars()]
 
+    async def recent_swaps_for_token(self, token_address: str, since: datetime, limit: int = 100) -> list[CandidateEvent]:
+        """Recent SWAP events touching ``token_address`` across all chains.
+
+        ponytail: substring match on the serialized raw_json instead of a JSONB
+        index — swap volumes are small; add an expression index if this grows.
+        """
+        needle = token_address.lower()
+        stmt = (
+            select(CandidateEventModel)
+            .where(CandidateEventModel.event_type == "SWAP")
+            .where(CandidateEventModel.created_at >= since)
+            .where(func.lower(CandidateEventModel.raw_json).contains(needle))
+            .order_by(CandidateEventModel.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain(row) for row in result.scalars()]
+
     async def count_published_since(self, since: datetime, *, chain: str | None = None) -> int:
         """Count events published on the channel since ``since``, optionally per chain."""
         stmt = (

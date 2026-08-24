@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Curated-wallet sources
     DUNE_API_KEY: SecretStr | None = None  # live Dune Spellbook labels (free tier, then falls back to static seed)
 
+    # Edge Intelligence
+    ARKHAM_API_KEY: SecretStr | None = None  # Module 1 fallback for unobserved wallets
+    SWAP_FEE_BPS: int = 80  # Module 4 value capture (80 bps = 0.8%)
+    SWAP_FEE_RECIPIENT: str = ""  # fee-refundable address registered with the aggregator
+
     @property
     def webhook_signing_keys(self) -> list[str]:
         """Return the configured per-chain Alchemy signing keys (ETH/ARB/BASE)."""
