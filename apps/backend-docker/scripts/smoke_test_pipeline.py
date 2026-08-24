@@ -13,6 +13,20 @@ from sqlalchemy.ext.asyncio import create_async_engine
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
+def _load_dotenv() -> None:
+    """Populate os.environ from ../.env (repo root) without a dotenv dependency."""
+    # apps/backend-docker/scripts/ -> repo root is three levels up
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".env")
+    if not os.path.exists(path):
+        return
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 async def run_checks() -> None:
     print("🚀 Starting WhaleDecode Pre-Launch Smoke Tests...\n")
     failures: list[str] = []
@@ -64,8 +78,8 @@ async def run_checks() -> None:
     else:
         print("⏭️ [LLM Engine] GROQ_API_KEY not set — skipped")
 
-    # 3. Telegram bot connectivity
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    # 3. Telegram bot connectivity (project convention: BOT_TOKEN)
+    bot_token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
     if bot_token:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -77,7 +91,7 @@ async def run_checks() -> None:
             failures.append(f"Telegram bot check failed: {e}")
             print(f"❌ [Telegram Bot] {e}")
     else:
-        print("⏭️ [Telegram Bot] TELEGRAM_BOT_TOKEN not set — skipped")
+        print("⏭️ [Telegram Bot] BOT_TOKEN not set — skipped")
 
     if failures:
         print("\n💀 SMOKE TESTS FAILED:")
@@ -89,4 +103,5 @@ async def run_checks() -> None:
 
 
 if __name__ == "__main__":
+    _load_dotenv()
     asyncio.run(run_checks())
