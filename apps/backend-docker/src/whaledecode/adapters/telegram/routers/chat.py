@@ -35,11 +35,16 @@ def is_greeting(query: str) -> bool:
     return len(q) < 10 or q in _GREETINGS
 
 
-async def _spend_quota(message: Message, uow_factory) -> bool:
-    """Spend one free-tier query. False when quota is exhausted (CTA sent)."""
+async def _spend_quota(message: Message, uow_factory, settings=None) -> bool:
+    """Spend one free-tier query. False when quota is exhausted (CTA sent).
+
+    Admin Telegram IDs are exempt so operators are never blocked.
+    """
+    if settings and message.from_user.id in settings.ADMIN_USER_IDS:
+        return True
     async with uow_factory() as uow:
         try:
-            await check_and_decrement_quota(uow, message.from_user.id)
+            await check_and_decrement_quota(uow, message.from_user.id, admin_ids=settings.ADMIN_USER_IDS if settings else None)
             await uow.commit()
             return True
         except QuotaExceededError:
@@ -70,7 +75,7 @@ async def _search_curated_entities(uow_factory, query: str) -> str | None:
 
 
 @chat_router.message(Command("ask"))
-async def cmd_ask(message: Message, command: CommandObject, investigation_service, uow_factory, **kwargs) -> None:
+async def cmd_ask(message: Message, command: CommandObject, investigation_service, uow_factory, settings=None, **kwargs) -> None:
     log.info("ask_command_received", user_id=message.from_user.id, text=message.text)
     question = (command.args or "").strip()
     if not question:
@@ -80,11 +85,13 @@ async def cmd_ask(message: Message, command: CommandObject, investigation_servic
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         limits = get_limits(user.plan)
-        if user.daily_chat_count >= limits.chat_per_day:
+        is_admin = bool(settings and message.from_user.id in settings.ADMIN_USER_IDS)
+        if not is_admin and user.daily_chat_count >= limits.chat_per_day:
             await message.answer(f"You've used {user.daily_chat_count}/{limits.chat_per_day} chats today. Upgrade for more.")
             return
-        user.daily_chat_count += 1
-        await uow.users.update(user)
+        if not is_admin:
+            user.daily_chat_count += 1
+            await uow.users.update(user)
         await uow.commit()
 
     # Deterministic triage: tx hash → tx investigation, wallet address → wallet
@@ -110,7 +117,7 @@ async def cmd_ask(message: Message, command: CommandObject, investigation_servic
             return
         prompt = question
 
-    if not await _spend_quota(message, uow_factory):
+    if not await _spend_quota(message, uow_factory, settings):
         return
 
     await message.answer("🧠 Thinking...")
@@ -126,7 +133,7 @@ async def cmd_ask(message: Message, command: CommandObject, investigation_servic
 
 
 @chat_router.message(Command("decode"))
-async def cmd_decode(message: Message, command: CommandObject, investigation_service, uow_factory, **kwargs) -> None:
+async def cmd_decode(message: Message, command: CommandObject, investigation_service, uow_factory, settings=None, **kwargs) -> None:
     log.info("decode_command_received", user_id=message.from_user.id, text=message.text)
     target = (command.args or "").strip()
     if not target:
@@ -136,14 +143,16 @@ async def cmd_decode(message: Message, command: CommandObject, investigation_ser
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         limits = get_limits(user.plan)
-        if user.daily_chat_count >= limits.chat_per_day:
+        is_admin = bool(settings and message.from_user.id in settings.ADMIN_USER_IDS)
+        if not is_admin and user.daily_chat_count >= limits.chat_per_day:
             await message.answer(f"You've used {user.daily_chat_count}/{limits.chat_per_day} chats today. Upgrade for more.")
             return
-        user.daily_chat_count += 1
-        await uow.users.update(user)
+        if not is_admin:
+            user.daily_chat_count += 1
+            await uow.users.update(user)
         await uow.commit()
 
-    if not await _spend_quota(message, uow_factory):
+    if not await _spend_quota(message, uow_factory, settings):
         return
     await message.answer("🔍 Decoding...")
     try:
@@ -192,11 +201,12 @@ async def cmd_alerts(message: Message, command: CommandObject, uow_factory, **kw
 
 
 @chat_router.message(Command("briefing"))
-async def cmd_briefing(message: Message, investigation_service, uow_factory, **kwargs) -> None:
+async def cmd_briefing(message: Message, investigation_service, uow_factory, settings=None, **kwargs) -> None:
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         limits = get_limits(user.plan)
-        if not limits.briefing_on_demand and user.daily_chat_count >= limits.chat_per_day:
+        is_admin = bool(settings and message.from_user.id in settings.ADMIN_USER_IDS)
+        if not is_admin and not limits.briefing_on_demand and user.daily_chat_count >= limits.chat_per_day:
             await message.answer("Briefing is available at 08:00 UTC for free users. Upgrade for on-demand access.")
             return
     await message.answer("📋 Generating briefing...")

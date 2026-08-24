@@ -13,11 +13,12 @@ common_router = Router(name="common")
 
 
 @common_router.message(Command("start"))
-async def cmd_start(message: Message, command: CommandObject, uow_factory, investigation_service=None, **kwargs) -> None:
+async def cmd_start(message: Message, command: CommandObject, uow_factory, investigation_service=None, settings=None, **kwargs) -> None:
     async with uow_factory() as uow:
         user = await get_or_create_user(message.from_user.id, message.from_user.username, uow)
         await uow.commit()
 
+    admin_ids = settings.ADMIN_USER_IDS if settings else []
     payload = (command.args or "").strip()
     if payload:
         # Channel deep links: ?start=deepdive_<chain>_<tx> / ask_<chain>_<tx> /
@@ -37,13 +38,15 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
         if investigation_service is None:
             await message.answer("Investigation service unavailable.")
             return
-        try:
-            async with uow_factory() as uow:
-                await check_and_decrement_quota(uow, message.from_user.id)
-                await uow.commit()
-        except QuotaExceededError:
-            await message.answer(UPGRADE_CTA_MESSAGE)
-            return
+        # Admin IDs bypass the free-tier quota so operators are never blocked.
+        if message.from_user.id not in admin_ids:
+            try:
+                async with uow_factory() as uow:
+                    await check_and_decrement_quota(uow, message.from_user.id, admin_ids=admin_ids)
+                    await uow.commit()
+            except QuotaExceededError:
+                await message.answer(UPGRADE_CTA_MESSAGE)
+                return
         await message.answer("🧠 Investigating the on-chain event...")
         try:
             result = await investigation_service.chat(

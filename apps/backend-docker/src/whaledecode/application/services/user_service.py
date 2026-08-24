@@ -18,17 +18,21 @@ async def get_user_with_limits(uow: UnitOfWork, user_id: int) -> tuple[User, Pla
 
 
 async def check_and_decrement_quota(
-    uow: UnitOfWork, tg_id: int, user: User | None = None
+    uow: UnitOfWork, tg_id: int, user: User | None = None, admin_ids: list[int] | None = None
 ) -> User:
     """Spend one free-tier intelligence query, if allowed.
 
     Free tier spends from ``queries_remaining``; paid tiers are unlimited.
+    Admin Telegram IDs (``admin_ids``) are exempt from the budget entirely so
+    operators are never blocked by the free-tier quota.
     Caller is responsible for ``uow.commit()``. Raises ``QuotaExceededError``
     when a free user has no budget left.
     """
     account = user or await uow.users.get_by_tg_id(tg_id)
     if account is None:
         raise QuotaExceededError("Account not found. Press /start to register.")
+    if admin_ids and tg_id in admin_ids:
+        return account
     if account.tier == "free":
         if account.queries_remaining <= 0:
             raise QuotaExceededError(UPGRADE_CTA_MESSAGE)

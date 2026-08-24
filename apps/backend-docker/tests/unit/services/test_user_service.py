@@ -52,6 +52,23 @@ async def test_paid_user_is_unlimited() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_id_exempt_from_quota() -> None:
+    # Admin Telegram IDs must bypass the free-tier quota even at zero remaining.
+    repo = FakeUsersRepo(User(tg_id=1, tier="free", queries_remaining=0))
+    result = await check_and_decrement_quota(FakeUow(repo), 1, admin_ids=[1, 2])
+    assert result.queries_remaining == 0
+    assert repo.updates == []
+
+
+@pytest.mark.asyncio
+async def test_non_admin_not_exempt_when_admin_ids_given() -> None:
+    repo = FakeUsersRepo(User(tg_id=3, tier="free", queries_remaining=0))
+    with pytest.raises(QuotaExceededError):
+        await check_and_decrement_quota(FakeUow(repo), 3, admin_ids=[1, 2])
+    assert repo.updates == []
+
+
+@pytest.mark.asyncio
 async def test_missing_account_raises() -> None:
     with pytest.raises(QuotaExceededError):
         await check_and_decrement_quota(FakeUow(FakeUsersRepo(None)), 99)
