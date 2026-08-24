@@ -51,45 +51,51 @@ class LLMFactory:
         )
 
     def get_fast_chat_llm(self) -> BaseChatModel:
-        """General bot conversational messages: Gemini (3.5 flash-lite) primary, Groq Llama-70b fallback."""
-        gemini_key = self._settings.GEMINI_API_KEY.get_secret_value()
-        groq_key = self._settings.GROQ_API_KEY.get_secret_value()
-        if gemini_key and groq_key:
-            return create_gemini_with_groq_fallback(
-                gemini_key=gemini_key,
-                gemini_model=self._settings.MODEL_HEAVY_REASONING,
-                groq_key=groq_key,
-                groq_model=self._settings.MODEL_STRUCTURED_DATA,
-                temperature=0.3,
-            )
-        if groq_key:
-            return create_groq_with_key_fallback(
-                primary_key=groq_key,
-                model=self._settings.MODEL_FAST_CHAT,
-                temperature=0.3,
-            )
-        # Only Gemini available
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        """Bot conversational messages (deep links, /ask default, /decode): Groq primary.
 
-        return ChatGoogleGenerativeAI(
-            model=self._settings.MODEL_HEAVY_REASONING,
-            google_api_key=gemini_key,
+        Per product decision chat runs on Groq; Gemini is reserved for channel
+        publishing and the daily briefing. Gemini rejects the chat graph's
+        tool-calling schema (400), so it must not be the primary for chat.
+        """
+        groq_key = self._settings.GROQ_API_KEY.get_secret_value()
+        if not groq_key:
+            # Dev-only fallback when Groq is unconfigured.
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            return ChatGoogleGenerativeAI(
+                model=self._settings.MODEL_HEAVY_REASONING,
+                google_api_key=self._settings.GEMINI_API_KEY.get_secret_value(),
+                temperature=0.3,
+                max_retries=0,
+                timeout=15,
+            )
+        secondary_key = (
+            self._settings.GROQ_API_KEY_SECONDARY.get_secret_value()
+            if self._settings.GROQ_API_KEY_SECONDARY
+            else None
+        )
+        return create_groq_with_key_fallback(
+            primary_key=groq_key,
+            model=self._settings.MODEL_FAST_CHAT,
+            secondary_key=secondary_key,
             temperature=0.3,
-            max_retries=0,
-            timeout=15,
         )
 
     def get_ask_llm(self) -> BaseChatModel:
-        """/ask command: GPT OSS 20b via Groq, Llama-70b fallback."""
+        """/ask command: Groq (Llama-70b primary, 8b-instant fallback).
+
+        Uses known-valid Groq model IDs; ``MODEL_ASK`` (gpt-oss-20b) is dropped
+        because it 404s on Groq and a 404 is non-retryable in FallbackLLMRouter.
+        """
         groq_key = self._settings.GROQ_API_KEY.get_secret_value()
-        fallback = create_groq_with_key_fallback(
+        secondary_key = (
+            self._settings.GROQ_API_KEY_SECONDARY.get_secret_value()
+            if self._settings.GROQ_API_KEY_SECONDARY
+            else None
+        )
+        return create_groq_with_key_fallback(
             primary_key=groq_key,
             model=self._settings.MODEL_STRUCTURED_DATA,
+            secondary_key=secondary_key,
             temperature=0.3,
         )
-        primary = create_groq_with_key_fallback(
-            primary_key=groq_key,
-            model=self._settings.MODEL_ASK,
-            temperature=0.3,
-        )
-        return FallbackLLMRouter(primary, [fallback])
