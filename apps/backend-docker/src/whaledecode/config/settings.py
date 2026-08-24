@@ -71,17 +71,17 @@ class Settings(BaseSettings):
     GROQ_API_KEY: SecretStr
     GROQ_API_KEY_SECONDARY: SecretStr | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-    MODEL_STRUCTURED_DATA: str = "llama-3.3-70b-versatile"
-    MODEL_FAST_CHAT: str = "llama-3.3-70b-versatile"
-    DEFAULT_CHEAP_MODEL: str = "llama-3.3-70b-versatile"
-    DEFAULT_STRONG_MODEL: str = "llama-3.3-70b-versatile"
-    # LLM — Groq chat model for the bot conversational path (deep links, /ask, /decode).
-    # llama-3.1-8b-instant 404s on Groq, so the default is the 70b versatile model.
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    MODEL_STRUCTURED_DATA: str = "openai/gpt-oss-120b"
+    MODEL_FAST_CHAT: str = "openai/gpt-oss-120b"
+    DEFAULT_CHEAP_MODEL: str = "openai/gpt-oss-20b"
+    DEFAULT_STRONG_MODEL: str = "openai/gpt-oss-120b"
+    # llama-3.3-70b-versatile was shut down by Groq on 2026-08-16; the official
+    # replacement is openai/gpt-oss-120b (https://console.groq.com/docs/deprecations).
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
     MAX_COST_PER_RUN_USD: float = 0.03
 
-    # LLM — /ask bot (OpenAI gpt-oss-20b, Groq Llama-70b fallback when no OpenAI key)
-    MODEL_ASK: str = "gpt-oss-20b"
+    # LLM — /ask bot fallback model ID (Groq-hosted gpt-oss-20b)
+    MODEL_ASK: str = "openai/gpt-oss-20b"
 
     # Fallback LLMs
     OPENAI_API_KEY: SecretStr | None = None

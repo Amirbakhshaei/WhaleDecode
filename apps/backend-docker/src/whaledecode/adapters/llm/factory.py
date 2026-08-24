@@ -82,7 +82,7 @@ class LLMFactory:
         )
 
     def get_ask_llm(self) -> BaseChatModel:
-        """/ask command: Groq (Llama-70b primary, 8b-instant fallback).
+        """/ask command: Groq (gpt-oss-120b primary, key-fallback).
 
         Uses known-valid Groq model IDs; ``MODEL_ASK`` (gpt-oss-20b) is dropped
         because it 404s on Groq and a 404 is non-retryable in FallbackLLMRouter.

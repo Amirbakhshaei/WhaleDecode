@@ -41,7 +41,7 @@ def test_factory_uses_correct_model_strings(settings: Settings) -> None:
     fast = factory.get_fast_chat_llm()
 
     assert "gemini" in heavy.model.lower()
-    assert structured.model == "llama-3.3-70b-versatile"
+    assert structured.model == "openai/gpt-oss-120b"
     assert "gemini" in fast.model.lower()
 
 

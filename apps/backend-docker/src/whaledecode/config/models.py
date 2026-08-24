@@ -1,9 +1,11 @@
-STRONG_MODEL_ID = "llama-3.3-70b-versatile"
-CHEAP_MODEL_ID = "llama-3.1-8b-instant"
+STRONG_MODEL_ID = "openai/gpt-oss-120b"
+CHEAP_MODEL_ID = "openai/gpt-oss-20b"
 
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    "llama-3.3-70b-versatile": {"input_per_1k": 0.00059, "output_per_1k": 0.00079},
-    "llama-3.1-8b-instant": {"input_per_1k": 0.00005, "output_per_1k": 0.00008},
+    # Groq pricing per 1M tokens ($0.15 in / $0.60 out), normalized to 1k.
+    "openai/gpt-oss-120b": {"input_per_1k": 0.00015, "output_per_1k": 0.0006},
+    # $0.075 in / $0.30 out per 1M.
+    "openai/gpt-oss-20b": {"input_per_1k": 0.000075, "output_per_1k": 0.0003},
     "gpt-4o": {"input_per_1k": 0.0025, "output_per_1k": 0.01},
     "gpt-4o-mini": {"input_per_1k": 0.00015, "output_per_1k": 0.0006},
 }
