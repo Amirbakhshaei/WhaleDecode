@@ -47,21 +47,24 @@ def _bot_deep_link(action: str, chain: str, ref: str) -> str:
     return f"https://t.me/{bot}?start={action}_{code}_{ref}"
 
 
-def build_tx_action_hub(chain: str, tx_hash: str) -> InlineKeyboardMarkup:
+def build_tx_action_hub(chain: str, tx_hash: str, event_id: int | None = None) -> InlineKeyboardMarkup:
     """Inline menu shown in the private chat for a ``tx_`` deep link.
 
-    Tx-hash-bound actions are URL deep links (a 66-char hash exceeds
-    callback_data's 64-byte limit) re-entering /start with the legacy
-    immediate-action prefixes.
+    Tx-bound actions are URL deep links re-entering /start. Telegram caps
+    ``?start=`` payloads at 64 bytes and a raw hash blows past that
+    ("tx_ETH_0x…" ≈ 74), so links reference the candidate_events row by id;
+    cmd_start resolves id -> chain/hash. Legacy callers without an id fall
+    back to the raw-hash link (broken on Telegram, kept for compatibility).
     """
+    ref = str(event_id) if event_id else tx_hash
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🔬 Run Full Deep Dive", url=_bot_deep_link("analyze", chain, tx_hash)),
-                InlineKeyboardButton(text="💬 Ask AI About This Tx", url=_bot_deep_link("ask", chain, tx_hash)),
+                InlineKeyboardButton(text="🔬 Run Full Deep Dive", url=_bot_deep_link("analyze", chain, ref)),
+                InlineKeyboardButton(text="💬 Ask AI About This Tx", url=_bot_deep_link("ask", chain, ref)),
             ],
             [
-                InlineKeyboardButton(text="📊 Counterparty Network", url=_bot_deep_link("net", chain, tx_hash)),
+                InlineKeyboardButton(text="📊 Counterparty Network", url=_bot_deep_link("net", chain, ref)),
                 InlineKeyboardButton(text="🔍 Block Explorer", url=explorer_tx_url(chain, tx_hash)),
             ],
         ]
@@ -94,16 +97,22 @@ def get_channel_alert_keyboard(
     from_addr: str,
     bot_username: str = "",
     token_address: str = "",
+    event_id: int = 0,
 ) -> InlineKeyboardMarkup:
     """Parameterized inline keyboard for public channel broadcasts (Phase 3 spec).
 
     Strictly URL deep links into @WhaleDecodeBot (callback_data is forbidden on
     public channel messages): Intelligence Hub, 1-Click Swap, Track Cluster,
     and the on-chain graph explorer view.
+
+    The Intelligence Hub link carries the candidate_events id, not the hash —
+    Telegram drops ``?start=`` payloads over 64 bytes and a full tx hash
+    exceeds that. cmd_start resolves the id back to chain/hash.
     """
     bot = (bot_username or Settings().BOT_USERNAME).strip().lstrip("@") or "whaledecodebot"
     code = _chain_code(chain)
-    hub_url = f"https://t.me/{bot}?start=tx_{code}_{tx_hash}"
+    hub_ref = str(event_id) if event_id else tx_hash
+    hub_url = f"https://t.me/{bot}?start=tx_{code}_{hub_ref}"
     cluster_url = f"https://t.me/{bot}?start=wallet_{code}_{from_addr}"
     explorer_url = explorer_tx_url(chain, tx_hash)
 

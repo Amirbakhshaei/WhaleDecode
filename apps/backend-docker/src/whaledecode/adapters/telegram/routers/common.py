@@ -1,7 +1,11 @@
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from whaledecode.adapters.telegram.keyboards import build_tx_action_hub, build_wallet_dossier_hub
+from whaledecode.adapters.telegram.keyboards import (
+    _chain_code,
+    build_tx_action_hub,
+    build_wallet_dossier_hub,
+)
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.application.services.user_service import (
     UPGRADE_CTA_MESSAGE,
@@ -41,20 +45,42 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
 
     admin_ids = settings.ADMIN_USER_IDS if settings else []
     payload = (command.args or "").strip()
+
+    async def _resolve_event_ref(ref: str) -> tuple[str, str] | None:
+        """Resolve a deep-link reference to (chain_code, tx_hash).
+
+        New links carry the candidate_events id (Telegram caps ?start= at 64
+        bytes, a raw hash exceeds that); legacy links carry the hash itself.
+        """
+        if ref.isdigit():
+            async with uow_factory() as uow:
+                event = await uow.candidate_events.get(int(ref))
+            if event is None:
+                return None
+            return _chain_code(str(event.chain)), str(event.tx_hash)
+        return None
+
     if payload:
         # New Intelligence Hub deep links: present an inline action menu instead of
         # executing a fixed command. tx-hash actions are URL deep links (the hash
         # exceeds callback_data's 64-byte limit); wallet actions use callbacks.
         if payload.startswith("tx_"):
             parts = payload.split("_", 2)
-            chain = parts[1] if len(parts) > 2 else "ETH"
-            tx_hash = parts[-1]
+            chain_code = parts[1] if len(parts) > 2 else "ETH"
+            ref = parts[-1]
+            resolved = await _resolve_event_ref(ref)
+            if resolved is not None:
+                chain, tx_hash = resolved
+                event_id = int(ref)
+            else:
+                chain, tx_hash = chain_code, ref
+                event_id = None
             await message.answer(
                 f"⚡ <b>WhaleDecode Intelligence Hub</b>\n\n"
                 f"🔗 Chain: <code>{chain.upper()}</code>\n"
                 f"📜 Tx: <code>{tx_hash[:12]}…{tx_hash[-8:]}</code>\n\n"
                 f"👇 Choose an investigation action:",
-                reply_markup=build_tx_action_hub(chain, tx_hash),
+                reply_markup=build_tx_action_hub(chain, tx_hash, event_id=event_id),
             )
             return
 
@@ -103,6 +129,9 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
         action = parts[0]
         chain = parts[1] if len(parts) > 2 else "ETH"
         target = parts[-1]
+        resolved = await _resolve_event_ref(target)
+        if resolved is not None:
+            chain, target = resolved
         if action == "track":
             prompt = f"Analyze and describe this wallet: {target}"
         elif action == "net":
