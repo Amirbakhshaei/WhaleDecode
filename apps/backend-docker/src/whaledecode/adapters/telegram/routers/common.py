@@ -46,8 +46,8 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
     admin_ids = settings.ADMIN_USER_IDS if settings else []
     payload = (command.args or "").strip()
 
-    async def _resolve_event_ref(ref: str) -> tuple[str, str] | None:
-        """Resolve a deep-link reference to (chain_code, tx_hash).
+    async def _resolve_event_ref(ref: str) -> tuple[str, str, dict] | None:
+        """Resolve a deep-link reference to (chain_code, tx_hash, raw_json).
 
         New links carry the candidate_events id (Telegram caps ?start= at 64
         bytes, a raw hash exceeds that); legacy links carry the hash itself.
@@ -57,7 +57,8 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
                 event = await uow.candidate_events.get(int(ref))
             if event is None:
                 return None
-            return _chain_code(str(event.chain)), str(event.tx_hash)
+            raw = event.raw_json if isinstance(event.raw_json, dict) else {}
+            return _chain_code(str(event.chain)), str(event.tx_hash), raw
         return None
 
     if payload:
@@ -70,17 +71,22 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
             ref = parts[-1]
             resolved = await _resolve_event_ref(ref)
             if resolved is not None:
-                chain, tx_hash = resolved
+                chain, tx_hash, raw = resolved
                 event_id = int(ref)
+                from_addr = str(raw.get("from", ""))
+                token_address = str(raw.get("address", ""))
             else:
                 chain, tx_hash = chain_code, ref
-                event_id = None
+                event_id, from_addr, token_address = None, "", ""
             await message.answer(
                 f"⚡ <b>WhaleDecode Intelligence Hub</b>\n\n"
                 f"🔗 Chain: <code>{chain.upper()}</code>\n"
                 f"📜 Tx: <code>{tx_hash[:12]}…{tx_hash[-8:]}</code>\n\n"
                 f"👇 Choose an investigation action:",
-                reply_markup=build_tx_action_hub(chain, tx_hash, event_id=event_id),
+                reply_markup=build_tx_action_hub(
+                    chain, tx_hash, event_id=event_id,
+                    from_addr=from_addr, token_address=token_address,
+                ),
             )
             return
 
@@ -131,7 +137,7 @@ async def cmd_start(message: Message, command: CommandObject, uow_factory, inves
         target = parts[-1]
         resolved = await _resolve_event_ref(target)
         if resolved is not None:
-            chain, target = resolved
+            chain, target, _ = resolved
         if action == "track":
             prompt = f"Analyze and describe this wallet: {target}"
         elif action == "net":
