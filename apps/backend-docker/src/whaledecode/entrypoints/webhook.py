@@ -77,36 +77,47 @@ async def lifespan(app: FastAPI):
     # is deferred here so a connectivity failure surfaces at startup, not at import.
     global session_factory, _price_oracle
     init_sentry(settings)
-    session_factory, investigation_service, _ = build_investigation_service(settings)
-    _price_oracle = investigation_service._price_oracle
     app.state.settings = settings
-    app.state.session_factory = session_factory
-    app.state.investigation_service = investigation_service
 
+    # Bulkhead for the healthcheck: bind and serve /health IMMEDIATELY. The
+    # heavy bot/supervisor startup (LLM graph, DB seed, Telegram connect) runs
+    # as a background task so a slow or dead downstream can never hold the
+    # port hostage — the previous await-here design starved Railway's
+    # healthcheck window and failed every deploy.
     async def _start_bot_and_supervisor() -> None:
-        bot, dp = build_telegram_app(settings)
-        app.state.bot = bot
-        app.state.dp = dp
-        stop_event = asyncio.Event()
-        app.state.stop_event = stop_event
-        await dp.emit_startup()
-        app.state.polling_task = asyncio.create_task(run_polling_with_retry(bot, dp, stop_event))
-        app.state.supervisor_tasks = launch_supervisor_tasks(
-            session_factory, investigation_service, settings, bot, stop_event
-        )
+        try:
+            factory, investigation_service, _ = build_investigation_service(settings)
+            session_factory = factory
+            _price_oracle = investigation_service._price_oracle
+            app.state.session_factory = session_factory
+            app.state.investigation_service = investigation_service
+            bot, dp = build_telegram_app(settings)
+            app.state.bot = bot
+            app.state.dp = dp
+            stop_event = asyncio.Event()
+            app.state.stop_event = stop_event
+            await dp.emit_startup()
+            app.state.polling_task = asyncio.create_task(run_polling_with_retry(bot, dp, stop_event))
+            app.state.supervisor_tasks = launch_supervisor_tasks(
+                session_factory, investigation_service, settings, bot, stop_event
+            )
+            logger.info("bot_supervisor_started")
+        except Exception as e:  # noqa: BLE001 - never let startup kill the web server
+            logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
 
-    # Bound + tolerant: if the bot/supervisor can't start (Telegram down, bad
-    # token, …) the web server still binds and serves /health.
-    try:
-        await asyncio.wait_for(_start_bot_and_supervisor(), timeout=15)
-    except Exception as e:  # noqa: E501 - never let startup kill the web server
-        logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
-
-    # ponytail: Alchemy webhook rotator removed with webhook deprecation —
-    # ingestion now flows through entrypoints.poller. Restore from git history
-    # if a managed-webhook fallback is ever needed.
+    app.state.startup_task = asyncio.create_task(_start_bot_and_supervisor())
 
     yield
+
+    # Teardown: stop the startup task first so it can't race the shutdown.
+    startup_task = getattr(app.state, "startup_task", None)
+    if startup_task is not None and not startup_task.done():
+        startup_task.cancel()
+        try:
+            await startup_task
+        except asyncio.CancelledError:
+            pass
+    await asyncio.sleep(0)  # let cancelled inner awaits settle before teardown
 
     stop_event = getattr(app.state, "stop_event", None)
     if stop_event is not None:
@@ -142,7 +153,12 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "WhaleDecode Webhook Receiver"}
+    return {
+        "status": "ok",
+        "service": "WhaleDecode Webhook Receiver",
+        # Observability: /health answers even while the bot is still starting.
+        "bot_ready": hasattr(app.state, "polling_task"),
+    }
 
 
 async def _clears_chain_floor(candidate_data: dict[str, Any], min_usd_threshold: float | None = None) -> bool:

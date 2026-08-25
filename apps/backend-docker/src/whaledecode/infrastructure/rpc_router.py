@@ -22,10 +22,11 @@ log = structlog.get_logger()
 # 520-524: Cloudflare-origin failures (llamarpc et al. return bare 521s).
 _FAILOVER_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 
-# JSON-RPC error codes meaning "this node won't serve this request" (capacity,
-# tier restriction, method gating) rather than "our params are wrong" → treat
-# the node as unavailable for now and rotate.
-_NODE_CAPACITY_CODES = {-32046, -32701, -32005}
+# JSON-RPC error codes meaning "this node won't/can't serve this request"
+# (capacity, tier restriction, method gating, internal server failure) rather
+# than "our params are wrong" → treat the node as unavailable for now and
+# rotate. -32603 is the JSON-RPC spec's "server-side internal error".
+_NODE_CAPACITY_CODES = {-32046, -32701, -32005, -32603}
 _CAPACITY_MESSAGE_HINTS = (
     "cannot fulfill",
     "rate limit",
