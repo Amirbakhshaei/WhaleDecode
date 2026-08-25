@@ -161,6 +161,18 @@ async def health_check():
     }
 
 
+@app.post("/webhook/alchemy", include_in_schema=False)
+async def alchemy_webhook_deprecated():
+    """Deprecation stub: ack 200 so Alchemy stops retrying, drop the payload.
+
+    Ingestion now flows through the Targeted Failover Poller. Delete the
+    webhooks in the Alchemy dashboard to stop deliveries entirely; until then
+    this prevents 404 retry storms from burning anything downstream.
+    """
+    logger.info("webhook_deprecated_payload_dropped")
+    return {"status": "deprecated", "reason": "use targeted_poller"}
+
+
 async def _clears_chain_floor(candidate_data: dict[str, Any], min_usd_threshold: float | None = None) -> bool:
     """True when the move prices above its chain's ingestion floor.
 

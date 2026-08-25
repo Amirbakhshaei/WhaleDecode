@@ -169,9 +169,11 @@ def test_fastapi_app_has_routes():
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-    # The Alchemy ingestion route is gone: it must not accept traffic.
+    # The Alchemy ingestion route is a deprecation stub: acks 200 (stops
+    # vendor retry storms) but ingests nothing.
     response = client.post("/webhook/alchemy", json={})
-    assert response.status_code in (404, 405)
+    assert response.status_code == 200
+    assert response.json()["status"] == "deprecated"
 
 
 def test_ignorable_activity_zero_value_external():
