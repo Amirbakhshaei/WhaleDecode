@@ -19,7 +19,28 @@ import structlog
 log = structlog.get_logger()
 
 # Status codes meaning "this node is unhealthy/rate-limited for us" → failover.
-_FAILOVER_STATUS = {429, 502, 503, 504}
+# 520-524: Cloudflare-origin failures (llamarpc et al. return bare 521s).
+_FAILOVER_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+
+# JSON-RPC error codes meaning "this node won't serve this request" (capacity,
+# tier restriction, method gating) rather than "our params are wrong" → treat
+# the node as unavailable for now and rotate.
+_NODE_CAPACITY_CODES = {-32046, -32701, -32005}
+_CAPACITY_MESSAGE_HINTS = (
+    "cannot fulfill",
+    "rate limit",
+    "too many requests",
+    "specify an address",
+    "dedicated full node",
+    "exceeded",
+)
+
+
+def _is_node_capacity_error(err: dict) -> bool:
+    if err.get("code") in _NODE_CAPACITY_CODES:
+        return True
+    message = str(err.get("message", "")).lower()
+    return any(hint in message for hint in _CAPACITY_MESSAGE_HINTS)
 
 
 class RpcNodesExhaustedError(RuntimeError):
@@ -69,15 +90,27 @@ class RpcFailoverRouter:
                     last_error = RuntimeError(f"{url} returned {resp.status_code}")
                     continue
                 resp.raise_for_status()
-                body = resp.json()
-                if "error" in body:
-                    # Protocol-level error (bad params, range too wide): the
-                    # node is healthy — surface it instead of burning the array.
-                    raise RuntimeError(f"RPC error from {url}: {body['error']}")
-                return body.get("result")
-            except (httpx.TimeoutException, httpx.TransportError) as e:
+            except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as e:
                 self._penalize(url, type(e).__name__)
                 last_error = e
+                continue
+            try:
+                body = resp.json()
+            except ValueError as e:
+                self._penalize(url, "non-json response")
+                last_error = e
+                continue
+            if "error" in body:
+                err = body["error"]
+                if _is_node_capacity_error(err):
+                    # Node policy/capacity limit — rotate to the next node.
+                    self._penalize(url, f"RPC {err.get('code')}")
+                    last_error = RuntimeError(f"RPC error from {url}: {err}")
+                    continue
+                # Genuine param/protocol error: the node is healthy — surface it
+                # instead of burning the array on a request that can't succeed.
+                raise RuntimeError(f"RPC error from {url}: {err}")
+            return body.get("result")
         raise RpcNodesExhaustedError(f"{self._name}: all nodes failed") from last_error
 
     def _penalize(self, url: str, reason: str) -> None:

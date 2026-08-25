@@ -112,7 +112,9 @@ class Settings(BaseSettings):
     TARGETED_MIN_TX_USD: float = 50_000.0
     ETH_PUBLIC_RPC_URLS: str = "https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://cloudflare-eth.com"
     BASE_PUBLIC_RPC_URLS: str = "https://base-rpc.publicnode.com,https://mainnet.base.org,https://base.llamarpc.com"
-    ARB_PUBLIC_RPC_URLS: str = "https://arbitrum-one-rpc.publicnode.com,https://arb1.arbitrum.io/rpc"
+    # publicnode's ARB endpoint rejects topic-only eth_getLogs (needs an
+    # address filter), so it is excluded from the default array.
+    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.llamarpc.com"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 
     # Alert Pipeline

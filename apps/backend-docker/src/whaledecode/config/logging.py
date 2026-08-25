@@ -19,6 +19,9 @@ def setup_logging(settings: Settings) -> None:
     # 2. Silence raw SQLAlchemy polling/engine noise in production.
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+    # httpx logs one INFO line per RPC request — pure noise at poll cadence.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     # 3. Single-owner loggers: propagate=False stops the duplicate multiline
     # streams that appear when a logger bubbles records into root while also
     # being handled elsewhere. App ("whaledecode.*") loggers intentionally keep

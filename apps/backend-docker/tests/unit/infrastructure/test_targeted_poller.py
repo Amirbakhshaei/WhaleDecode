@@ -98,8 +98,8 @@ async def test_solana_dedupes_signatures_across_polls():
     router = FakeRouter([sigs, [sigs[0]]])
     poller = SolanaTargetedPoller(router)  # type: ignore[arg-type]
 
-    first = await poller.fetch_recent_activity([_wallet("SolAddr1", wid=7)])
-    second = await poller.fetch_recent_activity([_wallet("SolAddr1", wid=7)])
+    first = await poller.fetch_recent_activity([_wallet("9WzWXw8dr7v5kLRm6jF7ZR1LXt3fQ8wY3nTcq9N1kP2", wid=7)])
+    second = await poller.fetch_recent_activity([_wallet("9WzWXw8dr7v5kLRm6jF7ZR1LXt3fQ8wY3nTcq9N1kP2", wid=7)])
 
     assert {a["tx_hash"] for a in first} == {"sig1", "sig2"}
     assert second == []  # idempotent re-poll: nothing new
@@ -137,3 +137,58 @@ def test_router_cooldown_skips_dead_node():
     result = asyncio.run(router.post({"method": "x"}))
     assert result == "ok"
     assert calls == ["http://dead", "http://alive"]  # failover happened
+
+
+def test_router_fails_over_on_cloudflare_521_and_capacity_errors():
+    """Regression: 521s and node-policy RPC errors must rotate, not crash the poll."""
+    import asyncio
+
+    class Resp:
+        def __init__(self, status_code=200, body=None):
+            self.status_code = status_code
+            self._body = body or {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._body
+
+    calls = []
+
+    class Client:
+        async def post(self, url, json=None):
+            calls.append(url)
+            if "llama" in url:
+                return Resp(521)  # Cloudflare origin dead
+            if "publicnode" in url:
+                return Resp(body={"error": {"code": -32701,
+                           "message": "Please specify an address in your request"}})
+            if "cloudflare" in url:
+                return Resp(body={"error": {"code": -32046, "message": "Cannot fulfill request"}})
+            return Resp(body={"result": "fine"})
+
+    router = RpcFailoverRouter(
+        "test",
+        ["https://eth.llamarpc.com", "https://arb.publicnode.com",
+         "https://cloudflare-eth.com", "https://good.node"],
+    )
+    router._client = Client()  # type: ignore[assignment]
+
+    assert asyncio.run(router.post({"m": 1})) == "fine"
+    # every unhealthy node was skipped; the healthy one answered
+    assert set(calls) == {u for u in router._urls if "good" not in u} | {"https://good.node"}
+
+    # cooldown: next call goes straight to the healthy node
+    calls.clear()
+    assert asyncio.run(router.post({"m": 2})) == "fine"
+    assert calls == ["https://good.node"]
+
+
+def test_solana_address_validation_rejects_corrupt_seed_rows():
+    from whaledecode.adapters.chain.solana_poller import is_valid_solana_address
+
+    assert is_valid_solana_address("9WzWXw8dr7v5kLRm6jF7ZR1LXt3fQ8wY3nTcq9N1kP2")  # real pubkey
+    assert not is_valid_solana_address("0x476c5e26a75bd202a9683ffd34359c0cc15be0ff")  # EVM addr
+    assert not is_valid_solana_address("7LMfVrHbP8vWUbsCfdPbZ7PgRB3Y6hB5bTdB8s2zK1")  # WrongSize (31 bytes)
+    assert not is_valid_solana_address("not!a@base58#address")

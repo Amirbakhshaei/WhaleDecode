@@ -52,6 +52,9 @@ async def run_poller(settings: Settings) -> None:
 
 def main() -> None:
     settings = Settings()
+    from whaledecode.config.logging import setup_logging
+
+    setup_logging(settings)
     asyncio.run(run_poller(settings))
 
 
