@@ -8,8 +8,7 @@
     "numReplicas": 1,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
-    "healthcheckPath": "/health",
-    "preDeployCommand": "alembic upgrade head"
+    "healthcheckPath": "/health"
   },
   "release": {
     "command": "whaledecode db-init"

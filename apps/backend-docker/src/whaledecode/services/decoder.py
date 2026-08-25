@@ -10,10 +10,9 @@ Runs on every whale transaction before LLM synthesis:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
@@ -78,23 +77,9 @@ async def resolve_entity(session: AsyncSession, address: str) -> CuratedWallet |
 
 
 class TransactionDecoderService:
-    """Background entrypoint the webhook worker queues after a fast-ack.
+    """Deprecated with the Alchemy webhook route.
 
-    The full decode → value-gate → persist-as-pending pipeline needs the
-    request-scoped ``session_factory``/``settings`` and lives in the webhook
-    entrypoint, so this thin facade is the stable, import-safe name the worker
-    calls. Kept here (not in the entrypoint) so ingestion can evolve without
-    touching the route.
+    On-chain ingestion now flows through the Targeted Failover Poller
+    (``whaledecode.entrypoints.poller``). The parsing helpers that used to
+    back this facade live on in ``entrypoints.webhook`` as reference logic.
     """
-
-    @staticmethod
-    async def process_payload(
-        payload: dict[str, Any],
-        settings: Settings,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        from whaledecode.entrypoints.webhook import _process_webhook_payload
-
-        activities = (payload.get("event") or {}).get("activity") or []
-        logger.info(f"[INGEST] Webhook payload received with {len(activities)} raw activities")
-        await _process_webhook_payload(payload, settings, session_factory)

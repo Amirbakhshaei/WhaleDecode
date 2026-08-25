@@ -67,30 +67,40 @@ class BackgroundAIWorker:
         else:
             (log.warning if reaped else log.info)("worker_reaped_zombie_events", extra={"count": reaped})
 
+        idle_backoff = 1.0
         while not (stop_event and stop_event.is_set()):
             try:
-                await self.process_pending()
+                claimed = await self.process_pending()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.error(f"[PIPELINE_ERROR] Stage 'worker_loop' failed: {e}", exc_info=True)
                 capture_exception(e)
+                claimed = True  # treat errors like work done: retry at full cadence
+            if claimed:
+                idle_backoff = 1.0
+                continue
+            # ponytail: exponential idle backoff — an empty SKIP LOCKED claim
+            # costs a BEGIN+SELECT+ROLLBACK per pass, so stretch the interval
+            # up to POLL_INTERVAL_SECONDS instead of hammering the pool at 1s.
             try:
-                await asyncio.sleep(self._settings.POLL_INTERVAL_SECONDS)
+                await asyncio.sleep(idle_backoff)
             except asyncio.CancelledError:
                 raise
+            idle_backoff = min(idle_backoff * 2, self._settings.POLL_INTERVAL_SECONDS)
 
-    async def process_pending(self) -> None:
+    async def process_pending(self) -> bool:
         """Claim one pending event (atomic lock), investigate, dispatch, update status.
 
         On failure the event is returned to ``pending`` so another pass retries it.
         Events the investigation skips (below gate threshold) are marked ``skipped``,
-        a terminal state — never re-claimed, never dispatched.
+        a terminal state — never re-claimed, never dispatched. Returns True when
+        an event was claimed (caller resets its idle backoff).
         """
         async with UnitOfWork(self._session_factory) as uow:
             claimed = await uow.candidate_events.claim_next_pending(limit=1)
             if not claimed:
-                return
+                return False
             event = claimed[0]
             assert event.id is not None, "claimed candidate event must have an id"
             await uow.candidate_events.set_status(event.id, "processing")
@@ -111,7 +121,7 @@ class BackgroundAIWorker:
                         "tx": str(event.tx_hash),
                     },
                 )
-                return
+                return True
 
             score, value_usd = self._channel_metrics(event, result)
             policy = policy_for(event.chain)
@@ -133,7 +143,7 @@ class BackgroundAIWorker:
                         "tx": str(event.tx_hash),
                     },
                 )
-                return
+                return True
 
             # Anti-fatigue caps; $2M+ moves (black swans) bypass all caps.
             chain_daily_cap = policy.max_daily_alerts if policy else GLOBAL_POLICY.max_alerts_per_day
@@ -163,7 +173,7 @@ class BackgroundAIWorker:
                             "tx": str(event.tx_hash),
                         },
                     )
-                    return
+                    return True
 
             # Pre-publish gatekeeper: never broadcast placeholder/fallback synthesis.
             synthesis = parse_synthesis_points(result)
@@ -185,7 +195,7 @@ class BackgroundAIWorker:
                     f"[DISPATCH_SKIP] Event ID={event.id} suppressed: synthesis failed validation "
                     f"(fallback/placeholder). Tx={event.tx_hash}"
                 )
-                return
+                return True
 
             dispatched = await self._dispatch(event, result)
             async with UnitOfWork(self._session_factory) as uow:
@@ -209,6 +219,8 @@ class BackgroundAIWorker:
                 await uow.commit()
             if next_status == "dead_letter":
                 log.warning("worker_event_dead_lettered", extra={"dedupe_key": event.dedupe_key})
+        # An event was claimed and fully handled — keep the worker at full cadence.
+        return True
 
     @staticmethod
     def _dead_letter_audit(event: CandidateEvent, exc: Exception) -> AdminAuditLog:

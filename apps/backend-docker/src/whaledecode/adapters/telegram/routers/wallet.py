@@ -3,7 +3,6 @@ from html import escape
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 
 wallet_router = Router(name="wallet")

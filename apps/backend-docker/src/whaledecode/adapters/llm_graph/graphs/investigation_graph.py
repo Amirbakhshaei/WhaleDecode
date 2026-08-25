@@ -1,7 +1,6 @@
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
-
 from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.adapters.llm_graph.nodes.consolidated_report import create_consolidated_report_node
 from whaledecode.adapters.llm_graph.nodes.event_analysis import create_analysis_node

@@ -1,4 +1,4 @@
-"""Targeted failover poller: failover, server-side filtering, idempotency."""
+"""Targeted failover poller: failover, tx aggregation, USD gating, idempotency."""
 import pytest
 from whaledecode.adapters.chain.evm_poller import EvmTargetedPoller
 from whaledecode.adapters.chain.solana_poller import SolanaTargetedPoller
@@ -24,7 +24,23 @@ class FakeRouter:
         if self.fail_first > 0:
             self.fail_first -= 1
             raise TimeoutError("node down")
+        if payload["method"] == "eth_call":  # decimals()
+            return "0x06"  # 6 decimals
         return self.responses.pop(0)
+
+    async def aclose(self):
+        pass
+
+
+class FakeOracle:
+    """$1 per unit — deterministic USD math."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def get_token_price_usd(self, contract_address: str, chain: str) -> float:
+        self.calls.append((contract_address, chain))
+        return 1.0
 
     async def aclose(self):
         pass
@@ -35,26 +51,44 @@ WALLET = "0x" + "a" * 40
 PADDED = "0x" + "0" * 24 + "a" * 40
 
 
-@pytest.mark.asyncio
-async def test_evm_pushes_curated_set_into_topics():
-    log = {
-        "address": "0xtoken", "topics": [SIG, PADDED, None],
-        "data": "0x64", "transactionHash": "0xhash", "logIndex": "0x1",
+def _transfer_log(tx_hash: str, data_hex: str, log_index: int = 0) -> dict:
+    return {
+        "address": "0xtoken",
+        "topics": [SIG, PADDED, None],
+        "data": data_hex,
+        "transactionHash": tx_hash,
+        "logIndex": hex(log_index),
         "blockNumber": "0x10",
     }
-    router = FakeRouter(["0x20", [log], []])  # blockNumber, outgoing logs, incoming logs
-    poller = EvmTargetedPoller("BASE", "Base", router)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_evm_pushes_curated_set_into_topics_and_aggregates_per_tx():
+    # Same tx in three logs (routing hop): 100 + 200 units of a 6-decimal token.
+    logs = [
+        _transfer_log("0xtx1", hex(100), 0),
+        _transfer_log("0xtx1", hex(200), 1),
+        _transfer_log("0xtx1", hex(50), 2),
+        _transfer_log("0xtx2", hex(999), 3),
+    ]
+    router = FakeRouter(["0x20", logs, []])
+    oracle = FakeOracle()
+    poller = EvmTargetedPoller("BASE", "Base", router, price_oracle=oracle)  # type: ignore[arg-type]
 
     activities = await poller.fetch_recent_activity([_wallet(WALLET)])
 
+    # Server-side filtering: curated set injected into topics.
     getlogs = [p for p in router.payloads if p["method"] == "eth_getLogs"]
-    assert len(getlogs) == 2  # one query per transfer direction
-    topics = getlogs[0]["params"][0]["topics"]
-    # The curated set is pushed into the filter — node filters server-side.
-    assert topics[0] == SIG and PADDED in topics[1]
-    assert len(activities) == 1
-    assert activities[0]["wallet_id"] == 1 and activities[0]["chain"] == "Base"
-    assert activities[0]["dedupe_key"] == "1:0xhash:1"
+    assert len(getlogs) == 2
+    assert PADDED in getlogs[0]["params"][0]["topics"][1]
+
+    # Aggregation: exactly one activity per tx_hash, net USD summed.
+    by_tx = {a["tx_hash"]: a for a in activities}
+    assert sorted(by_tx) == ["0xtx1", "0xtx2"]
+    assert by_tx["0xtx1"]["value_usd"] == pytest.approx((100 + 200 + 50) / 10**6)
+    assert by_tx["0xtx2"]["value_usd"] == pytest.approx(999 / 10**6)
+    assert all(a["dedupe_key"].endswith(":agg") for a in activities)
+    assert len({a["dedupe_key"] for a in activities}) == len(activities)
 
 
 @pytest.mark.asyncio
@@ -85,7 +119,6 @@ def test_router_cooldown_skips_dead_node():
 
         def json(self):
             return self._json
-
 
     calls = []
 

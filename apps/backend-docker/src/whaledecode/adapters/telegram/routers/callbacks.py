@@ -1,8 +1,8 @@
+from html import escape
+
 import structlog
 from aiogram import Router, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from html import escape
-
 from whaledecode.adapters.telegram.routers.chat import _spend_quota
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.domain.exceptions import PlanLimitError

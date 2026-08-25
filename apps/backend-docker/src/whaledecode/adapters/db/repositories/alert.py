@@ -1,6 +1,5 @@
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.alert import AlertModel
 from whaledecode.domain.entities.alert import Alert
 

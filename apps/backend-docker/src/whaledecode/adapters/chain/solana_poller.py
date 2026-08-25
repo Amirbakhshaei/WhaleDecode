@@ -7,8 +7,7 @@ are paced with an inter-call sleep and rely on the router's cooldown for 429s
 from typing import Any
 
 import structlog
-from whaledecode.adapters.chain.evm_poller import backoff_sleep
-from whaledecode.adapters.chain.poller import TargetedChainPoller
+from whaledecode.adapters.chain.poller import TargetedChainPoller, backoff_sleep
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter
 

@@ -1,6 +1,5 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.user import UserModel
 from whaledecode.domain.entities.user import User
 

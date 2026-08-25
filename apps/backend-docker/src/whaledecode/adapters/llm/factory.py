@@ -1,7 +1,5 @@
 from langchain_core.language_models import BaseChatModel
-
 from whaledecode.adapters.llm.fallback_router import (
-    FallbackLLMRouter,
     create_gemini_with_groq_fallback,
     create_groq_with_key_fallback,
 )

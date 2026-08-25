@@ -5,7 +5,6 @@ from typing import Any
 
 import structlog
 from langchain_core.messages import HumanMessage
-
 from whaledecode.adapters.chain.factory import create_chain_provider
 from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.graphs.chat_investigation import build_chat_investigation_graph

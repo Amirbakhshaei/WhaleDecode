@@ -13,8 +13,8 @@ from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from whaledecode.adapters.chain.evm_poller import EvmTargetedPoller, backoff_sleep
-from whaledecode.adapters.chain.poller import TargetedChainPoller
+from whaledecode.adapters.chain.evm_poller import EvmTargetedPoller
+from whaledecode.adapters.chain.poller import TargetedChainPoller, backoff_sleep
 from whaledecode.adapters.chain.solana_poller import SolanaTargetedPoller
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
@@ -100,17 +100,21 @@ class TargetedPollerService:
         return inserted
 
     def _passes_gate(self, activity: dict[str, Any]) -> bool:
-        """Same deterministic Sentinel gate as the webhook/fetcher producers.
+        """USD-floor gate on the transaction's aggregated net volume.
 
-        Every polled wallet is curated by definition, so the curated bonus
-        always applies (matches the fetcher's behavior).
+        The EVM adapter pre-aggregates per tx_hash and prices every Transfer
+        log with real token decimals, so this is a true dollar threshold —
+        not a native-denomination guess. The Sentinel score is still computed
+        and stored for downstream Edge Intelligence ranking.
         """
-        # ponytail: skips the accumulation-confluence boost (recent_events lookup)
-        # the fetcher uses; add it back if gated volume drops below alert needs.
-        score = self._sentinel.score(activity, curated_wallet_ids={activity["wallet_id"]})
+        score = self._sentinel.score(activity)
         activity["score"] = score
-        return bool(score >= self._settings.ALERT_SCORE_THRESHOLD * 100)
+        return float(activity.get("value_usd") or 0.0) >= self._settings.TARGETED_MIN_TX_USD
 
     async def aclose(self) -> None:
+        for poller in self._pollers.values():
+            closer = getattr(poller, "aclose", None)
+            if closer is not None:
+                await closer()
         for router in self._routers.values():
             await router.aclose()

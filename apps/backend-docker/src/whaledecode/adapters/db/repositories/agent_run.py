@@ -2,7 +2,6 @@ import json
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.agent_run import AgentRunModel
 from whaledecode.domain.entities.agent_run import AgentRun
 

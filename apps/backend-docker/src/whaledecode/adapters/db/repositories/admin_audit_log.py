@@ -1,7 +1,6 @@
 import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.admin_audit_log import AdminAuditLogModel
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 

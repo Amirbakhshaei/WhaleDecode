@@ -11,7 +11,6 @@ from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.chain.factory import create_chain_provider
 from whaledecode.adapters.chain.normalizer import (
     TRANSFER_EVENT_SIGNATURE,

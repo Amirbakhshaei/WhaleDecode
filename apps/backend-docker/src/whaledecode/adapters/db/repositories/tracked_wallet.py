@@ -1,6 +1,5 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.tracked_wallet import TrackedWalletModel
 from whaledecode.domain.entities.tracked_wallet import TrackedWallet
 from whaledecode.domain.value_objects.chain import Chain

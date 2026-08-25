@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import structlog
-
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings

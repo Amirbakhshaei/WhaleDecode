@@ -2,7 +2,6 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
-
 from whaledecode.adapters.db.models.base import Base
 
 

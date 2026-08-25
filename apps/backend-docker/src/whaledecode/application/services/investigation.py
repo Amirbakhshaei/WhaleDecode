@@ -182,7 +182,7 @@ class InvestigationService:
             # slow RPC can never stall dispatch.
             try:
                 await asyncio.wait_for(asyncio.shield(trace_task), timeout=5.0)
-            except (asyncio.TimeoutError, Exception) as exc:
+            except (TimeoutError, Exception) as exc:
                 log.warning(f"[EDGE_INTEL] cluster trace incomplete: {exc}")
                 trace_task.cancel()
         # Copy deterministic enrichment onto the persisted entity.

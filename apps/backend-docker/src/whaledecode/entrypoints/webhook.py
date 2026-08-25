@@ -1,13 +1,13 @@
-"""FastAPI app with Telegram bot lifespan + Alchemy webhook endpoint."""
+"""FastAPI app with Telegram bot lifespan (Alchemy webhook ingestion is
+deprecated — on-chain data now arrives via the isolated Targeted Failover
+Poller in ``whaledecode.entrypoints.poller``)."""
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Header, Request
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from fastapi import FastAPI
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
-from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.services.investigation import (
     build_investigation_service,
 )
@@ -24,32 +24,11 @@ from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app, run_polling_with_retry
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
-from whaledecode.infrastructure.http import HttpClientManager
-from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
-from whaledecode.services.decoder import TransactionDecoderService, apply_velocity_telemetry
+from whaledecode.infrastructure.telemetry import init_sentry
 
 logger = logging.getLogger(__name__)
 
-_NETWORK_TO_CHAIN: dict[str, Chain] = {
-    "ETH_MAINNET": Chain.ETH,
-    "BASE_MAINNET": Chain.BASE,
-    "ARB_MAINNET": Chain.ARB,
-}
-
 _sentinel = SentinelEngine()
-
-
-def verify_alchemy_signature(body: bytes, signature: str | None, keys: list[str]) -> bool:
-    """Hex HMAC-SHA256 of the raw request body signed with any of the webhook signing keys."""
-    if not signature or not keys:
-        return False
-    import hashlib
-    import hmac
-    for k in keys:
-        digest = hmac.new(k.encode(), body, hashlib.sha256).hexdigest()
-        if hmac.compare_digest(digest.encode(), signature.encode()):
-            return True
-    return False
 
 
 def _hex_int(value: Any, default: int = 0) -> int:
@@ -117,28 +96,17 @@ async def lifespan(app: FastAPI):
         )
 
     # Bound + tolerant: if the bot/supervisor can't start (Telegram down, bad
-    # token, …) the web server still binds and serves webhooks.
+    # token, …) the web server still binds and serves /health.
     try:
         await asyncio.wait_for(_start_bot_and_supervisor(), timeout=15)
     except Exception as e:  # noqa: E501 - never let startup kill the web server
         logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
 
-    # Daily active-rotation engine: reconcile the ≤300 monitored wallets with
-    # Alchemy on startup, then every 24h. Skipped when credentials are absent so
-    # local/dev runs don't error out.
-    rotator_task = None
-    if settings.ALCHEMY_API_KEY or settings.ALCHEMY_NOTIFY_TOKEN or settings.ALCHEMY_AUTH_TOKEN:
-        if settings.ALCHEMY_WEBHOOK_ID or settings.ALCHEMY_WEBHOOK_ID_ETH:
-            rotator_task = asyncio.create_task(_periodic_webhook_rotator(session_factory, settings))
+    # ponytail: Alchemy webhook rotator removed with webhook deprecation —
+    # ingestion now flows through entrypoints.poller. Restore from git history
+    # if a managed-webhook fallback is ever needed.
 
     yield
-
-    if rotator_task is not None:
-        rotator_task.cancel()
-        try:
-            await rotator_task
-        except asyncio.CancelledError:
-            pass
 
     stop_event = getattr(app.state, "stop_event", None)
     if stop_event is not None:
@@ -162,27 +130,6 @@ async def lifespan(app: FastAPI):
         await bot.session.close()
 
 
-async def _periodic_webhook_rotator(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings
-) -> None:
-    """Run the rotation cycle once on startup, then every 24h.
-
-    Isolated in its own task; failures are logged and retried next cycle so a
-    transient Alchemy/Postgres error never kills the web server.
-    """
-    from whaledecode.services.webhook_rotator import WebhookRotationService
-
-    svc = WebhookRotationService(settings, session_factory)
-    while True:
-        try:
-            summary = await svc.sync_rotation_cycle()
-            logger.info("webhook_rotation_scheduled", extra=summary)
-        except Exception as e:  # noqa: BLE001 - never crash the rotator loop
-            logger.error(f"Scheduled webhook rotation error: {e}", exc_info=True)
-        await asyncio.sleep(86400)  # 24 hours
-    await HttpClientManager.aclose()
-
-
 # ``settings`` is built at import time (cheap env config); the DB/LLM service
 # factory is populated inside the lifespan so a connectivity failure surfaces at
 # startup rather than crashing the import.
@@ -196,128 +143,6 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "WhaleDecode Webhook Receiver"}
-
-
-@app.post("/webhook/alchemy")
-async def alchemy_webhook(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    x_alchemy_signature: str = Header(None),
-):
-    # Fast-Ack gate: acknowledge in <50ms and never 401. Returning 200 on an
-    # unauthenticated payload prevents Alchemy from retrying (and billing CU
-    # per retry byte); the request is simply dropped.
-    raw_body = await request.body()
-    valid = verify_alchemy_signature(raw_body, x_alchemy_signature, settings.webhook_signing_keys)
-    logger.info(
-        "webhook_request",
-        extra={"signature_present": bool(x_alchemy_signature), "signature_valid": valid},
-    )
-    if not valid:
-        return {"status": "ignored", "reason": "invalid_signature"}
-
-    try:
-        payload = await request.json()
-    except Exception as exc:
-        logger.error("webhook_malformed_json", extra={"error": str(exc)})
-        return {"status": "ignored", "reason": "malformed_json"}
-
-    background_tasks.add_task(
-        TransactionDecoderService.process_payload, payload, settings, session_factory
-    )
-    return {"status": "accepted", "queued": True}
-
-
-async def _process_webhook_payload(
-    payload: dict[str, Any],
-    settings: Settings,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """Process webhook payload in background - only ingest and persist as pending.
-
-    Runs after the HTTP 200 is already sent, so it can never slow the ack. Any
-    failure is captured to Sentry and logged — never re-raised (a background task
-    exception would otherwise just be logged by Starlette, with no retry).
-    """
-    try:
-        if payload.get("type") != "ADDRESS_ACTIVITY":
-            return
-        event = payload.get("event") or {}
-        chain = _NETWORK_TO_CHAIN.get(event.get("network"))
-        if chain is None:
-            logger.warning("webhook_unknown_network", extra={"network": event.get("network")})
-            return
-
-        # Early rejection: drop zero-value native transfers and empty contract calls
-        # before any DB session or candidate_event insert — this is the write-
-        # amplification guard that keeps dust/approve/zero-call spam off the queue.
-        raw_activities = event.get("activity") or []
-        activities = [a for a in raw_activities if a.get("hash") and not _is_ignorable_activity(a)]
-        if len(activities) != len(raw_activities):
-            logger.info("webhook_dropped_ignorable", extra={"dropped": len(raw_activities) - len(activities)})
-
-        # Chain floor gate: drop sub-floor USD noise in memory before any DB session.
-        floored = [a for a in activities if not _below_chain_floor(a, chain)]
-        if len(floored) != len(activities):
-            logger.info(
-                "webhook_dropped_below_floor",
-                extra={"dropped": len(activities) - len(floored), "chain": chain.name},
-            )
-        activities = floored
-        if not activities:
-            return
-
-        async with UnitOfWork(session_factory) as uow:
-            wallets = await uow.curated_wallets.list_active(chain=chain.name)
-        wallet_map = {w.address.lower(): w for w in wallets if w.id is not None}
-
-        for activity in activities:
-            wallet = None
-            for side in ("fromAddress", "toAddress"):
-                addr = activity.get(side)
-                if addr and addr.lower() in wallet_map:
-                    wallet = wallet_map[addr.lower()]
-                    break
-            if wallet is None:
-                continue
-
-            logger.info(
-                f"[ATTRIBUTION] Match found! Wallet={wallet.address[:10]}... | "
-                f"Label='{wallet.label}' | Category='{getattr(wallet, 'category', 'Unknown')}' | "
-                f"Score={wallet.quality_score}"
-            )
-
-            # Per-chain ingestion gate: price the move now and only persist as
-            # pending when it clears the chain's min_usd_threshold AND the global
-            # value-noise floor (MIN_ALERT_USD_THRESHOLD).
-            candidate_data = _build_candidate_data(activity, chain, wallet)
-            if not await _clears_chain_floor(candidate_data, settings.MIN_ALERT_USD_THRESHOLD):
-                logger.debug(
-                    "webhook_dropped_below_alert_threshold",
-                    extra={"dedupe_key": candidate_data["dedupe_key"]},
-                )
-                continue
-            async with UnitOfWork(session_factory) as uow:
-                await uow.candidate_events.create_pending(candidate_data)
-                logger.info(
-                    f"[EVENT_ENQUEUED] Event persisted to candidate_events for "
-                    f"tx={candidate_data['tx_hash'][:10]}... (dedupe_key={candidate_data['dedupe_key']})"
-                )
-                # Velocity telemetry: bump 30d tx count + decay penalty for both
-                # sides (passive attribution needs no CU spend). Best-effort —
-                # a telemetry failure must never block ingestion.
-                try:
-                    await apply_velocity_telemetry(
-                        uow.session,
-                        [activity.get("fromAddress"), activity.get("toAddress")],
-                    )
-                except Exception as exc:  # noqa: BLE001 - telemetry is non-critical
-                    logger.warning("webhook_telemetry_failed", extra={"error": str(exc)})
-                await uow.commit()
-            logger.info("webhook_candidate_pending", extra={"dedupe_key": candidate_data["dedupe_key"]})
-    except Exception as exc:  # noqa: BLE001 - background task must not crash silently
-        logger.error(f"[PIPELINE_ERROR] Stage 'webhook_ingest' failed: {exc}", exc_info=True)
-        capture_exception(exc)
 
 
 async def _clears_chain_floor(candidate_data: dict[str, Any], min_usd_threshold: float | None = None) -> bool:

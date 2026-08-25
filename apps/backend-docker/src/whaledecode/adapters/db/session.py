@@ -21,7 +21,8 @@ def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSessio
         pool_timeout=30,
         pool_recycle=1800,
         pool_pre_ping=True,
-        echo=settings.ENV == "dev",
+        # ponytail: echo permanently off — multiline SQL statements flooded the
+        # log stream and duplicated everything structlog already emits.
         connect_args={"timeout": 10},
     )
     if settings.ENV != "dev":

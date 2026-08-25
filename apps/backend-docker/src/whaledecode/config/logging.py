@@ -2,7 +2,6 @@ import logging
 import sys
 
 import structlog
-
 from whaledecode.config.settings import Settings
 
 
@@ -20,6 +19,12 @@ def setup_logging(settings: Settings) -> None:
     # 2. Silence raw SQLAlchemy polling/engine noise in production.
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+    # 3. Single-owner loggers: propagate=False stops the duplicate multiline
+    # streams that appear when a logger bubbles records into root while also
+    # being handled elsewhere. App ("whaledecode.*") loggers intentionally keep
+    # propagation — root is their only output handler.
+    for name in ("sqlalchemy.engine", "sqlalchemy.pool"):
+        logging.getLogger(name).propagate = False
 
     structlog.configure(
         processors=[

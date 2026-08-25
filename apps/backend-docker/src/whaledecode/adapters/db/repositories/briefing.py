@@ -2,7 +2,6 @@ import json
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.briefing import BriefingModel
 from whaledecode.domain.entities.briefing import Briefing
 

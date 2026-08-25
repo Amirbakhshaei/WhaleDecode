@@ -9,7 +9,6 @@ from aiogram.types import (
     Message,
     PreCheckoutQuery,
 )
-
 from whaledecode.adapters.telegram.user_access import get_or_create_user
 from whaledecode.application.services.user_service import upgrade_to_paid
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog

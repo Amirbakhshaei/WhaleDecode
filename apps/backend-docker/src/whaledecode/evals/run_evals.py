@@ -7,7 +7,6 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langsmith import Client, evaluate
-
 from whaledecode.adapters.chain.providers.mock import MockChainProvider
 from whaledecode.adapters.llm.factory import LLMFactory
 from whaledecode.adapters.llm_graph.graphs.investigation_graph import build_investigation_graph

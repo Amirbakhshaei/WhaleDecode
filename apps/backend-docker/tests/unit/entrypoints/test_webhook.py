@@ -1,7 +1,10 @@
-"""Unit tests for the Alchemy webhook entrypoint (FastAPI version)."""
+"""Unit tests for the webhook entrypoint's parsing helpers.
+
+The HTTP ingestion route itself is deprecated (replaced by the Targeted
+Failover Poller); these cover the pure parsing/scoring logic that the
+migration still references.
+"""
 import asyncio
-import hashlib
-import hmac
 
 from fastapi.testclient import TestClient
 from whaledecode.domain.entities.candidate_event import CandidateEvent
@@ -9,7 +12,6 @@ from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.entrypoints import webhook
 from whaledecode.entrypoints.webhook import (
-    _NETWORK_TO_CHAIN,
     _activity_candidate,
     _below_chain_floor,
     _build_candidate_data,
@@ -17,41 +19,7 @@ from whaledecode.entrypoints.webhook import (
     _is_ignorable_activity,
     _score_candidate,
     app,
-    verify_alchemy_signature,
 )
-
-
-def test_verify_alchemy_signature_valid():
-    key = "test_signing_key"
-    body = b'{"test": "payload"}'
-    sig = hmac.new(key.encode(), body, hashlib.sha256).hexdigest()
-    assert verify_alchemy_signature(body, sig, [key]) is True
-
-
-def test_verify_alchemy_signature_invalid():
-    key = "test_signing_key"
-    body = b'{"test": "payload"}'
-    assert verify_alchemy_signature(body, "wrong_sig", [key]) is False
-
-
-def test_verify_alchemy_signature_missing():
-    assert verify_alchemy_signature(b"body", None, ["key"]) is False
-    assert verify_alchemy_signature(b"body", "", ["key"]) is False
-
-
-def test_verify_alchemy_signature_multi_key():
-    key1 = "key1"
-    key2 = "key2"
-    body = b'{"test": "payload"}'
-    sig2 = hmac.new(key2.encode(), body, hashlib.sha256).hexdigest()
-    assert verify_alchemy_signature(body, sig2, [key1, key2]) is True
-
-
-def test_network_mapping():
-    assert _NETWORK_TO_CHAIN["ETH_MAINNET"] is Chain.ETH
-    assert _NETWORK_TO_CHAIN["BASE_MAINNET"] is Chain.BASE
-    assert _NETWORK_TO_CHAIN["ARB_MAINNET"] is Chain.ARB
-    assert _NETWORK_TO_CHAIN.get("SOLANA_MAINNET") is None
 
 
 def test_activity_candidate_token_transfer():
@@ -195,42 +163,15 @@ def test_build_candidate_data_scores_low_value_transfer_low():
 
 
 def test_fastapi_app_has_routes():
-    """Verify FastAPI app has the webhook and health routes."""
+    """Verify FastAPI app serves /health (ingestion route deprecated)."""
     client = TestClient(app)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-    # Webhook endpoint exists and fast-acks (HTTP 200) even without a signature:
-    # returning 200 (not 401) stops Alchemy from retrying and billing CU per byte.
+    # The Alchemy ingestion route is gone: it must not accept traffic.
     response = client.post("/webhook/alchemy", json={})
-    assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
-
-
-def test_webhook_malformed_json_returns_200():
-    """Malformed payloads must ack 200 (never 500) to avoid Alchemy retry storms."""
-    client = TestClient(app)
-    response = client.post(
-        "/webhook/alchemy",
-        content=b"{not valid json",
-        headers={"Content-Type": "application/json"},
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
-
-
-def test_webhook_valid_signature_fast_acks_200(monkeypatch):
-    """A valid signature queues the background task and returns 200 immediately (no DB work on path)."""
-    from whaledecode.entrypoints import webhook
-
-    # webhook_signing_keys is a read-only property; patch the verifier instead.
-    monkeypatch.setattr(webhook, "verify_alchemy_signature", lambda body, sig, keys: True)
-    body = b'{"type":"ADDRESS_ACTIVITY","event":{"network":"ETH_MAINNET","activity":[]}}'
-    client = TestClient(webhook.app)
-    response = client.post("/webhook/alchemy", content=body, headers={"X-Alchemy-Signature": "x"})
-    assert response.status_code == 200
-    assert response.json()["status"] == "accepted"
+    assert response.status_code in (404, 405)
 
 
 def test_ignorable_activity_zero_value_external():

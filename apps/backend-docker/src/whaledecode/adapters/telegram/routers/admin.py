@@ -3,7 +3,6 @@ from html import escape
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 
 admin_router = Router(name="admin")
