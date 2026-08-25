@@ -5,7 +5,6 @@ from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.value_objects.hash import Hash
@@ -51,6 +50,37 @@ class CandidateEventRepository:
             .values(**values)
             .on_conflict_do_nothing(index_elements=["dedupe_key"])
         )
+
+    async def create_pending_bulk(self, rows: list[dict]) -> int:
+        """Insert many pending events in one statement; duplicates are skipped.
+
+        Single round-trip ``INSERT ... ON CONFLICT (dedupe_key) DO NOTHING`` —
+        the handoff from the targeted poller is idempotent at the DB level, so
+        a poller crash/restart can never double-ingest an event.
+        """
+        if not rows:
+            return 0
+        values = [
+            {
+                "wallet_id": r["wallet_id"],
+                "chain": r["chain"],
+                "tx_hash": r["tx_hash"],
+                "log_index": r["log_index"],
+                "block_number": r["block_number"],
+                "event_type": r["event_type"],
+                "raw_json": json.dumps(r.get("raw_json", {})),
+                "score": r.get("score", 0.0),
+                "dedupe_key": r["dedupe_key"],
+                "status": "pending",
+            }
+            for r in rows
+        ]
+        result = await self._session.execute(
+            self._conflict_ignore_insert()
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["dedupe_key"])
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def claim_next_pending(self, limit: int = 1) -> list[CandidateEvent]:
         """Atomically claim the oldest pending rows (FOR UPDATE SKIP LOCKED on PostgreSQL)."""

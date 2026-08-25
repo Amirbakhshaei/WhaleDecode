@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     REORG_SAFE_BLOCKS: int = 64
     MAX_GET_LOGS_BLOCK_RANGE: dict[str, int] = {"Ethereum": 5, "Base": 30, "Arbitrum": 100}
 
+    # Targeted failover poller (free public RPCs; replaces paid webhooks).
+    # Comma-separated endpoint lists — the router rotates on 429/502/timeout.
+    TARGETED_POLLER_ENABLED: bool = True
+    TARGETED_RPC_COOLDOWN_SECONDS: float = 60.0
+    ETH_PUBLIC_RPC_URLS: str = "https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://cloudflare-eth.com"
+    BASE_PUBLIC_RPC_URLS: str = "https://base-rpc.publicnode.com,https://mainnet.base.org,https://base.llamarpc.com"
+    ARB_PUBLIC_RPC_URLS: str = "https://arbitrum-one-rpc.publicnode.com,https://arb1.arbitrum.io/rpc"
+    SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
+
     # Alert Pipeline
     ALERT_SCORE_THRESHOLD: float = 0.50
     ACCUMULATION_WINDOW_SECONDS: int = 86400
