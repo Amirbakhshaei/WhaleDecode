@@ -110,11 +110,9 @@ class Settings(BaseSettings):
     # Aggregated net USD per transaction required before ingestion (the
     # webhook path's whale floor, now applied at the poller).
     TARGETED_MIN_TX_USD: float = 50_000.0
-    ETH_PUBLIC_RPC_URLS: str = "https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://cloudflare-eth.com"
-    BASE_PUBLIC_RPC_URLS: str = "https://base-rpc.publicnode.com,https://mainnet.base.org,https://base.llamarpc.com"
-    # publicnode's ARB endpoint rejects topic-only eth_getLogs (needs an
-    # address filter), so it is excluded from the default array.
-    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.llamarpc.com"
+    ETH_PUBLIC_RPC_URLS: str = "https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth,https://1rpc.io/eth,https://eth.drpc.org"
+    BASE_PUBLIC_RPC_URLS: str = "https://base-rpc.publicnode.com,https://mainnet.base.org,https://1rpc.io/base"
+    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.drpc.org"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 
     # Alert Pipeline

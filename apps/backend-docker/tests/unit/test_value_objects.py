@@ -1,5 +1,4 @@
 import pytest
-
 from whaledecode.domain.value_objects.address import EVMAddress, InvalidAddressError, SolanaAddress
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
@@ -24,9 +23,14 @@ class TestHash:
 
 class TestChain:
     def test_values(self):
-        assert Chain.ETH == 1
-        assert Chain.BASE == 8453
-        assert Chain.ARB == 42161
+        assert Chain.ETH == "ETH"
+        assert Chain.BASE == "BASE"
+        assert Chain.ARB == "ARB"
+
+    def test_lower_never_raises(self):
+        assert Chain.ETH.lower() == "eth"
+        assert Chain.BASE.lower() == "base"
+        assert Chain.ARB.lower() == "arb"
 
     def test_label(self):
         assert Chain.ETH.label() == "Ethereum"

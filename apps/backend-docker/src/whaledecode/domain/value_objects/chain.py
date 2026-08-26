@@ -1,10 +1,12 @@
-from enum import IntEnum
+from enum import Enum
 
 
-class Chain(IntEnum):
-    ETH = 1
-    BASE = 8453
-    ARB = 42161
+class Chain(str, Enum):
+    """str-enum so ``chain.lower()`` works anywhere a Chain is passed as text."""
+
+    ETH = "ETH"
+    BASE = "BASE"
+    ARB = "ARB"
 
     def label(self) -> str:
-        return {1: "Ethereum", 8453: "Base", 42161: "Arbitrum"}[self.value]
+        return {self.ETH: "Ethereum", self.BASE: "Base", self.ARB: "Arbitrum"}[self]

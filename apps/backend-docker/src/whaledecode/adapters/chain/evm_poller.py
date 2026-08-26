@@ -28,15 +28,30 @@ log = structlog.get_logger()
 # Public nodes reject wide ranges; stay small and catch up across polls.
 _DEFAULT_BLOCK_RANGE = 10
 
+# ponytail: free RPCs return -32046/-32701 on wide topic arrays — 20 addresses
+# per eth_getLogs call; shrink further if a node still balks.
+_MAX_ADDRESSES_PER_GETLOGS = 20
+
 # eth_call selector for decimals() on an ERC-20 contract.
 _DECIMALS_SELECTOR = "0x313ce567"
 
 
 def _transfer_topic_queries(padded: list[str]) -> list[list[Any]]:
-    """Outgoing ([SIG, wallets, null]) then incoming ([SIG, null, wallets])."""
+    """Outgoing ([SIG, wallets, null]) then incoming ([SIG, null, wallets]).
+
+    Addresses are chunked so no single call carries more than
+    ``_MAX_ADDRESSES_PER_GETLOGS`` topics (free-RPC topic-array limits).
+    """
+    chunks = [
+        padded[i : i + _MAX_ADDRESSES_PER_GETLOGS]
+        for i in range(0, len(padded), _MAX_ADDRESSES_PER_GETLOGS)
+    ]
     return [
-        [TRANSFER_EVENT_SIGNATURE, padded, None],
-        [TRANSFER_EVENT_SIGNATURE, None, padded],
+        [TRANSFER_EVENT_SIGNATURE, chunk, None]
+        for chunk in chunks
+    ] + [
+        [TRANSFER_EVENT_SIGNATURE, None, chunk]
+        for chunk in chunks
     ]
 
 
