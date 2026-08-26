@@ -13,12 +13,14 @@ from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.chain.evm_poller import EvmTargetedPoller
 from whaledecode.adapters.chain.poller import TargetedChainPoller, backoff_sleep
 from whaledecode.adapters.chain.solana_poller import SolanaTargetedPoller
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
+from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, split_urls
 
 log = structlog.get_logger()
@@ -92,7 +94,11 @@ class TargetedPollerService:
                 except Exception as e:  # noqa: BLE001 - one chain down ≠ all chains down
                     log.error("targeted_poll_failed", extra={"chain": code, "error": str(e)})
                     continue
-                kept = [a for a in activities if self._passes_gate(a)]
+                kept = [
+                    a
+                    for a in activities
+                    if self._passes_gate(a) and is_valid_ingest_hash(a["tx_hash"], a["chain"])
+                ]
                 inserted += await uow.candidate_events.create_pending_bulk(kept)
             await uow.commit()
         if inserted:

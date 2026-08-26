@@ -1,13 +1,17 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.value_objects.hash import Hash
+
+logger = structlog.get_logger(__name__)
 
 
 def pending_events_statement(limit: int = 1, *, for_update: bool = True):
@@ -83,10 +87,35 @@ class CandidateEventRepository:
         return int(getattr(result, "rowcount", 0) or 0)
 
     async def claim_next_pending(self, limit: int = 1) -> list[CandidateEvent]:
-        """Atomically claim the oldest pending rows (FOR UPDATE SKIP LOCKED on PostgreSQL)."""
+        """Atomically claim the oldest pending rows (FOR UPDATE SKIP LOCKED on PostgreSQL).
+
+        Hydration of each row is isolated: a row that fails domain validation
+        (e.g. a truncated hash) is quarantined in-place as ``FAILED_HYDRATION``
+        and skipped, so one poison pill can't crash the whole claim batch.
+        """
         stmt = pending_events_statement(limit, for_update=self._supports_row_lock())
         result = await self._session.execute(stmt)
-        return [self._to_domain(row) for row in result.scalars()]
+        rows = list(result.scalars())
+
+        events: list[CandidateEvent] = []
+        quarantined = False
+        for row in rows:
+            try:
+                events.append(self._to_domain(row))
+            except Exception as exc:  # noqa: BLE001 - quarantine, never crash the loop
+                logger.error(
+                    "candidate_event_hydration_failed",
+                    row_id=str(row.id),
+                    raw_hash=getattr(row, "tx_hash", None),
+                    error=str(exc),
+                )
+                row.status = "FAILED_HYDRATION"
+                row.error_message = f"Hydration error: {str(exc)}"
+                quarantined = True
+
+        if quarantined:
+            await self._session.flush()
+        return events
 
     async def set_status(self, event_id: int, status: str, *, attempt_count: int | None = None) -> None:
         values = {"status": status, "updated_at": func.now()}

@@ -15,6 +15,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
     is_valid_synthesis,
@@ -76,6 +77,9 @@ class BackgroundAIWorker:
             except Exception as e:
                 log.error(f"[PIPELINE_ERROR] Stage 'worker_loop' failed: {e}", exc_info=True)
                 capture_exception(e)
+                # Circuit-breaker backoff: a persistent error otherwise tight-loops
+                # at full cadence and floods the logs.
+                await asyncio.sleep(2.0)
                 claimed = True  # treat errors like work done: retry at full cadence
             if claimed:
                 idle_backoff = 1.0

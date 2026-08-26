@@ -1,5 +1,7 @@
 import pytest
+from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
+
 from whaledecode.adapters.db.repositories.candidate_event import pending_events_statement
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.entities.user import User
@@ -96,6 +98,29 @@ async def test_create_pending_inserts_pending_status(db_session):
 
 
 @pytest.mark.asyncio
+async def test_claim_quarantines_poison_pill_and_keeps_valid_rows(db_session):
+    from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
+    from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
+
+    repo = CandidateEventRepository(db_session)
+    await repo.create_pending(_pending_data("pending:good"))
+    # Truncated EVM hash — would crash Hash() validation during hydration.
+    await repo.create_pending({**_pending_data("pending:bad"), "tx_hash": "0x" + "a" * 10})
+    await db_session.commit()
+
+    events = await repo.claim_next_pending(limit=10)
+    assert [e.dedupe_key for e in events] == ["pending:good"]
+
+    bad_row = (
+        await db_session.execute(
+            select(CandidateEventModel).where(CandidateEventModel.dedupe_key == "pending:bad")
+        )
+    ).scalar_one()
+    assert bad_row.status == "FAILED_HYDRATION"
+    assert bad_row.error_message and "Hydration error" in bad_row.error_message
+
+
+@pytest.mark.asyncio
 async def test_create_pending_idempotent_on_dedupe(db_session):
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 
@@ -164,6 +189,7 @@ async def test_purge_stale_events_deletes_old_terminal_rows(db_session):
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import text
+
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 
     repo = CandidateEventRepository(db_session)
@@ -237,6 +263,7 @@ async def test_set_status_stamps_updated_at(db_session):
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import update
+
     from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 
@@ -398,6 +425,7 @@ async def test_reap_zombie_events_resets_stale_processing(db_session):
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import select, update
+
     from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 
@@ -428,6 +456,7 @@ async def test_reap_zombie_events_resets_stale_processing(db_session):
 @pytest.mark.asyncio
 async def test_reap_zombie_events_keeps_fresh_processing(db_session):
     from sqlalchemy import select
+
     from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 
@@ -479,6 +508,7 @@ async def test_requeue_recent_events_skips_older_rows(db_session):
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import update
+
     from whaledecode.adapters.db.models.candidate_event import CandidateEventModel
     from whaledecode.adapters.db.repositories.candidate_event import CandidateEventRepository
 

@@ -11,6 +11,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.chain.factory import create_chain_provider
 from whaledecode.adapters.chain.normalizer import (
     TRANSFER_EVENT_SIGNATURE,
@@ -21,6 +22,7 @@ from whaledecode.adapters.chain.normalizer import (
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
+from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
 
 log = structlog.get_logger()
 
@@ -121,6 +123,12 @@ class LiveBlockchainFetcher:
                         if wallet_id is None:
                             continue
                         event = normalize_log(raw_log, wallet_id, chain)
+                        if not is_valid_ingest_hash(event["tx_hash"], event["chain"]):
+                            log.warning(
+                                "ingest_tx_hash_rejected",
+                                extra={"wallet_id": wallet_id, "chain": chain, "tx_hash": event["tx_hash"]},
+                            )
+                            continue
                         recent = recent_cache.get(wallet_id)
                         if recent is None:
                             recent = await self._recent_events(wallet_id)

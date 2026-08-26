@@ -12,6 +12,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from whaledecode.adapters.db.models.base import Base
 
 
@@ -47,5 +48,9 @@ class CandidateEventModel(Base):
     cluster_origin: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hop_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     coordinated_flag: Mapped[bool] = mapped_column(Boolean, default=False, server_default="FALSE")
+
+    # Diagnostics for rows quarantined at claim time (migration 0013) — set when
+    # hydration fails so the poison pill is inspectable without crashing the loop.
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     campaign: Mapped["CampaignModel"] = relationship("CampaignModel", back_populates="events")  # noqa: F821
