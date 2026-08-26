@@ -67,6 +67,7 @@ def serve():
         host="0.0.0.0",
         port=settings.PORT,
         log_level=settings.LOG_LEVEL.lower(),
+        workers=1,  # each extra worker would run its own getUpdates loop → Telegram 409 conflicts
     )
 
 

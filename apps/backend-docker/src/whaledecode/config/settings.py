@@ -110,9 +110,9 @@ class Settings(BaseSettings):
     # Aggregated net USD per transaction required before ingestion (the
     # webhook path's whale floor, now applied at the poller).
     TARGETED_MIN_TX_USD: float = 50_000.0
-    ETH_PUBLIC_RPC_URLS: str = "https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth,https://1rpc.io/eth,https://eth.drpc.org"
-    BASE_PUBLIC_RPC_URLS: str = "https://base-rpc.publicnode.com,https://mainnet.base.org,https://1rpc.io/base"
-    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.drpc.org"
+    ETH_PUBLIC_RPC_URLS: str = "https://eth.merkle.io,https://rpc.payload.de,https://rpc.flashbots.net,https://eth-mainnet.public.blastapi.io"
+    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base.gateway.tenderly.co,https://base.blockpi.network/v1/rpc/public"
+    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.blockpi.network/v1/rpc/public,https://arbitrum-one.publicnode.com"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 
     # Alert Pipeline

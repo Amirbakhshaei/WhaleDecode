@@ -85,6 +85,12 @@ async def lifespan(app: FastAPI):
     # port hostage — the previous await-here design starved Railway's
     # healthcheck window and failed every deploy.
     async def _start_bot_and_supervisor() -> None:
+        # Guard against duplicate polling (lifespan re-entry / double startup):
+        # a second getUpdates loop triggers TelegramConflictError 409 storms.
+        existing = getattr(app.state, "polling_task", None)
+        if existing is not None and not existing.done():
+            logger.warning("bot_polling_already_running_skipping_startup")
+            return
         try:
             factory, investigation_service, _ = build_investigation_service(settings)
             session_factory = factory

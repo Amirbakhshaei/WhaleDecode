@@ -21,7 +21,7 @@ from whaledecode.adapters.chain.normalizer import (
 from whaledecode.adapters.chain.poller import TargetedChainPoller
 from whaledecode.adapters.pricing.oracle import PriceOracle
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
-from whaledecode.infrastructure.rpc_router import RpcFailoverRouter
+from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, to_int
 
 log = structlog.get_logger()
 
@@ -82,7 +82,7 @@ class EvmTargetedPoller(TargetedChainPoller):
             raw = await self._rpc(
                 "eth_call", [{"to": contract, "data": _DECIMALS_SELECTOR}, "latest"]
             )
-            decimals = int(raw, 16) if raw and raw != "0x" else 18
+            decimals = to_int(raw) if raw and raw != "0x" else 18
             if not 0 <= decimals <= 36:
                 decimals = 18
         except Exception:  # noqa: BLE001 - unpriceable token must not kill the pass
@@ -103,7 +103,7 @@ class EvmTargetedPoller(TargetedChainPoller):
         if not targets:
             return []
         head_hex = await self._rpc("eth_blockNumber", [])
-        head = int(head_hex, 16)
+        head = to_int(head_hex)
 
         # ponytail: fixed small range instead of persisted cursors — a restart
         # re-scans one window at worst; add a cursor table if gaps ever matter.
@@ -147,7 +147,7 @@ class EvmTargetedPoller(TargetedChainPoller):
                 "chain": self._chain_label,
                 "tx_hash": tx_hash,
                 "log_index": 0,  # aggregated row: one per tx, not per log
-                "block_number": max(int(str(entry_log.get("blockNumber", "0x0")), 16) for entry_log in entry["logs"]),
+                "block_number": max(to_int(entry_log.get("blockNumber", "0x0")) for entry_log in entry["logs"]),
                 "event_type": "TRANSFER",
                 "value_usd": net_usd,
                 "raw_json": {

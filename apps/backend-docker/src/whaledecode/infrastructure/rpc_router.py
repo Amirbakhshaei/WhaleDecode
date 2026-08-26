@@ -44,6 +44,17 @@ def _is_node_capacity_error(err: dict) -> bool:
     return any(hint in message for hint in _CAPACITY_MESSAGE_HINTS)
 
 
+def to_int(val: Any) -> int:
+    """Safe conversion of JSON-RPC scalars (hex str, decimal str, or int)."""
+    if isinstance(val, bool):
+        raise TypeError(f"Cannot convert bool to int")
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        return int(val, 16) if val.startswith("0x") else int(val)
+    raise TypeError(f"Cannot convert {type(val)} to int")
+
+
 class RpcNodesExhaustedError(RuntimeError):
     """Every node in the array failed or is cooling down."""
 
