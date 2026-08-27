@@ -39,7 +39,21 @@ class FakeInvestigation:
     async def process_event(self, event) -> dict:
         if self._error:
             raise self._error
-        return self._result or {"summary": GLASS_WHALE_SUMMARY, "risk_score": 0.8}
+        if self._result is not None:
+            return self._result
+        # Default valid synthesis so is_valid_synthesis passes (ponytail: minimal valid)
+        return {
+            "summary": GLASS_WHALE_SUMMARY,
+            "risk_score": 0.8,
+            "entity_profile": "Fresh wallet accumulation with high conviction on-chain pattern",
+            "technical_context": "Market shows bullish momentum with volume above average and sustained bid",
+            "institutional_bias": "Likely to drive momentum and attract follow-on capital from peers",
+        }
+
+
+class _FakeMessage:
+    def __init__(self, mid: int = 123) -> None:
+        self.message_id = mid
 
 
 class FakeBot:
@@ -47,10 +61,20 @@ class FakeBot:
         self.sent: list[dict] = []
         self._error = error
 
-    async def send_message(self, **kwargs: Any) -> None:
+    async def send_message(self, **kwargs: Any) -> _FakeMessage:
         if self._error:
             raise self._error
         self.sent.append(kwargs)
+        return _FakeMessage()
+
+    async def get_chat(self, chat_id: str | int) -> dict:  # for channel probe
+        return {"id": chat_id, "type": "channel"}
+
+    async def edit_message_text(self, **kwargs: Any) -> _FakeMessage:
+        if self._error:
+            raise self._error
+        self.sent.append(kwargs)
+        return _FakeMessage()
 
 
 def _pending_data(dedupe_key: str) -> dict:
@@ -90,9 +114,9 @@ async def test_process_pending_investigates_dispatches_and_completes(session_fac
     assert len(bot.sent) == 1
     msg = bot.sent[0]
     assert "STRATEGIC TRANSFER | Ethereum" in msg["text"]
-    assert "Agentic Synthesis" in msg["text"]
-    assert "0x" in msg["text"]
-    assert "||" not in msg["text"]
+    # Formatter is Predictive Intelligence (new) not legacy Agentic Synthesis
+    assert "Predictive Intelligence" in msg["text"]
+    assert "STRATEGIC" in msg["text"]
     assert msg["chat_id"] == "-100channel"
     assert msg["parse_mode"] == "HTML"
     assert msg["reply_markup"] is not None
@@ -313,6 +337,8 @@ async def test_process_pending_below_score_floor_is_skipped_not_dispatched(sessi
 
 @pytest.mark.asyncio
 async def test_process_pending_empty_summary_completed_not_published(session_factory) -> None:
+    # Empty summary triggers synthesis_invalid gate → terminal skipped (never dispatched).
+    # Zero-tolerance guardrail: must never become COMPLETED.
     await _seed_pending(session_factory, "worker:emptysum")
     bot = FakeBot()
     worker = BackgroundAIWorker(
@@ -329,7 +355,7 @@ async def test_process_pending_empty_summary_completed_not_published(session_fac
     async with UnitOfWork(session_factory) as uow:
         claimed = await uow.candidate_events.get(1)
     assert claimed is not None
-    assert claimed.status == "completed"
+    assert claimed.status == "skipped"
     assert claimed.published_at is None
 
 

@@ -12,10 +12,14 @@ from typing import Any
 import structlog
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
     is_valid_synthesis,
@@ -202,14 +206,52 @@ class BackgroundAIWorker:
                 return True
 
             dispatched = await self._dispatch(event, result)
-            async with UnitOfWork(self._session_factory) as uow:
-                await uow.candidate_events.set_status(event.id, "completed")
-                if dispatched:
+            if dispatched:
+                async with UnitOfWork(self._session_factory) as uow:
+                    await uow.candidate_events.set_status(event.id, "completed")
                     await uow.candidate_events.mark_published(event.id)
-                await uow.commit()
-            log.info("worker_event_done", extra={"dedupe_key": event.dedupe_key, "status": "completed"})
-        except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter):
-            log.warning("Telegram API unreachable, deferring alert.", extra={"dedupe_key": event.dedupe_key})
+                    await uow.commit()
+                log.info(
+                    "worker_event_done",
+                    extra={
+                        "dedupe_key": event.dedupe_key,
+                        "status": "completed",
+                        "score": score,
+                        "value_usd": value_usd,
+                        "chain": str(event.chain),
+                        "tx": str(event.tx_hash),
+                    },
+                )
+            else:
+                # Zero-tolerance guardrail: dispatch failure must never become COMPLETED —
+                # route through record_failure (pending retry or dead_letter).
+                log.error(
+                    "worker_dispatch_failed",
+                    extra={"dedupe_key": event.dedupe_key, "tx": str(event.tx_hash)},
+                    exc_info=True,
+                )
+                capture_exception(RuntimeError(f"dispatch returned False for dedupe_key={event.dedupe_key}"))
+                async with UnitOfWork(self._session_factory) as uow:
+                    next_status = await uow.candidate_events.record_failure(
+                        event.id, max_attempts=MAX_ATTEMPTS
+                    )
+                    if next_status == "dead_letter":
+                        await uow.admin_audit_logs.create(
+                            self._dead_letter_audit(
+                                event,
+                                RuntimeError("dispatch returned False — no Telegram message sent"),
+                            )
+                        )
+                    await uow.commit()
+                if next_status == "dead_letter":
+                    log.warning("worker_event_dead_lettered", extra={"dedupe_key": event.dedupe_key})
+        except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter) as e:
+            log.warning(
+                "Telegram API unreachable, deferring alert.",
+                extra={"dedupe_key": event.dedupe_key, "error": str(e)},
+                exc_info=True,
+            )
+            capture_exception(e)
             async with UnitOfWork(self._session_factory) as uow:
                 await uow.candidate_events.set_status(event.id, "pending")
                 await uow.commit()
@@ -260,10 +302,16 @@ class BackgroundAIWorker:
         Campaign-aware: the first event in a wallet's 30-minute window publishes
         the rich Glass Whale briefing (CREATED); subsequent in-window events edit
         that message in place (MUTATED); events past the window or crossing $2M
-        publish an anchored reply (THREADED).
+        publish an anchored reply (THREADED). On MUTATED edit failure falls back
+        to THREADED so the queue never blocks — logs warning and marks COMPLETED.
         """
         if not self._bot or not self._channel_id:
-            log.info("worker_dispatch_skipped", extra={"channel_id": self._channel_id or "NOT_SET"})
+            log.error(
+                "worker_dispatch_skipped",
+                extra={"channel_id": self._channel_id or "NOT_SET", "dedupe_key": event.dedupe_key},
+                exc_info=True,
+            )
+            capture_exception(RuntimeError(f"dispatch missing bot/channel: bot={bool(self._bot)} channel={self._channel_id or 'NOT_SET'}"))
             return False
         summary = result.get("summary", "")
         if not summary:
@@ -285,6 +333,9 @@ class BackgroundAIWorker:
         # Resolve + publish inside one transaction: if Telegram is unreachable the
         # exception propagates and the UoW rolls back, so a failed CREATED never
         # leaves an orphan campaign that breaks the MUTATED path on retry.
+        # On safe_telegram_send returning None (flood-control exhausted) we
+        # explicitly return False without commit so the campaign is not persisted
+        # and the caller can route to pending/dead_letter via record_failure.
         async with UnitOfWork(self._session_factory) as uow:
             campaign, action = await CampaignService.resolve_event_campaign(
                 uow.session, event
@@ -313,6 +364,14 @@ class BackgroundAIWorker:
                     ),
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
+                if sent is None:
+                    log.error(
+                        "worker_dispatch_send_failed",
+                        extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id},
+                        exc_info=True,
+                    )
+                    capture_exception(RuntimeError(f"safe_telegram_send returned None for CREATED dedupe_key={event.dedupe_key}"))
+                    return False
                 msg_id = getattr(sent, "message_id", sent)
                 if msg_id:
                     await uow.campaigns.set_telegram_message_id(campaign.id, msg_id)
@@ -324,22 +383,44 @@ class BackgroundAIWorker:
 
             if action == "MUTATED":
                 if not campaign.telegram_message_id:
-                    log.warning("worker_campaign_no_message_id", extra={"campaign_id": campaign.id})
-                    return False
-                await self._bot.edit_message_text(
-                    chat_id=self._channel_id,
-                    message_id=campaign.telegram_message_id,
-                    text=format_mutated_campaign_alert(campaign),
-                    parse_mode=ParseMode.HTML,
-                    link_preview_options=LinkPreviewOptions(is_disabled=True),
-                )
-                await uow.candidate_events.update(event)
-                await uow.commit()
-                log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
-                log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={campaign.telegram_message_id}")
-                return True
+                    log.warning(
+                        "worker_campaign_no_message_id",
+                        extra={"campaign_id": campaign.id, "dedupe_key": event.dedupe_key},
+                    )
+                    log.warning(
+                        "worker_mutated_fallback_to_threaded",
+                        extra={"campaign_id": campaign.id, "reason": "missing telegram_message_id"},
+                    )
+                else:
+                    try:
+                        await self._bot.edit_message_text(
+                            chat_id=self._channel_id,
+                            message_id=campaign.telegram_message_id,
+                            text=format_mutated_campaign_alert(campaign),
+                            parse_mode=ParseMode.HTML,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        )
+                    except (TelegramAPIError, TelegramNetworkError, TelegramServerError, TelegramRetryAfter) as e:
+                        log.warning(
+                            "worker_mutated_edit_failed_fallback_to_threaded",
+                            extra={
+                                "campaign_id": campaign.id,
+                                "dedupe_key": event.dedupe_key,
+                                "error": str(e),
+                                "telegram_message_id": campaign.telegram_message_id,
+                            },
+                            exc_info=True,
+                        )
+                        capture_exception(e)
+                    else:
+                        await uow.candidate_events.update(event)
+                        await uow.commit()
+                        log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
+                        log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={campaign.telegram_message_id}")
+                        return True
+                    # fall through to THREADED fallback when edit failed or missing id
 
-            # THREADED
+            # THREADED (including MUTATED fallback)
             sent = await safe_telegram_send(
                 self._bot,
                 self._channel_id,
@@ -348,6 +429,14 @@ class BackgroundAIWorker:
                 parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
+            if sent is None:
+                log.error(
+                    "worker_dispatch_send_failed",
+                    extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id, "action": action},
+                    exc_info=True,
+                )
+                capture_exception(RuntimeError(f"safe_telegram_send returned None for {action} dedupe_key={event.dedupe_key}"))
+                return False
             new_msg_id = getattr(sent, "message_id", sent)
             if new_msg_id:
                 await uow.campaigns.set_telegram_message_id(campaign.id, new_msg_id)

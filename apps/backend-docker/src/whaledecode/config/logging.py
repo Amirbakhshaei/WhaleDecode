@@ -11,7 +11,11 @@ def setup_logging(settings: Settings) -> None:
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(logging.StreamHandler(sys.stdout))
-    root.setLevel(settings.LOG_LEVEL.upper())
+    try:
+        root.setLevel(settings.LOG_LEVEL.upper())
+    except Exception:
+        root.setLevel(logging.INFO)
+        logging.getLogger(__name__).warning("invalid_log_level_fallback_to_info", extra={"log_level": settings.LOG_LEVEL})
     # Keep stdlib formatting minimal — structlog already renders timestamp/level.
     for handler in root.handlers:
         handler.setFormatter(logging.Formatter("%(message)s"))

@@ -20,13 +20,20 @@ async def safe_telegram_send(bot: Bot, chat_id: int | str, text: str, **kwargs: 
         try:
             return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
         except TelegramRetryAfter as e:
-            log.warning("telegram_flood_control", chat_id=chat_id, retry_after=e.retry_after)
+            log.warning("telegram_flood_control", chat_id=chat_id, retry_after=e.retry_after, exc_info=True)
             await asyncio.sleep(e.retry_after + 1)
         except TelegramAPIError as e:
-            log.error("telegram_dispatch_failed", chat_id=chat_id, error=str(e))
+            log.error(
+                "telegram_dispatch_failed",
+                chat_id=chat_id,
+                error=str(e),
+                attempt=attempt,
+                exc_info=True,
+            )
             if attempt == 3:
                 raise
             await asyncio.sleep(2**attempt)
+    log.error("telegram_dispatch_exhausted", chat_id=chat_id, exc_info=True)
     return None
 
 
@@ -95,7 +102,7 @@ class TelegramAlertDispatcher(AlertDispatcherPort):
             self._log.info("dispatch", user_id=user_id, preview=message[:50])
             return True
         except Exception as e:
-            self._log.error("dispatch_error", user_id=user_id, error=str(e))
+            self._log.error("dispatch_error", user_id=user_id, error=str(e), exc_info=True)
             return False
 
     dispatch_briefing = dispatch

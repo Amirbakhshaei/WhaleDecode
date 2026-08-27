@@ -1,0 +1,6 @@
+{
+  "deploy": {
+    "releaseCommand": "alembic upgrade head",
+    "startCommand": "python -m whaledecode.application.worker"
+  }
+}

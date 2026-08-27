@@ -1,5 +1,7 @@
 import asyncio
+import os
 import signal
+import sys
 
 import structlog
 from aiogram import Bot
@@ -26,6 +28,24 @@ async def run_worker(settings: Settings) -> None:
 
     def _uow() -> UnitOfWork:
         return UnitOfWork(session_factory)
+
+    # Channel probe — fail fast if Telegram destination is unreachable.
+    channel_id = settings.CHANNEL_CHAT_ID or settings.TELEGRAM_CHANNEL_ID or ""
+    if channel_id:
+        try:
+            await bot.get_chat(channel_id)
+            log.info("channel_probe_ok", channel_id=channel_id)
+        except Exception as e:
+            log.error(
+                "channel_probe_failed",
+                channel_id=channel_id,
+                error=str(e),
+                exc_info=True,
+            )
+            capture_exception(e)
+            log.critical("channel_probe_unreachable_crash", channel_id=channel_id)
+            await bot.session.close()
+            os._exit(1)
 
     log.info("worker_started")
 
@@ -148,7 +168,7 @@ async def _alert_loop(session_factory, bot: Bot, settings: Settings) -> None:
         try:
             await send_alerts(session_factory, bot, settings)
         except Exception as e:
-            log.error("alert_loop_error", error=str(e))
+            log.error("alert_loop_error", error=str(e), exc_info=True)
             capture_exception(e)
         await asyncio.sleep(interval)
 
@@ -173,7 +193,7 @@ async def _refresh_profiles(session_factory, settings) -> None:
     try:
         await refresh_wallet_profiles(session_factory, settings)
     except Exception as e:
-        log.error("profile_refresh_job_error", error=str(e))
+        log.error("profile_refresh_job_error", error=str(e), exc_info=True)
         capture_exception(e)
 
 

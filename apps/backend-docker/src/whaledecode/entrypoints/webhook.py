@@ -3,10 +3,12 @@ deprecated — on-chain data now arrives via the isolated Targeted Failover
 Poller in ``whaledecode.entrypoints.poller``)."""
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.application.services.investigation import (
     build_investigation_service,
@@ -24,7 +26,7 @@ from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
 from whaledecode.entrypoints.bot import build_telegram_app, run_polling_with_retry
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
-from whaledecode.infrastructure.telemetry import init_sentry
+from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,25 @@ async def lifespan(app: FastAPI):
             bot, dp = build_telegram_app(settings)
             app.state.bot = bot
             app.state.dp = dp
+            # Channel probe — fail fast if Telegram destination is unreachable.
+            # Do not boot the worker if it cannot verify its write destination.
+            channel_id = (
+                settings.CHANNEL_CHAT_ID or settings.TELEGRAM_CHANNEL_ID or ""
+            )
+            if channel_id:
+                try:
+                    await bot.get_chat(channel_id)
+                    logger.info("channel_probe_ok", extra={"channel_id": channel_id})
+                except Exception as e:
+                    logger.error(
+                        "channel_probe_failed",
+                        extra={"channel_id": channel_id, "error": str(e)},
+                        exc_info=True,
+                    )
+                    capture_exception(e)
+                    app.state.startup_failed = f"channel_probe_failed: {e}"
+                    logger.critical("channel_probe_unreachable_crash", extra={"channel_id": channel_id})
+                    os._exit(1)
             stop_event = asyncio.Event()
             app.state.stop_event = stop_event
             await dp.emit_startup()
@@ -108,8 +129,16 @@ async def lifespan(app: FastAPI):
                 session_factory, investigation_service, settings, bot, stop_event
             )
             logger.info("bot_supervisor_started")
-        except Exception as e:  # noqa: BLE001 - never let startup kill the web server
-            logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
+        except SystemExit:
+            raise
+        except BaseException as e:
+            # SystemExit / KeyboardInterrupt must propagate — only Exception is swallowed
+            if isinstance(e, Exception):
+                app.state.startup_failed = str(e)
+                logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
+                capture_exception(e)
+            else:
+                raise
 
     app.state.startup_task = asyncio.create_task(_start_bot_and_supervisor())
 
@@ -159,11 +188,82 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health_check():
+    startup_failed = getattr(app.state, "startup_failed", None)
+    if startup_failed:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "service": "WhaleDecode Webhook Receiver",
+                "bot_ready": False,
+                "reason": "startup_failed",
+                "detail": str(startup_failed)[:500],
+            },
+        )
+    polling_task = getattr(app.state, "polling_task", None)
+    # Task must exist and still be running — hasattr alone lies during startup
+    # or after a crash where the attribute remains but task is done.
+    if polling_task is None or polling_task.done():
+        # Distinguish "still starting" (startup_task running) from "crashed"
+        startup_task = getattr(app.state, "startup_task", None)
+        starting = startup_task is not None and not startup_task.done()
+        if starting:
+            return {
+                "status": "ok",
+                "service": "WhaleDecode Webhook Receiver",
+                "bot_ready": False,
+                "reason": "starting",
+            }
+        # Check if startup task itself failed
+        if startup_task is not None and startup_task.done():
+            try:
+                exc = startup_task.exception()
+            except Exception:
+                exc = None
+            if exc is not None:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "degraded",
+                        "service": "WhaleDecode Webhook Receiver",
+                        "bot_ready": False,
+                        "reason": "startup_task_failed",
+                        "detail": str(exc)[:500],
+                    },
+                )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "service": "WhaleDecode Webhook Receiver",
+                "bot_ready": False,
+                "reason": "bot_not_running",
+            },
+        )
+    # Optional DB probe — do not fail health if session_factory not yet set
+    sf = getattr(app.state, "session_factory", None) or globals().get("session_factory")
+    if sf is not None:
+        try:
+            from sqlalchemy import text as _text
+
+            async with sf() as _session:
+                await _session.execute(_text("SELECT 1"))
+        except Exception as e:
+            logger.error("health_db_probe_failed", extra={"error": str(e)}, exc_info=True)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "degraded",
+                    "service": "WhaleDecode Webhook Receiver",
+                    "bot_ready": True,
+                    "reason": "db_unreachable",
+                    "detail": str(e)[:500],
+                },
+            )
     return {
         "status": "ok",
         "service": "WhaleDecode Webhook Receiver",
-        # Observability: /health answers even while the bot is still starting.
-        "bot_ready": hasattr(app.state, "polling_task"),
+        "bot_ready": True,
     }
 
 
