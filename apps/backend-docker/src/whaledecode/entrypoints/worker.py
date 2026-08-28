@@ -206,3 +206,20 @@ async def _reset_daily_counters(session_factory) -> None:
         await session.execute(stmt)
         await session.commit()
     log.info("daily_counters_reset")
+
+
+# ponytail: `python -m whaledecode.application.worker` ran this module with no
+# __main__ guard and exited 0 silently — deploy logs showed only "starting
+# container". The proper entrypoint is `whaledecode worker`; this guard makes the
+# module form behave identically so it can't be a silent no-op again.
+if __name__ == "__main__":
+    import sys
+
+    from whaledecode.config.logging import setup_logging
+    from whaledecode.config.settings import Settings
+
+    print("whaledecode worker: starting", file=sys.stderr, flush=True)
+    _settings = Settings()
+    _settings.inject_langsmith_env()
+    setup_logging(_settings)
+    asyncio.run(run_worker(_settings))
