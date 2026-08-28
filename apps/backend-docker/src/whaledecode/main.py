@@ -54,6 +54,9 @@ def _check_rpc_isolation(settings: Settings) -> None:
 @cli.command()
 def serve():
     """Run FastAPI app (Telegram bot + webhook server) via Uvicorn."""
+    import sys
+
+    print("whaledecode serve: starting", file=sys.stderr, flush=True)
     settings = _load_settings()
     _check_rpc_isolation(settings)
     setup_logging(settings)
@@ -149,6 +152,9 @@ def seed():
 @cli.command()
 def db_init():
     """Run migrations then seed database."""
+    import sys
+
+    print("whaledecode db-init: starting", file=sys.stderr, flush=True)
     settings = _load_settings()
     setup_logging(settings)
     ctx = click.get_current_context()

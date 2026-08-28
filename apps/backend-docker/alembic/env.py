@@ -43,10 +43,15 @@ def do_run_migrations(connection):
 
 
 async def run_async_migrations() -> None:
+    # ponytail: timeout so a stalled Postgres connection fails loud instead of
+    # hanging the release container forever (no log, no crash, 21h of "starting
+    # container"). asyncpg honors sslmode=require from the DSN; we only add a
+    # connect timeout here.
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"timeout": 15},
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
