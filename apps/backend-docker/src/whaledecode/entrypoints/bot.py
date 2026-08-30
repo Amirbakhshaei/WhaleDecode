@@ -1,10 +1,8 @@
-import asyncio
-
 import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramConflictError, TelegramServerError
+
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.telegram.dispatcher import (
     RateLimitedDispatcher,
@@ -104,35 +102,11 @@ def build_telegram_app(settings: Settings) -> tuple[Bot, Dispatcher]:
     return bot, dp
 
 
-async def run_polling_with_retry(
-    bot: Bot, dp: Dispatcher, stop_event: asyncio.Event | None = None
-) -> None:
-    """Poll Telegram with self-healing backoff.
+async def run_webhook(bot: Bot, dp: Dispatcher, url: str, secret_token: str | None = None) -> None:
+    """Register a Telegram webhook so updates are pushed to this server.
 
-    A ``TelegramConflictError`` (another getUpdates instance or a lingering
-    webhook) normally terminates aiogram's polling loop. We clear any webhook
-    and retry with exponential backoff so the bot recovers without a redeploy.
-    Honors ``stop_event`` for graceful shutdown.
+    Stateless ingress: no getUpdates loop, so multiple replicas behind a load
+    balancer do not conflict (the 409 storm class of bug is gone).
     """
-    backoff = 1.0
-    while stop_event is None or not stop_event.is_set():
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            await dp.start_polling(bot, stop_signals=[])
-            return
-        except (TelegramConflictError, TelegramServerError) as exc:
-            log.warning("telegram_polling_conflict", error=type(exc).__name__, retry_in_s=int(min(backoff, 60)))
-            if stop_event is not None and stop_event.is_set():
-                return
-            await asyncio.sleep(min(backoff, 60))
-            backoff = min(backoff * 2, 60)
-        except asyncio.CancelledError:
-            raise
-
-
-async def start_bot(settings: Settings) -> None:
-    """Legacy entrypoint for standalone polling mode (kept for compatibility)."""
-    bot, dp = build_telegram_app(settings)
-    log = structlog.get_logger()
-    log.info("bot_polling_start")
-    await run_polling_with_retry(bot, dp)
+    await bot.set_webhook(url, secret_token=secret_token)
+    log.info("telegram_webhook_set", url=url)

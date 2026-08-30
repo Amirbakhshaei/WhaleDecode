@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 import click
+
 from whaledecode import __version__
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
@@ -63,14 +64,14 @@ def serve():
 
     if not settings.BOT_TOKEN.get_secret_value():
         raise click.ClickException("BOT_TOKEN is not set in .env")
-
     import uvicorn
+
     uvicorn.run(
         "whaledecode.entrypoints.webhook:app",
         host="0.0.0.0",
         port=settings.PORT,
         log_level=settings.LOG_LEVEL.lower(),
-        workers=1,  # each extra worker would run its own getUpdates loop → Telegram 409 conflicts
+        workers=1,  # single process per replica; Telegram pushes via /webhook/telegram (stateless)
     )
 
 
@@ -130,8 +131,9 @@ def migrate():
     settings = _load_settings()
     setup_logging(settings)
 
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", _alembic_url(settings))

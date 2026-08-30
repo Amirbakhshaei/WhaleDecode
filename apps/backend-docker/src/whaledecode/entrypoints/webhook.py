@@ -1,14 +1,20 @@
 """FastAPI app with Telegram bot lifespan (Alchemy webhook ingestion is
 deprecated — on-chain data now arrives via the isolated Targeted Failover
-Poller in ``whaledecode.entrypoints.poller``)."""
+Poller in ``whaledecode.entrypoints.poller``).
+
+Telegram ingress is webhook-based (POST /webhook/telegram): stateless, so the
+service scales horizontally behind Railway's load balancer with no getUpdates
+409 conflicts."""
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from aiogram.types import Update
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.application.services.investigation import (
     build_investigation_service,
@@ -24,7 +30,7 @@ from whaledecode.domain.services.event_gate import (
 )
 from whaledecode.domain.value_objects.chain import Chain
 from whaledecode.domain.value_objects.hash import Hash
-from whaledecode.entrypoints.bot import build_telegram_app, run_polling_with_retry
+from whaledecode.entrypoints.bot import build_telegram_app, run_webhook
 from whaledecode.entrypoints.worker import launch_supervisor_tasks
 from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
 
@@ -87,11 +93,9 @@ async def lifespan(app: FastAPI):
     # port hostage — the previous await-here design starved Railway's
     # healthcheck window and failed every deploy.
     async def _start_bot_and_supervisor() -> None:
-        # Guard against duplicate polling (lifespan re-entry / double startup):
-        # a second getUpdates loop triggers TelegramConflictError 409 storms.
-        existing = getattr(app.state, "polling_task", None)
-        if existing is not None and not existing.done():
-            logger.warning("bot_polling_already_running_skipping_startup")
+        # Guard against duplicate startup (lifespan re-entry / double startup).
+        if getattr(app.state, "bot", None) is not None:
+            logger.warning("bot_already_running_skipping_startup")
             return
         try:
             factory, investigation_service, _ = build_investigation_service(settings)
@@ -124,7 +128,24 @@ async def lifespan(app: FastAPI):
             stop_event = asyncio.Event()
             app.state.stop_event = stop_event
             await dp.emit_startup()
-            app.state.polling_task = asyncio.create_task(run_polling_with_retry(bot, dp, stop_event))
+
+            # Stateless ingress: register a Telegram webhook so Telegram pushes
+            # updates here (no getUpdates loop → no 409 conflicts; safe to run
+            # many replicas behind the load balancer).
+            webhook_url = settings.WEBHOOK_URL
+            if not webhook_url:
+                logger.critical(
+                    "webhook_url_missing",
+                    extra={"hint": "set WEBHOOK_URL (e.g. https://<railway-domain>) for serve mode"},
+                )
+                os._exit(1)
+            secret = settings.WEBHOOK_SECRET.get_secret_value() if settings.WEBHOOK_SECRET else None
+            full_url = webhook_url.rstrip("/") + "/webhook/telegram"
+            await run_webhook(bot, dp, full_url, secret)
+            app.state.bot_ready = True
+
+            # ponytail: scheduler/cron jobs (briefing, counter reset, purge)
+            # run per-replica — add a singleton lock before scaling >1 replica.
             app.state.supervisor_tasks = launch_supervisor_tasks(
                 session_factory, investigation_service, settings, bot, stop_event
             )
@@ -157,13 +178,6 @@ async def lifespan(app: FastAPI):
     stop_event = getattr(app.state, "stop_event", None)
     if stop_event is not None:
         stop_event.set()
-    polling_task = getattr(app.state, "polling_task", None)
-    if polling_task is not None:
-        polling_task.cancel()
-        try:
-            await polling_task
-        except asyncio.CancelledError:
-            pass
     supervisor_tasks = getattr(app.state, "supervisor_tasks", None) or []
     for task in supervisor_tasks:
         task.cancel()
@@ -200,12 +214,10 @@ async def health_check():
                 "detail": str(startup_failed)[:500],
             },
         )
-    polling_task = getattr(app.state, "polling_task", None)
-    # Task must exist and still be running — hasattr alone lies during startup
-    # or after a crash where the attribute remains but task is done.
-    if polling_task is None or polling_task.done():
-        # Distinguish "still starting" (startup_task running) from "crashed"
-        startup_task = getattr(app.state, "startup_task", None)
+    startup_task = getattr(app.state, "startup_task", None)
+    bot_ready = getattr(app.state, "bot_ready", False)
+    if not bot_ready:
+        # Distinguish "still starting" (startup_task running) from "crashed".
         starting = startup_task is not None and not startup_task.done()
         if starting:
             return {
@@ -214,7 +226,6 @@ async def health_check():
                 "bot_ready": False,
                 "reason": "starting",
             }
-        # Check if startup task itself failed
         if startup_task is not None and startup_task.done():
             try:
                 exc = startup_task.exception()
@@ -265,6 +276,32 @@ async def health_check():
         "service": "WhaleDecode Webhook Receiver",
         "bot_ready": True,
     }
+
+
+@app.post("/webhook/telegram", include_in_schema=False)
+async def telegram_webhook(request: Request):
+    """Receive Telegram updates via webhook and feed them into the dispatcher.
+
+    Stateless: each request is independent, so any replica behind the load
+    balancer can handle it (no getUpdates loop, no 409 conflicts).
+    """
+    secret = settings.WEBHOOK_SECRET.get_secret_value() if settings.WEBHOOK_SECRET else None
+    if secret:
+        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if provided != secret:
+            logger.warning("telegram_webhook_bad_secret")
+            return JSONResponse(status_code=403, content={"status": "forbidden"})
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "bad_json"})
+    update = Update.model_validate(payload)
+    bot = getattr(app.state, "bot", None)
+    dp = getattr(app.state, "dp", None)
+    if bot is None or dp is None:
+        return JSONResponse(status_code=503, content={"status": "bot_not_ready"})
+    await dp.feed_update(bot, update)
+    return {"ok": True}
 
 
 @app.post("/webhook/alchemy", include_in_schema=False)
