@@ -24,16 +24,5 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Bulkhead: targeted failover poller in its own process. If public RPCs
-  # degrade, only ingestion pauses — bot and worker are untouched.
-  poller:
-    build: .
-    command: poller
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   pgdata:

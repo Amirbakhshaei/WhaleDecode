@@ -75,39 +75,6 @@ def serve():
     )
 
 
-@cli.command()
-def worker():
-    """Start background worker (arq + APScheduler)."""
-    settings = _load_settings()
-    _check_rpc_isolation(settings)
-    setup_logging(settings)
-
-    import structlog
-
-    log = structlog.get_logger()
-    log.info("starting_worker", env=settings.ENV)
-
-    from whaledecode.entrypoints.worker import run_worker
-
-    asyncio.run(run_worker(settings))
-
-
-@cli.command()
-def poller():
-    """Run the targeted failover poller as an isolated process (bulkhead).
-
-    Polls curated wallets over free public RPC nodes and inserts gated
-    candidate_events; the AI worker picks them up independently.
-    """
-    settings = _load_settings()
-    _check_rpc_isolation(settings)
-    setup_logging(settings)
-
-    from whaledecode.entrypoints.poller import run_poller
-
-    asyncio.run(run_poller(settings))
-
-
 def _alembic_url(settings: Settings) -> str:
     url = settings.DATABASE_URL
     if url.startswith("postgresql://"):

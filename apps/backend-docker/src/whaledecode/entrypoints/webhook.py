@@ -75,39 +75,41 @@ def _coerce_numeric(value: Any, default: float = 0.0) -> float:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: start bot polling + consumer supervisor on startup, stop on shutdown.
+    """FastAPI lifespan: conditionally start background supervisor on startup, stop on shutdown.
 
-    The bot + supervisor run in this same process, but their startup is bounded
-    and failure-tolerant so it can never block uvicorn from binding — an outage
-    in Telegram or the worker loop must not 502 inbound Alchemy webhooks.
+    When ``IS_WORKER=true`` (the default), this instance boots the full
+    stack: Telegram bot, webhook registration, APScheduler cron jobs, and
+    the Targeted Failover Poller.  When ``IS_WORKER=false`` the process
+    only serves ``/health`` and webhook HTTP endpoints — no scheduler, no
+    bot, no poller — so Railway replicas never duplicate cron jobs.
     """
-    # ``Settings`` is cheap to build at import time; only the DB/LLM service build
-    # is deferred here so a connectivity failure surfaces at startup, not at import.
     global session_factory, _price_oracle
     init_sentry(settings)
     app.state.settings = settings
+    is_worker = settings.IS_WORKER
+    logger.info("lifespan_start", is_worker=is_worker)
 
-    # Bulkhead for the healthcheck: bind and serve /health IMMEDIATELY. The
-    # heavy bot/supervisor startup (LLM graph, DB seed, Telegram connect) runs
-    # as a background task so a slow or dead downstream can never hold the
-    # port hostage — the previous await-here design starved Railway's
-    # healthcheck window and failed every deploy.
+    async def _init_services() -> None:
+        """Build DB + investigation service (needed by all instances for /health probe)."""
+        global session_factory, _price_oracle
+        factory, investigation_service, _ = build_investigation_service(settings)
+        session_factory = factory
+        _price_oracle = investigation_service._price_oracle
+        app.state.session_factory = session_factory
+        app.state.investigation_service = investigation_service
+
     async def _start_bot_and_supervisor() -> None:
-        # Guard against duplicate startup (lifespan re-entry / double startup).
+        """Full worker startup: bot, Telegram webhook, scheduler, poller."""
         if getattr(app.state, "bot", None) is not None:
             logger.warning("bot_already_running_skipping_startup")
             return
         try:
-            factory, investigation_service, _ = build_investigation_service(settings)
-            session_factory = factory
-            _price_oracle = investigation_service._price_oracle
-            app.state.session_factory = session_factory
-            app.state.investigation_service = investigation_service
+            await _init_services()
+
             bot, dp = build_telegram_app(settings)
             app.state.bot = bot
             app.state.dp = dp
             # Channel probe — fail fast if Telegram destination is unreachable.
-            # Do not boot the worker if it cannot verify its write destination.
             channel_id = (
                 settings.CHANNEL_CHAT_ID or settings.TELEGRAM_CHANNEL_ID or ""
             )
@@ -129,9 +131,7 @@ async def lifespan(app: FastAPI):
             app.state.stop_event = stop_event
             await dp.emit_startup()
 
-            # Stateless ingress: register a Telegram webhook so Telegram pushes
-            # updates here (no getUpdates loop → no 409 conflicts; safe to run
-            # many replicas behind the load balancer).
+            # Stateless Telegram webhook — only the worker registers it.
             webhook_url = settings.WEBHOOK_URL
             if not webhook_url:
                 logger.critical(
@@ -144,16 +144,24 @@ async def lifespan(app: FastAPI):
             await run_webhook(bot, dp, full_url, secret)
             app.state.bot_ready = True
 
-            # ponytail: scheduler/cron jobs (briefing, counter reset, purge)
-            # run per-replica — add a singleton lock before scaling >1 replica.
+            # APScheduler cron jobs + BackgroundAIWorker + alert loop
             app.state.supervisor_tasks = launch_supervisor_tasks(
-                session_factory, investigation_service, settings, bot, stop_event
+                session_factory, app.state.investigation_service, settings, bot, stop_event
             )
+
+            # Targeted Failover Poller — background task, reference kept to avoid GC.
+            if settings.TARGETED_POLLER_ENABLED:
+                from whaledecode.application.targeted_poller import TargetedPollerService
+
+                poller_service = TargetedPollerService(session_factory, settings)
+                app.state.poller_task = asyncio.create_task(poller_service.run(stop_event))
+                app.state._poller_service = poller_service
+                logger.info("targeted_poller_started")
+
             logger.info("bot_supervisor_started")
         except SystemExit:
             raise
         except BaseException as e:
-            # SystemExit / KeyboardInterrupt must propagate — only Exception is swallowed
             if isinstance(e, Exception):
                 app.state.startup_failed = str(e)
                 logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
@@ -165,7 +173,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Teardown: stop the startup task first so it can't race the shutdown.
+    # Teardown
     startup_task = getattr(app.state, "startup_task", None)
     if startup_task is not None and not startup_task.done():
         startup_task.cancel()
@@ -173,7 +181,7 @@ async def lifespan(app: FastAPI):
             await startup_task
         except asyncio.CancelledError:
             pass
-    await asyncio.sleep(0)  # let cancelled inner awaits settle before teardown
+    await asyncio.sleep(0)
 
     stop_event = getattr(app.state, "stop_event", None)
     if stop_event is not None:
@@ -182,6 +190,19 @@ async def lifespan(app: FastAPI):
     for task in supervisor_tasks:
         task.cancel()
     await asyncio.gather(*supervisor_tasks, return_exceptions=True)
+
+    # Poller teardown
+    poller_task = getattr(app.state, "poller_task", None)
+    if poller_task is not None and not poller_task.done():
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            pass
+    poller_service = getattr(app.state, "_poller_service", None)
+    if poller_service is not None:
+        await poller_service.aclose()
+
     dp = getattr(app.state, "dp", None)
     if dp is not None:
         await dp.emit_shutdown()
@@ -214,10 +235,38 @@ async def health_check():
                 "detail": str(startup_failed)[:500],
             },
         )
+    is_worker = settings.IS_WORKER
     startup_task = getattr(app.state, "startup_task", None)
     bot_ready = getattr(app.state, "bot_ready", False)
+
+    if not is_worker:
+        # Non-worker: no bot expected; healthy if startup didn't fail.
+        sf = getattr(app.state, "session_factory", None) or globals().get("session_factory")
+        if sf is not None:
+            try:
+                from sqlalchemy import text as _text
+                async with sf() as _session:
+                    await _session.execute(_text("SELECT 1"))
+            except Exception as e:
+                logger.error("health_db_probe_failed", extra={"error": str(e)}, exc_info=True)
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "degraded",
+                        "service": "WhaleDecode Webhook Receiver",
+                        "bot_ready": False,
+                        "reason": "db_unreachable",
+                        "detail": str(e)[:500],
+                    },
+                )
+        return {
+            "status": "ok",
+            "service": "WhaleDecode Webhook Receiver",
+            "bot_ready": False,
+            "reason": "worker_disabled",
+        }
+
     if not bot_ready:
-        # Distinguish "still starting" (startup_task running) from "crashed".
         starting = startup_task is not None and not startup_task.done()
         if starting:
             return {
@@ -251,12 +300,11 @@ async def health_check():
                 "reason": "bot_not_running",
             },
         )
-    # Optional DB probe — do not fail health if session_factory not yet set
+    # Optional DB probe
     sf = getattr(app.state, "session_factory", None) or globals().get("session_factory")
     if sf is not None:
         try:
             from sqlalchemy import text as _text
-
             async with sf() as _session:
                 await _session.execute(_text("SELECT 1"))
         except Exception as e:
