@@ -19,11 +19,19 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        "candidate_events",
-        sa.Column("error_message", sa.String(512), nullable=True),
-    )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("candidate_events")]
+    if "error_message" not in columns:
+        op.add_column(
+            "candidate_events",
+            sa.Column("error_message", sa.String(512), nullable=True),
+        )
 
 
 def downgrade():
-    op.drop_column("candidate_events", "error_message")
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("candidate_events")]
+    if "error_message" in columns:
+        op.drop_column("candidate_events", "error_message")
