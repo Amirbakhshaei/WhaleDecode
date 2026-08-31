@@ -105,7 +105,6 @@ class Settings(BaseSettings):
 
     # Targeted failover poller (free public RPCs; replaces paid webhooks).
     # Comma-separated endpoint lists — the router rotates on 429/502/timeout.
-    IS_WORKER: bool = True
     TARGETED_POLLER_ENABLED: bool = True
     TARGETED_RPC_COOLDOWN_SECONDS: float = 60.0
     # Aggregated net USD per transaction required before ingestion (the

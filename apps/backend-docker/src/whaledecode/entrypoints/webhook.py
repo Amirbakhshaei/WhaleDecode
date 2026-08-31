@@ -8,12 +8,15 @@ service scales horizontally behind Railway's load balancer with no getUpdates
 import asyncio
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 from aiogram.types import Update
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
 from whaledecode.application.services.investigation import (
@@ -37,6 +40,82 @@ from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
 logger = logging.getLogger(__name__)
 
 _sentinel = SentinelEngine()
+
+_INSTANCE_ID = uuid.uuid4().hex[:12]
+_STALE_THRESHOLD_SECONDS = 60
+
+
+async def _ensure_worker_election_table(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Create the worker_election table if it doesn't exist."""
+    async with factory() as session:
+        await session.execute(text("""
+            CREATE TABLE IF NOT EXISTS worker_election (
+                id          INTEGER PRIMARY KEY DEFAULT 1,
+                instance_id TEXT    NOT NULL,
+                locked_at   TIMESTAMPTZ NOT NULL
+            )
+        """))
+        await session.commit()
+
+
+async def _try_claim_worker_lock(
+    factory: async_sessionmaker[AsyncSession],
+) -> bool:
+    """Try to become the active worker via a SELECT … FOR UPDATE row lock.
+
+    Returns True if this instance owns the lock (is the worker).
+    Stale locks (>60s old) are reaped so a crashed holder doesn't
+    block the next election.
+    """
+    await _ensure_worker_election_table(factory)
+    async with factory() as session:
+        # Reap stale locks first.
+        await session.execute(
+            text("DELETE FROM worker_election WHERE locked_at < now() - interval '60 seconds'")
+        )
+        # Try to claim (INSERT) or update the single row.
+        existing = await session.execute(
+            text("SELECT instance_id, locked_at FROM worker_election WHERE id = 1 FOR UPDATE NOWAIT")
+        )
+        row = existing.first()
+        if row is None:
+            # No lock holder — claim it.
+            await session.execute(
+                text(
+                    "INSERT INTO worker_election (id, instance_id, locked_at) "
+                    "VALUES (1, :iid, now())"
+                ),
+                {"iid": _INSTANCE_ID},
+            )
+            await session.commit()
+            logger.info("worker_lock_acquired", instance_id=_INSTANCE_ID)
+            return True
+        # Another instance holds it — we are not the worker.
+        logger.info(
+            "worker_lock_held_by_another",
+            holder=row[0],
+            locked_at=str(row[1]),
+        )
+        await session.commit()
+        return False
+
+
+async def _release_worker_lock(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Release the worker lock on clean shutdown."""
+    try:
+        async with factory() as session:
+            await session.execute(
+                text("DELETE FROM worker_election WHERE instance_id = :iid"),
+                {"iid": _INSTANCE_ID},
+            )
+            await session.commit()
+        logger.info("worker_lock_released", instance_id=_INSTANCE_ID)
+    except Exception:
+        logger.warning("worker_lock_release_failed", exc_info=True)
 
 
 def _hex_int(value: Any, default: int = 0) -> int:
@@ -75,37 +154,36 @@ def _coerce_numeric(value: Any, default: float = 0.0) -> float:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: conditionally start background supervisor on startup, stop on shutdown.
+    """FastAPI lifespan: auto-elect one worker instance via DB lock.
 
-    When ``IS_WORKER=true`` (the default), this instance boots the full
-    stack: Telegram bot, webhook registration, APScheduler cron jobs, and
-    the Targeted Failover Poller.  When ``IS_WORKER=false`` the process
-    only serves ``/health`` and webhook HTTP endpoints — no scheduler, no
-    bot, no poller — so Railway replicas never duplicate cron jobs.
+    Every replica boots Uvicorn and serves ``/health`` + webhook HTTP
+    immediately.  A ``SELECT … FOR UPDATE`` row in ``worker_election``
+    ensures only one instance at a time claims the lock and starts the
+    Telegram bot, APScheduler cron jobs, and Targeted Failover Poller.
+    Stale locks (holder died >60s ago) are reaped automatically.
     """
     global session_factory, _price_oracle
     init_sentry(settings)
     app.state.settings = settings
-    is_worker = settings.IS_WORKER
+
+    # 1) Build services (needed by all instances for /health DB probe).
+    factory, investigation_service, _ = build_investigation_service(settings)
+    session_factory = factory
+    _price_oracle = investigation_service._price_oracle
+    app.state.session_factory = session_factory
+    app.state.investigation_service = investigation_service
+
+    # 2) Try to become the worker.
+    is_worker = await _try_claim_worker_lock(factory)
+    app.state.is_worker = is_worker
     logger.info("lifespan_start", is_worker=is_worker)
 
-    async def _init_services() -> None:
-        """Build DB + investigation service (needed by all instances for /health probe)."""
-        global session_factory, _price_oracle
-        factory, investigation_service, _ = build_investigation_service(settings)
-        session_factory = factory
-        _price_oracle = investigation_service._price_oracle
-        app.state.session_factory = session_factory
-        app.state.investigation_service = investigation_service
-
-    async def _start_bot_and_supervisor() -> None:
+    async def _start_worker() -> None:
         """Full worker startup: bot, Telegram webhook, scheduler, poller."""
         if getattr(app.state, "bot", None) is not None:
             logger.warning("bot_already_running_skipping_startup")
             return
         try:
-            await _init_services()
-
             bot, dp = build_telegram_app(settings)
             app.state.bot = bot
             app.state.dp = dp
@@ -146,7 +224,7 @@ async def lifespan(app: FastAPI):
 
             # APScheduler cron jobs + BackgroundAIWorker + alert loop
             app.state.supervisor_tasks = launch_supervisor_tasks(
-                session_factory, app.state.investigation_service, settings, bot, stop_event
+                session_factory, investigation_service, settings, bot, stop_event
             )
 
             # Targeted Failover Poller — background task, reference kept to avoid GC.
@@ -158,18 +236,21 @@ async def lifespan(app: FastAPI):
                 app.state._poller_service = poller_service
                 logger.info("targeted_poller_started")
 
-            logger.info("bot_supervisor_started")
+            logger.info("worker_started")
         except SystemExit:
             raise
         except BaseException as e:
             if isinstance(e, Exception):
                 app.state.startup_failed = str(e)
-                logger.error("bot_supervisor_startup_failed", extra={"error": str(e)}, exc_info=True)
+                logger.error("worker_startup_failed", extra={"error": str(e)}, exc_info=True)
                 capture_exception(e)
             else:
                 raise
 
-    app.state.startup_task = asyncio.create_task(_start_bot_and_supervisor())
+    if is_worker:
+        app.state.startup_task = asyncio.create_task(_start_worker())
+    else:
+        logger.info("non_worker_instance")
 
     yield
 
@@ -210,6 +291,10 @@ async def lifespan(app: FastAPI):
     if bot is not None:
         await bot.session.close()
 
+    # Release the worker lock on clean shutdown.
+    if is_worker and session_factory is not None:
+        await _release_worker_lock(session_factory)
+
 
 # ``settings`` is built at import time (cheap env config); the DB/LLM service
 # factory is populated inside the lifespan so a connectivity failure surfaces at
@@ -235,7 +320,7 @@ async def health_check():
                 "detail": str(startup_failed)[:500],
             },
         )
-    is_worker = settings.IS_WORKER
+    is_worker = getattr(app.state, "is_worker", True)
     startup_task = getattr(app.state, "startup_task", None)
     bot_ready = getattr(app.state, "bot_ready", False)
 
@@ -244,9 +329,8 @@ async def health_check():
         sf = getattr(app.state, "session_factory", None) or globals().get("session_factory")
         if sf is not None:
             try:
-                from sqlalchemy import text as _text
                 async with sf() as _session:
-                    await _session.execute(_text("SELECT 1"))
+                    await _session.execute(text("SELECT 1"))
             except Exception as e:
                 logger.error("health_db_probe_failed", extra={"error": str(e)}, exc_info=True)
                 return JSONResponse(
@@ -304,9 +388,8 @@ async def health_check():
     sf = getattr(app.state, "session_factory", None) or globals().get("session_factory")
     if sf is not None:
         try:
-            from sqlalchemy import text as _text
             async with sf() as _session:
-                await _session.execute(_text("SELECT 1"))
+                await _session.execute(text("SELECT 1"))
         except Exception as e:
             logger.error("health_db_probe_failed", extra={"error": str(e)}, exc_info=True)
             return JSONResponse(
