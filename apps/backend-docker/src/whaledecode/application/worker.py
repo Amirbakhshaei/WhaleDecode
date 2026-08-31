@@ -30,6 +30,15 @@ from whaledecode.config.alert_policy import GLOBAL_POLICY, policy_for
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.admin_audit_log import AdminAuditLog
 from whaledecode.domain.entities.candidate_event import CandidateEvent
+from whaledecode.infrastructure.pipeline_telemetry import (
+    log_channel_dispatch,
+    log_channel_fatigue_cap,
+    log_channel_gate_check,
+    log_channel_synthesis_validation,
+    log_investigation_claim,
+    log_investigation_skipped,
+    log_investigation_result,
+)
 from whaledecode.infrastructure.telemetry import capture_exception
 
 log = structlog.get_logger()
@@ -114,20 +123,18 @@ class BackgroundAIWorker:
             await uow.candidate_events.set_status(event.id, "processing")
             await uow.commit()
 
+        log_investigation_claim(event.id, event.dedupe_key, str(event.tx_hash), str(event.chain))
+
         try:
             result = await self._investigation.process_event(event)
             if result.get("status") == "skipped":
                 async with UnitOfWork(self._session_factory) as uow:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
-                log.info(
-                    "worker_event_skipped",
-                    extra={
-                        "dedupe_key": event.dedupe_key,
-                        "status": "skipped",
-                        "reason": result.get("reason", "unknown"),
-                        "tx": str(event.tx_hash),
-                    },
+                log_investigation_skipped(
+                    event.id,
+                    event.dedupe_key,
+                    result.get("reason", "unknown"),
                 )
                 return True
 
@@ -135,21 +142,22 @@ class BackgroundAIWorker:
             policy = policy_for(event.chain)
             min_score = policy.min_score_to_publish if policy else CHANNEL_MIN_SCORE
             min_usd = policy.min_usd_threshold if policy else CHANNEL_MIN_VALUE_USD
-            if score < min_score or value_usd < min_usd:
+
+            passed_gate = score >= min_score and value_usd >= min_usd
+            log_channel_gate_check(
+                event.id, event.dedupe_key, score, value_usd, min_score, min_usd, passed_gate
+            )
+
+            if not passed_gate:
                 async with UnitOfWork(self._session_factory) as uow:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
-                log.info(
-                    "worker_event_below_channel_floor",
-                    extra={
-                        "dedupe_key": event.dedupe_key,
-                        "reason": "Below channel publish floor (score/value)",
-                        "score": score,
-                        "value_usd": value_usd,
-                        "min_score": min_score,
-                        "min_usd": min_usd,
-                        "tx": str(event.tx_hash),
-                    },
+                log_investigation_skipped(
+                    event.id,
+                    event.dedupe_key,
+                    "Below channel publish floor (score/value)",
+                    score=score,
+                    value_usd=value_usd,
                 )
                 return True
 
@@ -170,38 +178,41 @@ class BackgroundAIWorker:
                 if capped:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
-                    log.info(
-                        "worker_event_capped",
-                        extra={
-                            "dedupe_key": event.dedupe_key,
-                            "reason": "Anti-fatigue alert cap reached",
-                            "hourly": hourly,
-                            "daily": daily,
-                            "chain_daily": chain_daily,
-                            "tx": str(event.tx_hash),
-                        },
+                    log_channel_fatigue_cap(
+                        event.id,
+                        event.dedupe_key,
+                        hourly,
+                        daily,
+                        chain_daily,
+                        GLOBAL_POLICY.max_alerts_per_hour,
+                        GLOBAL_POLICY.max_alerts_per_day,
+                        chain_daily_cap,
+                    )
+                    log_investigation_skipped(
+                        event.id, event.dedupe_key, "Anti-fatigue alert cap reached"
                     )
                     return True
 
             # Pre-publish gatekeeper: never broadcast placeholder/fallback synthesis.
             synthesis = parse_synthesis_points(result)
-            if not is_valid_synthesis(
-                " ".join([synthesis["profile"], synthesis["context"], synthesis["impact"]])
-            ):
+            synthesis_text = " ".join([synthesis["profile"], synthesis["context"], synthesis["impact"]])
+            valid_synthesis = is_valid_synthesis(synthesis_text)
+            log_channel_synthesis_validation(
+                event.id,
+                event.dedupe_key,
+                valid_synthesis,
+                fallback_detected=not valid_synthesis,
+            )
+            if not valid_synthesis:
                 async with UnitOfWork(self._session_factory) as uow:
                     await uow.candidate_events.set_status(event.id, "skipped")
                     await uow.commit()
                 log.info(
-                    "worker_event_synthesis_invalid",
-                    extra={
-                        "dedupe_key": event.dedupe_key,
-                        "reason": "Synthesis contains fallback/placeholder text",
-                        "tx": str(event.tx_hash),
-                    },
-                )
-                log.info(
                     f"[DISPATCH_SKIP] Event ID={event.id} suppressed: synthesis failed validation "
                     f"(fallback/placeholder). Tx={event.tx_hash}"
+                )
+                log_investigation_skipped(
+                    event.id, event.dedupe_key, "Synthesis contains fallback/placeholder text"
                 )
                 return True
 
@@ -211,16 +222,12 @@ class BackgroundAIWorker:
                     await uow.candidate_events.set_status(event.id, "completed")
                     await uow.candidate_events.mark_published(event.id)
                     await uow.commit()
-                log.info(
-                    "worker_event_done",
-                    extra={
-                        "dedupe_key": event.dedupe_key,
-                        "status": "completed",
-                        "score": score,
-                        "value_usd": value_usd,
-                        "chain": str(event.chain),
-                        "tx": str(event.tx_hash),
-                    },
+                log_investigation_result(
+                    event.id,
+                    event.dedupe_key,
+                    "completed",
+                    score=score,
+                    value_usd=value_usd,
                 )
             else:
                 # Zero-tolerance guardrail: dispatch failure must never become COMPLETED —
@@ -379,6 +386,7 @@ class BackgroundAIWorker:
                 await uow.commit()
                 log.info("worker_dispatched_campaign_created", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
                 log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={msg_id}")
+                log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "CREATED", msg_id, True)
                 return True
 
             if action == "MUTATED":
@@ -417,6 +425,7 @@ class BackgroundAIWorker:
                         await uow.commit()
                         log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
                         log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={campaign.telegram_message_id}")
+                        log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "MUTATED", campaign.telegram_message_id, True)
                         return True
                     # fall through to THREADED fallback when edit failed or missing id
 
@@ -444,4 +453,5 @@ class BackgroundAIWorker:
             await uow.commit()
             log.info("worker_dispatched_campaign_threaded", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
             log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={new_msg_id}")
+            log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "THREADED", new_msg_id, True)
             return True

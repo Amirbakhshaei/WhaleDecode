@@ -13,6 +13,7 @@ from whaledecode.application.fetcher import LiveBlockchainFetcher
 from whaledecode.application.services.investigation import build_investigation_service
 from whaledecode.application.worker import BackgroundAIWorker
 from whaledecode.config.settings import Settings
+from whaledecode.infrastructure.pipeline_telemetry import periodic_heartbeat
 from whaledecode.infrastructure.telemetry import capture_exception, init_sentry
 
 log = structlog.get_logger()
@@ -139,9 +140,15 @@ def launch_supervisor_tasks(
         session_factory, investigation_service, settings, bot=bot
     )
 
+    # Pipeline heartbeat: periodic health metrics
+    heartbeat_task = asyncio.create_task(
+        periodic_heartbeat(settings, session_factory, interval_seconds=60, stop_event=stop_event)
+    )
+
     tasks = [
         asyncio.create_task(worker.run(stop_event)),
         asyncio.create_task(_alert_loop(session_factory, bot, settings)),
+        heartbeat_task,
     ]
 
     # Store scheduler for shutdown

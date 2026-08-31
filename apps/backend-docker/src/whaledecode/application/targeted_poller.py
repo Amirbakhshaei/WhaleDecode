@@ -21,6 +21,14 @@ from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
+from whaledecode.infrastructure.pipeline_telemetry import (
+    log_activities_fetched,
+    log_ingest_filtered,
+    log_ingest_inserted,
+    log_ingest_duplicate,
+    log_poll_start,
+    set_correlation_id,
+)
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, split_urls
 
 log = structlog.get_logger()
@@ -86,6 +94,7 @@ class TargetedPollerService:
                 wallets = await uow.curated_wallets.list_active(chain=code)
                 if not wallets:
                     continue
+                log_poll_start(code, len(wallets))
                 poller = self._poller_for(code)
                 if poller is None:
                     continue
@@ -94,15 +103,53 @@ class TargetedPollerService:
                 except Exception as e:  # noqa: BLE001 - one chain down ≠ all chains down
                     log.error("targeted_poll_failed", extra={"chain": code, "error": str(e)})
                     continue
-                kept = [
-                    a
-                    for a in activities
-                    if self._passes_gate(a) and is_valid_ingest_hash(a["tx_hash"], a["chain"])
-                ]
-                inserted += await uow.candidate_events.create_pending_bulk(kept)
+                # Telemetry: log activities fetched per wallet
+                for wallet in wallets:
+                    wallet_activities = [a for a in activities if a.get("wallet_id") == wallet.id]
+                    if wallet_activities:
+                        log_activities_fetched(code, wallet.address, len(wallet_activities))
+                kept = []
+                for a in activities:
+                    if not self._passes_gate(a):
+                        log_ingest_filtered(
+                            a.get("chain", code),
+                            a.get("wallet_address", "unknown"),
+                            a.get("tx_hash", "unknown"),
+                            "below_usd_floor",
+                            float(a.get("value_usd") or 0.0),
+                            self._settings.TARGETED_MIN_TX_USD,
+                        )
+                        continue
+                    if not is_valid_ingest_hash(a["tx_hash"], a["chain"]):
+                        log_ingest_filtered(
+                            a.get("chain", code),
+                            a.get("wallet_address", "unknown"),
+                            a.get("tx_hash", "unknown"),
+                            "invalid_hash",
+                            float(a.get("value_usd") or 0.0),
+                            0.0,
+                        )
+                        continue
+                    kept.append(a)
+                # Insert with telemetry on duplicates
+                try:
+                    inserted_count = await uow.candidate_events.create_pending_bulk(kept)
+                except Exception:
+                    inserted_count = 0
+                inserted += inserted_count
+                if inserted_count:
+                    sample_keys = [k["dedupe_key"] for k in kept[:5]]
+                    log_ingest_inserted(code, inserted_count, sample_dedupe_keys=sample_keys)
+                # Log duplicates (activities not inserted due to ON CONFLICT)
+                for a in kept:
+                    # Note: create_pending_bulk doesn't return which were skipped, so we log at debug
+                    log_ingest_duplicate(
+                        a.get("chain", code),
+                        a.get("wallet_address", "unknown"),
+                        a.get("tx_hash", "unknown"),
+                        a.get("log_index", 0),
+                    )
             await uow.commit()
-        if inserted:
-            log.info("targeted_poller_inserted", extra={"count": inserted})
         return inserted
 
     def _passes_gate(self, activity: dict[str, Any]) -> bool:
