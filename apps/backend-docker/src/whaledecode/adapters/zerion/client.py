@@ -6,6 +6,7 @@ Only called from background backfill paths — never on the alert critical
 path (zero-latency directive). Every failure degrades to an empty dict so
 the profiler keeps its baseline behavior.
 """
+import base64
 import logging
 from typing import Any
 
@@ -31,6 +32,8 @@ class ZerionClient:
     def __init__(self, api_key: str, timeout_seconds: float = 8.0) -> None:
         self._api_key = api_key
         self._timeout = timeout_seconds
+        # HTTP Basic Auth: Basic base64(KEY:) — key as username, empty password
+        self._auth_header = "Basic " + base64.b64encode(f"{api_key}:".encode()).decode()
 
     @classmethod
     def from_settings(cls, settings: Any) -> "ZerionClient":
@@ -49,7 +52,7 @@ class ZerionClient:
             response = await client.get(
                 f"{ZERION_BASE}/wallets/{address.lower()}/pnl",
                 params={"filter[chain_ids]": chain_id},
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={"Authorization": self._auth_header},
             )
             response.raise_for_status()
             attrs: dict[str, Any] = (response.json().get("data") or {}).get("attributes") or {}
