@@ -90,14 +90,10 @@ async def _try_claim_worker_lock(
                 {"iid": _INSTANCE_ID},
             )
             await session.commit()
-            logger.info("worker_lock_acquired", instance_id=_INSTANCE_ID)
+            logger.info("worker_lock_acquired instance_id=%s", _INSTANCE_ID)
             return True
         # Another instance holds it — we are not the worker.
-        logger.info(
-            "worker_lock_held_by_another",
-            holder=row[0],
-            locked_at=str(row[1]),
-        )
+        logger.info("worker_lock_held_by_another holder=%s locked_at=%s", row[0], row[1])
         await session.commit()
         return False
 
@@ -113,7 +109,7 @@ async def _release_worker_lock(
                 {"iid": _INSTANCE_ID},
             )
             await session.commit()
-        logger.info("worker_lock_released", instance_id=_INSTANCE_ID)
+        logger.info("worker_lock_released instance_id=%s", _INSTANCE_ID)
     except Exception:
         logger.warning("worker_lock_release_failed", exc_info=True)
 
@@ -176,7 +172,7 @@ async def lifespan(app: FastAPI):
     # 2) Try to become the worker.
     is_worker = await _try_claim_worker_lock(factory)
     app.state.is_worker = is_worker
-    logger.info("lifespan_start", is_worker=is_worker)
+    logger.info("lifespan_start is_worker=%s", is_worker)
 
     async def _start_worker() -> None:
         """Full worker startup: bot, Telegram webhook, scheduler, poller."""
