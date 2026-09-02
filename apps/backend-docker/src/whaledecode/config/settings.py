@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     ETH_RPC_URL: str | None = None
     ARB_RPC_URL: str | None = None
     BASE_RPC_URL: str | None = None
-    POLL_INTERVAL_SECONDS: int = 30
+    POLL_INTERVAL_SECONDS: int = 15
     POLL_BATCH_SIZE: int = 50
     REORG_SAFE_BLOCKS: int = 64
     MAX_GET_LOGS_BLOCK_RANGE: dict[str, int] = {"Ethereum": 5, "Base": 30, "Arbitrum": 100}
@@ -106,13 +106,13 @@ class Settings(BaseSettings):
     # Targeted failover poller (free public RPCs; replaces paid webhooks).
     # Comma-separated endpoint lists — the router rotates on 429/502/timeout.
     TARGETED_POLLER_ENABLED: bool = True
-    TARGETED_RPC_COOLDOWN_SECONDS: float = 60.0
+    TARGETED_RPC_COOLDOWN_SECONDS: float = 300.0
     # Aggregated net USD per transaction required before ingestion (the
     # webhook path's whale floor, now applied at the poller).
     TARGETED_MIN_TX_USD: float = 50_000.0
-    ETH_PUBLIC_RPC_URLS: str = "https://eth.merkle.io,https://rpc.payload.de,https://rpc.flashbots.net,https://eth-mainnet.public.blastapi.io"
-    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base.gateway.tenderly.co,https://base.blockpi.network/v1/rpc/public"
-    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.blockpi.network/v1/rpc/public,https://arbitrum-one.publicnode.com"
+    ETH_PUBLIC_RPC_URLS: str = "https://eth.merkle.io,https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://rpc.ankr.com/eth,https://1rpc.io/eth,https://rpc.payload.de"
+    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.llamarpc.com,https://rpc.ankr.com/base,https://1rpc.io/base"
+    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com,https://arbitrum.llamarpc.com,https://rpc.ankr.com/arbitrum,https://1rpc.io/arb"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 
     # Alert Pipeline

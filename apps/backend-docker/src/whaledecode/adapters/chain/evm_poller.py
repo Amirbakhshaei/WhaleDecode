@@ -25,8 +25,10 @@ from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, to_int
 
 log = structlog.get_logger()
 
-# Public nodes reject wide ranges; stay small and catch up across polls.
-_DEFAULT_BLOCK_RANGE = 10
+# Public nodes reject wide ranges; cap at 100 blocks to avoid payload size
+# limits. On first boot (no cursor) we fall back to a small window.
+_MAX_BLOCK_RANGE = 100
+_BOOTSTRAP_BLOCK_RANGE = 10
 
 # ponytail: free RPCs return -32046/-32701 on wide topic arrays — 20 addresses
 # per eth_getLogs call; shrink further if a node still balks.
@@ -105,12 +107,17 @@ class EvmTargetedPoller(TargetedChainPoller):
         head_hex = await self._rpc("eth_blockNumber", [])
         head = to_int(head_hex)
 
-        # ponytail: fixed small range instead of persisted cursors — a restart
-        # re-scans one window at worst; add a cursor table if gaps ever matter.
-        from_block = head - _DEFAULT_BLOCK_RANGE
+        # Range-based query: start from last_polled_block + 1 (or bootstrap
+        # window on first call). Cap at _MAX_BLOCK_RANGE to stay within
+        # public-node payload size limits.
         if self._last_block is not None:
-            from_block = max(from_block, min(self._last_block + 1, head))
+            from_block = self._last_block + 1
+        else:
+            from_block = head - _BOOTSTRAP_BLOCK_RANGE
         to_block = head - 1  # skip the not-yet-final tip
+        # Enforce max range cap — trim from_block if the gap is too wide.
+        if to_block - from_block >= _MAX_BLOCK_RANGE:
+            from_block = to_block - _MAX_BLOCK_RANGE + 1
 
         padded_to_wallet = {
             pad_address_to_topic(w.address): w.id for w in targets if w.id is not None

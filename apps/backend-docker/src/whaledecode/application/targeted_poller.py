@@ -9,6 +9,7 @@ Chain-agnostic by construction: this file knows nothing about eth_getLogs or
 getSignaturesForAddress — only about the TargetedChainPoller interface.
 """
 import asyncio
+import random
 from typing import Any
 
 import structlog
@@ -21,6 +22,7 @@ from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
+from whaledecode.domain.services.event_gate import MIN_WHALE_THRESHOLD_USD
 from whaledecode.infrastructure.pipeline_telemetry import (
     log_activities_fetched,
     log_ingest_filtered,
@@ -98,6 +100,9 @@ class TargetedPollerService:
                 poller = self._poller_for(code)
                 if poller is None:
                     continue
+                # ponytail: jitter defeats WAF rhythm detection —
+                # randomise the pre-request pause per chain per cycle.
+                await asyncio.sleep(random.uniform(0.5, 3.5))
                 try:
                     activities = await poller.fetch_recent_activity(list(wallets))
                 except Exception as e:  # noqa: BLE001 - one chain down ≠ all chains down
@@ -117,7 +122,7 @@ class TargetedPollerService:
                             a.get("tx_hash", "unknown"),
                             "below_usd_floor",
                             float(a.get("value_usd") or 0.0),
-                            self._settings.TARGETED_MIN_TX_USD,
+                            MIN_WHALE_THRESHOLD_USD,
                         )
                         continue
                     if not is_valid_ingest_hash(a["tx_hash"], a["chain"]):
@@ -153,16 +158,22 @@ class TargetedPollerService:
         return inserted
 
     def _passes_gate(self, activity: dict[str, Any]) -> bool:
-        """USD-floor gate on the transaction's aggregated net volume.
+        """Unified pre-INSERT gate: mirrors the investigation worker's checks.
 
-        The EVM adapter pre-aggregates per tx_hash and prices every Transfer
-        log with real token decimals, so this is a true dollar threshold —
-        not a native-denomination guess. The Sentinel score is still computed
-        and stored for downstream Edge Intelligence ranking.
+        Uses MIN_WHALE_THRESHOLD_USD (the same floor ``EventGate`` enforces
+        after oracle re-pricing) so an event that passes here will not be
+        immediately skipped downstream.  The Sentinel score is also checked —
+        a zero-conviction event can never clear the investigation score gate,
+        so inserting it only wastes a DB row and a worker claim cycle.
         """
         score = self._sentinel.score(activity)
         activity["score"] = score
-        return float(activity.get("value_usd") or 0.0) >= self._settings.TARGETED_MIN_TX_USD
+        value_usd = float(activity.get("value_usd") or 0.0)
+        if value_usd < MIN_WHALE_THRESHOLD_USD:
+            return False
+        if score < self._settings.MIN_INVESTIGATION_SCORE * 100:
+            return False
+        return True
 
     async def aclose(self) -> None:
         for poller in self._pollers.values():

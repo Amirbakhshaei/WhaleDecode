@@ -23,6 +23,7 @@ from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
+from whaledecode.domain.services.event_gate import MIN_WHALE_THRESHOLD_USD
 
 log = structlog.get_logger()
 
@@ -173,6 +174,11 @@ class LiveBlockchainFetcher:
         event["score"] = self._sentinel.score(
             event, recent_events=recent_events, curated_wallet_ids=curated_wallet_ids
         )
+        # ponytail: USD floor enforced here too — without this, low-value
+        # events slip into candidate_events and waste investigation LLM calls.
+        value_usd = float(event.get("value_usd") or 0.0)
+        if value_usd < MIN_WHALE_THRESHOLD_USD:
+            return False
         return bool(event["score"] >= self._settings.ALERT_SCORE_THRESHOLD * 100)
 
     async def _insert_pending(self, events: list[dict[str, Any]]) -> None:
