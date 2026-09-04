@@ -1,0 +1,69 @@
+{
+  "ethereum": [
+    {
+      "dex": "uniswap_v3",
+      "address": "0x88e6A0c2dDD26FEEb64F039a2c4122FcB37f39e0",
+      "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "fee_tier": 500
+    },
+    {
+      "dex": "uniswap_v3",
+      "address": "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8",
+      "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "fee_tier": 3000
+    },
+    {
+      "dex": "uniswap_v3",
+      "address": "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa76",
+      "token0": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "token1": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "fee_tier": 3000
+    },
+    {
+      "dex": "uniswap_v3",
+      "address": "0xCBCdF9626bC03E24f779434178A73a0B344bad11",
+      "token0": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "token1": "0x2260FAC5E5E5C25C4f27eAD9083C756Cc2",
+      "fee_tier": 3000
+    },
+    {
+      "dex": "uniswap_v2",
+      "address": "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+      "token0": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    }
+  ],
+  "arbitrum": [
+    {
+      "dex": "uniswap_v3",
+      "address": "0xC31E54c7a869B9FcBEcc14363CF510d1c41fa443",
+      "token0": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      "token1": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "fee_tier": 500
+    },
+    {
+      "dex": "uniswap_v3",
+      "address": "0x641C00A822e8b671738d32a431a4Fb6074E5c79d",
+      "token0": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      "token1": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+      "fee_tier": 3000
+    },
+    {
+      "dex": "uniswap_v2",
+      "address": "0xB7e50106a83014bAb2d7Ad28588f5288b09f8a49",
+      "token0": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      "token1": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+    }
+  ],
+  "base": [
+    {
+      "dex": "uniswap_v3",
+      "address": "0xd0b53D9277642d899DF5C87A3966A349A798F224",
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "fee_tier": 500
+    }
+  ]
+}
