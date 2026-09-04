@@ -19,6 +19,7 @@ import asyncio
 import signal
 
 import structlog
+
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.application.targeted_poller import TargetedPollerService
 from whaledecode.config.settings import Settings
@@ -47,7 +48,10 @@ async def run_poller(settings: Settings) -> None:
     """Own the poller's lifecycle: startup, signal-bounded loop, clean teardown."""
     init_sentry(settings)
     session_factory = create_session_factory(settings)
-    service = TargetedPollerService(session_factory, settings)
+    from whaledecode.adapters.chain.factory import build_resilient_rpc
+
+    rpc_manager = build_resilient_rpc(settings)
+    service = TargetedPollerService(session_factory, settings, rpc_manager=rpc_manager)
 
     stop_event = asyncio.Event()
 

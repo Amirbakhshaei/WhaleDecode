@@ -225,11 +225,14 @@ async def lifespan(app: FastAPI):
 
             # Targeted Failover Poller — background task, reference kept to avoid GC.
             if settings.TARGETED_POLLER_ENABLED:
+                from whaledecode.adapters.chain.factory import build_resilient_rpc
                 from whaledecode.application.targeted_poller import TargetedPollerService
 
-                poller_service = TargetedPollerService(session_factory, settings)
+                rpc_manager = build_resilient_rpc(settings)
+                poller_service = TargetedPollerService(session_factory, settings, rpc_manager=rpc_manager)
                 app.state.poller_task = asyncio.create_task(poller_service.run(stop_event))
                 app.state._poller_service = poller_service
+                app.state._rpc_manager = rpc_manager
                 logger.info("targeted_poller_started")
 
             logger.info("worker_started")

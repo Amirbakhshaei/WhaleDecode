@@ -45,13 +45,26 @@ def _is_node_capacity_error(err: dict) -> bool:
 
 
 def to_int(val: Any) -> int:
-    """Safe conversion of JSON-RPC scalars (hex str, decimal str, or int)."""
+    """Safe conversion of JSON-RPC scalars (hex str, decimal str, or int).
+
+    Also handles dict responses (error payloads or wrapped results) by extracting
+    the 'result' field or raising ConnectionError for error payloads.
+    """
     if isinstance(val, bool):
-        raise TypeError(f"Cannot convert bool to int")
+        raise TypeError("Cannot convert bool to int")
     if isinstance(val, int):
         return val
     if isinstance(val, str):
-        return int(val, 16) if val.startswith("0x") else int(val)
+        try:
+            return int(val, 16) if val.startswith("0x") else int(val)
+        except ValueError:
+            raise TypeError(f"Cannot convert string '{val}' to int")
+    if isinstance(val, dict):
+        # Handle cases where provider wraps data or returns error payload
+        if "error" in val or "code" in val:
+            raise ConnectionError(f"RPC returned error payload: {val}")
+        if "result" in val:
+            return to_int(val["result"])
     raise TypeError(f"Cannot convert {type(val)} to int")
 
 

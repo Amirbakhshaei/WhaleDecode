@@ -25,13 +25,13 @@ from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
 from whaledecode.domain.services.event_gate import MIN_WHALE_THRESHOLD_USD
 from whaledecode.infrastructure.pipeline_telemetry import (
     log_activities_fetched,
+    log_ingest_duplicate,
     log_ingest_filtered,
     log_ingest_inserted,
-    log_ingest_duplicate,
     log_poll_start,
-    set_correlation_id,
 )
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, split_urls
+from whaledecode.pools.rpc.manager import ResilientRPCManager
 
 log = structlog.get_logger()
 
@@ -44,12 +44,28 @@ _EVM_CHAINS = {
 
 
 class TargetedPollerService:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession], settings: Settings) -> None:
+    # ponytail: chain code → ResilientRPCManager chain name mapping.
+    _CODE_TO_NAME = {"ETH": "ethereum", "ARB": "arbitrum", "BASE": "base"}
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        rpc_manager: ResilientRPCManager | None = None,
+    ) -> None:
         self._session_factory = session_factory
         self._settings = settings
         self._sentinel = SentinelEngine()
+        self._shared_manager = rpc_manager
         self._routers: dict[str, RpcFailoverRouter] = {}
         self._pollers: dict[str, TargetedChainPoller] = {}
+        # If a shared manager is provided, pre-populate routers from it
+        # so we don't create duplicate httpx clients.
+        if rpc_manager is not None:
+            for code, name in self._CODE_TO_NAME.items():
+                router = rpc_manager.get_router(name)
+                if router is not None:
+                    self._routers[code.lower()] = router
 
     def _poller_for(self, chain_code: str) -> TargetedChainPoller | None:
         if chain_code in self._pollers:
@@ -180,5 +196,10 @@ class TargetedPollerService:
             closer = getattr(poller, "aclose", None)
             if closer is not None:
                 await closer()
-        for router in self._routers.values():
-            await router.aclose()
+        # ponytail: only close routers we own — shared manager's routers
+        # are closed by the manager's own aclose().
+        if self._shared_manager is not None:
+            await self._shared_manager.aclose()
+        else:
+            for router in self._routers.values():
+                await router.aclose()

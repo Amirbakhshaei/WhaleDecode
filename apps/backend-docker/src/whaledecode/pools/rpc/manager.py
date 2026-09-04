@@ -29,6 +29,8 @@ import time
 from typing import Any
 
 import structlog
+from aiolimiter import AsyncLimiter
+
 from whaledecode.infrastructure.rpc_router import (
     RpcFailoverRouter,
     RpcNodesExhaustedError,
@@ -64,6 +66,7 @@ class ResilientRPCManager:
         cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
         timeout: float = DEFAULT_TIMEOUT,
+        rate_limit_per_second: float | None = None,
     ) -> None:
         self._breaker_threshold = breaker_threshold
         self._cooldown_seconds = cooldown_seconds
@@ -72,6 +75,13 @@ class ResilientRPCManager:
         self._routers: dict[str, RpcFailoverRouter] = {}
         self._consecutive_failures: dict[str, int] = {}
         self._breaker_open_until: dict[str, float] = {}
+        # ponytail: optional process-global rate limiter — acquire before every
+        # router.post() so bursts are impossible across the whole process.
+        self._limiter: AsyncLimiter | None = (
+            AsyncLimiter(max_rate=rate_limit_per_second, time_period=1.0)
+            if rate_limit_per_second is not None
+            else None
+        )
         # ``chains`` is a hint: if the name is in chains.yaml, auto-register
         # it from the configured URLs. Tests using fake chains should call
         # ``register_chain()`` instead.
@@ -86,6 +96,10 @@ class ResilientRPCManager:
     def from_config(cls, chains: list[str] | None = None, **kwargs: Any) -> ResilientRPCManager:
         names = chains or list(get_chains().keys())
         return cls(chains=names, **kwargs)
+
+    def get_router(self, chain_name: str) -> RpcFailoverRouter | None:
+        """Extract the underlying router for a chain (used by TargetedPollerService)."""
+        return self._routers.get(chain_name)
 
     def register_chain(self, name: str, urls: list[str]) -> None:
         """Test/extension hook — register a custom URL list for a chain."""
@@ -121,6 +135,8 @@ class ResilientRPCManager:
                 await asyncio.sleep(min(max(wait_for, 0.0), 5.0))
                 raise CircuitOpenError(f"{chain}: circuit breaker open")
             try:
+                if self._limiter is not None:
+                    await self._limiter.acquire()
                 result = await router.post(payload)
                 self._on_success(chain)
                 return result
