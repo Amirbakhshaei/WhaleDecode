@@ -1,6 +1,7 @@
 from cachetools import TTLCache
 from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from whaledecode.adapters.db.models.curated_wallet import CuratedWalletModel
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.domain.value_objects.chain import Chain
@@ -25,17 +26,23 @@ class CuratedWalletRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_active(self, chain: str | None = None) -> list[CuratedWallet]:
+    async def list_active(self, chain: str | None = None, limit: int | None = None) -> list[CuratedWallet]:
         cache_key = chain or "all"
-        if cache_key in _ACTIVE_WALLET_CACHE:
+        # Only use cache when no limit (full list)
+        if limit is None and cache_key in _ACTIVE_WALLET_CACHE:
             return _ACTIVE_WALLET_CACHE[cache_key]
 
         stmt = select(CuratedWalletModel).where(CuratedWalletModel.is_active.is_(True))
         if chain is not None:
             stmt = stmt.where(CuratedWalletModel.chain == chain)
+        # Prioritize high-quality wallets (whales, institutions) over noise (CEX, MEV bots)
+        stmt = stmt.order_by(CuratedWalletModel.quality_score.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)
         wallets = [self._to_domain(row) for row in result.scalars()]
-        _ACTIVE_WALLET_CACHE[cache_key] = wallets
+        if limit is None:
+            _ACTIVE_WALLET_CACHE[cache_key] = wallets
         return wallets
 
     async def search_by_label(self, query: str) -> list[CuratedWallet]:

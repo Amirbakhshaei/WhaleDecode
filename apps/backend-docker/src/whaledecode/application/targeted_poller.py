@@ -115,6 +115,9 @@ class TargetedPollerService:
                 wallets = await uow.curated_wallets.list_active(chain=code)
                 if not wallets:
                     continue
+                # Limit ETH wallets to reduce RPC load on free endpoints
+                if code == "ETH" and len(wallets) > self._settings.MAX_ETH_WALLETS_PER_POLL:
+                    wallets = wallets[: self._settings.MAX_ETH_WALLETS_PER_POLL]
                 log_poll_start(code, len(wallets))
                 poller = self._poller_for(code)
                 if poller is None:
