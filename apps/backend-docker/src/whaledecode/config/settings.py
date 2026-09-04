@@ -106,11 +106,11 @@ class Settings(BaseSettings):
     # Targeted failover poller (free public RPCs; replaces paid webhooks).
     # Comma-separated endpoint lists — the router rotates on 429/502/timeout.
     TARGETED_POLLER_ENABLED: bool = True
-    TARGETED_RPC_COOLDOWN_SECONDS: float = 300.0
+    TARGETED_RPC_COOLDOWN_SECONDS: float = 60.0
     # Aggregated net USD per transaction required before ingestion (the
     # webhook path's whale floor, now applied at the poller).
     TARGETED_MIN_TX_USD: float = 50_000.0
-    ETH_PUBLIC_RPC_URLS: str = "https://eth.merkle.io,https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://rpc.payload.de"
+    ETH_PUBLIC_RPC_URLS: str = "https://eth.merkle.io,https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://rpc.payload.de,https://cloudflare-eth.com,https://eth.blockpi.network/v1/rpc/public,https://eth.api.onfinality.io/public,https://public-eth.nownodes.io"
     BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.llamarpc.com"
     ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com,https://arbitrum.llamarpc.com"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"

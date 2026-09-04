@@ -7,6 +7,14 @@ chains:
         weight: 2
       - url: "https://ethereum-rpc.publicnode.com"
         weight: 1
+      - url: "https://cloudflare-eth.com"
+        weight: 1
+      - url: "https://eth.blockpi.network/v1/rpc/public"
+        weight: 1
+      - url: "https://eth.api.onfinality.io/public"
+        weight: 1
+      - url: "https://public-eth.nownodes.io"
+        weight: 1
     min_tvl_usd: 100000
 
   arbitrum:

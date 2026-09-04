@@ -13,6 +13,7 @@ import random
 from typing import Any
 
 import structlog
+from aiolimiter import AsyncLimiter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from whaledecode.adapters.chain.evm_poller import EvmTargetedPoller
@@ -59,6 +60,8 @@ class TargetedPollerService:
         self._shared_manager = rpc_manager
         self._routers: dict[str, RpcFailoverRouter] = {}
         self._pollers: dict[str, TargetedChainPoller] = {}
+        # Shared rate limiter for all EVM pollers (10 req/s total)
+        self._rate_limiter = AsyncLimiter(max_rate=10, time_period=1.0)
         # If a shared manager is provided, pre-populate routers from it
         # so we don't create duplicate httpx clients.
         if rpc_manager is not None:
@@ -76,7 +79,7 @@ class TargetedPollerService:
         elif chain_code in _EVM_CHAINS:
             label, urls_key = _EVM_CHAINS[chain_code]
             router = self._router(chain_code.lower(), urls_key)
-            poller = EvmTargetedPoller(chain_code, label, router)
+            poller = EvmTargetedPoller(chain_code, label, router, rate_limiter=self._rate_limiter)
         else:
             log.warning("targeted_poller_unknown_chain", extra={"chain": chain_code})
             poller = None

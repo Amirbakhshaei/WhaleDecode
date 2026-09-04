@@ -12,6 +12,8 @@ from collections import defaultdict
 from typing import Any
 
 import structlog
+from aiolimiter import AsyncLimiter
+
 from whaledecode.adapters.chain.normalizer import (
     TRANSFER_EVENT_SIGNATURE,
     pad_address_to_topic,
@@ -64,15 +66,19 @@ class EvmTargetedPoller(TargetedChainPoller):
         chain_label: str,
         router: RpcFailoverRouter,
         price_oracle: PriceOracle | None = None,
+        rate_limiter: AsyncLimiter | None = None,
     ) -> None:
         self._chain_code = chain_code
         self._chain_label = chain_label
         self._router = router
         self._oracle = price_oracle or PriceOracle()
+        self._rate_limiter = rate_limiter
         self._decimals_cache: dict[str, int] = {}
         self._last_block: int | None = None  # in-memory cursor; dedupe_key guards re-ingest after restart
 
     async def _rpc(self, method: str, params: list[Any]) -> Any:
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
         return await self._router.post({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 
     async def _token_decimals(self, contract: str) -> int:
