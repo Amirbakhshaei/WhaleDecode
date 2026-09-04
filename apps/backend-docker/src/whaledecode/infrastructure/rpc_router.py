@@ -26,11 +26,13 @@ _FAILOVER_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 # (capacity, tier restriction, method gating, internal server failure) rather
 # than "our params are wrong" → treat the node as unavailable for now and
 # rotate. -32603 is the JSON-RPC spec's "server-side internal error".
-_NODE_CAPACITY_CODES = {-32046, -32701, -32005, -32603}
+# -32001: 1rpc.io usage limit exceeded (free tier)
+_NODE_CAPACITY_CODES = {-32046, -32701, -32005, -32603, -32001}
 _CAPACITY_MESSAGE_HINTS = (
     "cannot fulfill",
     "rate limit",
     "too many requests",
+    "usage limit",
     "specify an address",
     "dedicated full node",
     "exceeded",
