@@ -434,6 +434,114 @@ def deep_link(payload: str, bot_username: str = "") -> str:
     return f"https://t.me/{bot}?start={payload}"
 
 
+def format_syndicate_dossier(
+    event_data: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    bot_username: str = "",
+) -> str:
+    """Syndicate Dossier format: viral, structured intelligence brief for channel.
+
+    Template:
+    🕵️ *WHALEDECODE | SYNDICATE ACCUMULATION*
+
+    *Asset:* `${token_symbol}` on *{chain}*
+    *Total Coordinated Volume:* `${total_usd}` ({wallets_count} Wallets)
+    *Action:* Aggressive Market Accumulation
+
+    🧩 *Cluster Graph Forensics:*
+    • *Parent Funding:* `{parent_label}` ({funding_time_ago})
+    • *Execution:* Coordinated across {block_span} blocks
+    • *Syndicate Type:* `{cluster_type}`
+
+    📈 *Market Structure (SMC):*
+    • *Regime:* `{smc_regime}`
+    • *Location:* `{discount_status}` ({ote_status})
+    • *Invalidation Floor:* `${invalidation_price}`
+
+    📊 *Entity Profile:*
+    • *Cluster Win-Rate:* `{cluster_win_rate}%`
+    • *Average Hold Duration:* `{avg_hold_duration}`
+
+    🔗 [DexScreener]({dex_url}) | [BlockExplorer]({explorer_url})
+    """
+    from whaledecode.adapters.pricing.oracle import SMCAnalysisResult
+
+    raw = event_data.get("raw_json") if isinstance(event_data.get("raw_json"), dict) else {}
+    tx_hash = str(event_data.get("tx_hash", ""))
+    asset = str(
+        raw.get("token") or raw.get("asset") or event_data.get("token") or event_data.get("asset") or "UNKNOWN"
+    )
+    chain = str(event_data.get("chain", "")).capitalize()
+    value_usd = _as_float(raw.get("value_usd", 0) or event_data.get("value_usd", 0))
+
+    # Syndicate / cluster fields
+    cluster_wallets = int(_as_float(raw.get("cluster_wallets_count") or event_data.get("cluster_wallets_count") or 1))
+    cluster_type = str(raw.get("cluster_type") or event_data.get("cluster_type") or "FRESH_CEX_ACCUMULATOR")
+    cluster_origin = str(raw.get("cluster_origin") or raw.get("funding_attribution") or event_data.get("cluster_origin") or "Unknown")
+    cluster_win_rate = _as_float(raw.get("win_rate") or event_data.get("win_rate") or 0)
+    avg_hold_duration = str(raw.get("avg_hold_duration") or event_data.get("avg_hold_duration") or "N/A")
+    block_span = str(raw.get("block_span") or "N/A")
+    funding_time_ago = "recent"  # Would compute from timestamps in production
+
+    # SMC analysis from report or event data
+    smc_analysis = report.get("smc_analysis") if isinstance(report.get("smc_analysis"), SMCAnalysisResult) else None
+    if smc_analysis is None:
+        smc_raw = report.get("smc_analysis") if isinstance(report.get("smc_analysis"), dict) else event_data.get("smc_analysis")
+        if isinstance(smc_raw, dict):
+            # Convert dict to SMCAnalysisResult-like object for formatting
+            class _SMCProxy:
+                def __init__(self, d):
+                    self.__dict__.update(d)
+            smc_analysis = _SMCProxy(smc_raw)
+
+    # Format SMC fields
+    if smc_analysis:
+        smc_regime = str(getattr(smc_analysis, "market_regime", "UNKNOWN"))
+        is_discount = bool(getattr(smc_analysis, "is_discount_zone", False))
+        ote_confluence = bool(getattr(smc_analysis, "ote_confluence", False))
+        invalidation_level = _as_float(getattr(smc_analysis, "invalidation_level", 0))
+        discount_status = "Discount Zone" if is_discount else "Premium Zone"
+        ote_status = "OTE Confluence ✅" if ote_confluence else "Outside OTE"
+        invalidation_price = f"${invalidation_level:,.4f}" if invalidation_level > 0 else "N/A"
+    else:
+        smc_regime = "UNKNOWN"
+        discount_status = "Unknown"
+        ote_status = "Unknown"
+        invalidation_price = "N/A"
+
+    # URLs
+    dex_url = f"https://dexscreener.com/{chain.lower()}/{raw.get('address', '')}" if raw.get("address") else "#"
+    explorer_base = {"ethereum": "https://etherscan.io", "base": "https://basescan.org", "arbitrum": "https://arbiscan.io"}.get(chain.lower(), "https://etherscan.io")
+    explorer_url = f"{explorer_base}/tx/{tx_hash}" if tx_hash else "#"
+
+    lines = [
+        "🕵️ <b>WHALEDECODE | SYNDICATE ACCUMULATION</b>",
+        "",
+        f"*Asset:* `${asset}` on *{chain}*",
+        f"*Total Coordinated Volume:* `${value_usd:,.2f}` ({cluster_wallets} Wallets)",
+        "*Action:* Aggressive Market Accumulation",
+        "",
+        "🧩 <b>Cluster Graph Forensics:</b>",
+        f"• <b>Parent Funding:</b> {escape(cluster_origin)} ({funding_time_ago})",
+        f"• <b>Execution:</b> Coordinated across {block_span} blocks",
+        f"• <b>Syndicate Type:</b> {cluster_type}",
+        "",
+        "📈 <b>Market Structure (SMC):</b>",
+        f"• <b>Regime:</b> {smc_regime}",
+        f"• <b>Location:</b> {discount_status} ({ote_status})",
+        f"• <b>Invalidation Floor:</b> {invalidation_price}",
+        "",
+        "📊 <b>Entity Profile:</b>",
+        f"• <b>Cluster Win-Rate:</b> {cluster_win_rate:.1f}%" if cluster_win_rate > 0 else "• <b>Cluster Win-Rate:</b> N/A",
+        f"• <b>Average Hold Duration:</b> {escape(avg_hold_duration)}",
+        "",
+        f"🔗 <a href=\"{dex_url}\">DexScreener</a> | <a href=\"{explorer_url}\">BlockExplorer</a>",
+    ]
+
+    return "\n".join(lines)
+
+
 def format_alert(alert_data: dict[str, Any]) -> str:
     """Alpha-first channel alert: predictive intelligence over description.
 

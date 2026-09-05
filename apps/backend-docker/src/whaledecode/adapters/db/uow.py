@@ -8,6 +8,7 @@ from whaledecode.adapters.db.repositories.candidate_event import CandidateEventR
 from whaledecode.adapters.db.repositories.curated_wallet import CuratedWalletRepository
 from whaledecode.adapters.db.repositories.edge_intelligence import (
     FundingEdgeRepository,
+    SyndicateClusterRepository,
     WalletProfileRepository,
 )
 from whaledecode.adapters.db.repositories.tracked_wallet import TrackedWalletRepository
@@ -32,6 +33,7 @@ class UnitOfWork:
         self.admin_audit_logs = AdminAuditLogRepository(self._session)
         self.wallet_profiles = WalletProfileRepository(self._session)
         self.funding_edges = FundingEdgeRepository(self._session)
+        self.syndicate_clusters = SyndicateClusterRepository(self._session)
         return self
 
     @property

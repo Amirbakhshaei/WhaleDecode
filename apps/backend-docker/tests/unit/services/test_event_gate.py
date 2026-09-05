@@ -62,6 +62,8 @@ def test_whale_threshold_is_hard_floor() -> None:
     # A lowered config value cannot soften the $50k floor.
     gate = EventGate(min_score_threshold=0.65, min_value_usd=1000.0)
     assert not gate.should_investigate(_event(score=0.9, value_usd=49_999.99))
+    # $50k exactly should pass
+    assert gate.should_investigate(_event(score=0.9, value_usd=50_000.0))
 
 
 def test_zero_value_event_dropped() -> None:
@@ -97,6 +99,20 @@ def test_malformed_value_usd_dropped() -> None:
     event = _event(score=0.9)
     event.raw_json["value_usd"] = {"nested": True}
     assert not gate.should_investigate(event)
+
+
+def test_is_above_floor_string_comparison() -> None:
+    """Test that string values are properly cast to float before comparison."""
+    from whaledecode.domain.services.event_gate import is_above_floor
+    # String "101147.87" should be correctly compared as float
+    assert is_above_floor("101147.87", 50_000.0) is True
+    assert is_above_floor("49999.99", 50_000.0) is False
+    # String "100000.0" with floor 50000
+    assert is_above_floor("100000.0", 50000.0) is True
+    # None value should be treated as 0.0
+    assert is_above_floor(None, 50_000.0) is False
+    # Malformed string should be treated as 0.0
+    assert is_above_floor("not_a_number", 50_000.0) is False
 
 
 def test_critical_event_skips_score_but_not_value_gate() -> None:

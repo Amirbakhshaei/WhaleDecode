@@ -13,6 +13,9 @@ CRITICAL_EVENT_TYPES = {"SUSPICIOUS_CONTRACT_CREATION", "FLASH_LOAN_ATTACK", "LA
 # scoring or LLM logic runs. Blocks dust, approvals, and $0.00 spam.
 MIN_WHALE_THRESHOLD_USD = 50_000.0
 
+# Default investigation floor (can be overridden by config)
+DEFAULT_INVESTIGATION_FLOOR_USD = 25_000.0
+
 STABLECOINS = {"USDC", "USDT", "DAI", "FRAX", "TUSD", "USDP", "FDUSD"}
 
 # CandidateEvent.chain / raw_json fields used to resolve the token being moved.
@@ -56,18 +59,44 @@ async def process_and_gate_candidate(candidate: CandidateEvent, price_oracle: An
     return True
 
 
+def is_above_floor(value_usd: Any, floor_usd: float = MIN_WHALE_THRESHOLD_USD) -> bool:
+    """Check if value_usd exceeds floor_usd with explicit float casting.
+
+    Both operands are cast to float before comparison to prevent
+    lexicographical string comparison bugs.
+    """
+    try:
+        value_f = float(value_usd) if value_usd is not None else 0.0
+    except (TypeError, ValueError):
+        value_f = 0.0
+    floor_f = float(floor_usd)
+    passed = value_f >= floor_f
+    logger.debug(
+        "gate_check",
+        extra={"value_usd": value_f, "floor_usd": floor_f, "passed": passed}
+    )
+    return passed
+
+
 class EventGate:
-    def __init__(self, min_score_threshold: float = 0.65, min_value_usd: float = MIN_WHALE_THRESHOLD_USD) -> None:
+    def __init__(
+        self,
+        min_score_threshold: float = 0.65,
+        min_value_usd: float = DEFAULT_INVESTIGATION_FLOOR_USD,
+    ) -> None:
         self.min_score_threshold = min_score_threshold
         self.min_value_usd = min_value_usd
 
     def should_investigate(self, event: CandidateEvent) -> bool:
         """Determines if an event warrants LLM investigation."""
-        # Hard dollar gate: absent, zero, or sub-$50k value never reaches scoring/LLM.
+        # Hard dollar gate: absent, zero, or sub-$25k value never reaches scoring/LLM.
         value_usd = _coerce_float_if_present(event.raw_json.get("value_usd"))
         floor = max(self.min_value_usd, MIN_WHALE_THRESHOLD_USD)
-        if value_usd is None or value_usd < floor:
-            logger.debug(f"Event {event.tx_hash} dropped: value ${value_usd} < ${floor}")
+        if value_usd is None or not is_above_floor(value_usd, floor):
+            logger.debug(
+                "gate_check",
+                extra={"value_usd": value_usd, "floor_usd": floor, "passed": False}
+            )
             return False
 
         # Critical event types skip the score gate, never the value gate.

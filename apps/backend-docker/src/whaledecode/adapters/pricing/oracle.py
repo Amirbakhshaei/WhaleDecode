@@ -1,14 +1,18 @@
-"""USD pricing for on-chain tokens via DeFiLlama + CoinGecko.
+"""USD pricing for on-chain tokens via DeFiLlama + CoinGecko + DexScreener.
 
 Deterministic gate needs a *real* USD value for each candidate event. This
 adapter resolves token → USD using DeFiLlama's public coins API, with TTL
 caches so a burst of transfers of the same token results in one HTTP call.
 Also captures the token symbol (for LLM context) and derives key price
 levels (24h/7d/30d high-low + recent daily closes) from CoinGecko OHLC.
+
+SMC (Smart Money Concepts) market structure data is fetched from DexScreener
+for real-time OHLCV, liquidity, and volume metrics.
 """
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,6 +25,7 @@ DEFILLAMA_PRICE_URL = "https://coins.llama.fi/prices/current/{chain_id}:{contrac
 DEFILLAMA_HISTORICAL_URL = "https://coins.llama.fi/prices/historical/{unix_ts}/{chain_id}:{contract_address}"
 COINGECKO_OHLC_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
 COINGECKO_LIST_URL = "https://api.coingecko.com/api/v3/coins/list"
+DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/{token_address}"
 
 # ponytail: module-level TTL caches shared by all oracle instances; 5-min price
 # staleness is fine for a $50k whale floor. Per-key locks dedupe concurrent
@@ -36,6 +41,10 @@ _LOOKBACK_SECONDS = 3600
 # Candle-derived levels are stable for an hour and per-contract.
 _LEVEL_TTL_SECONDS = 3600
 _LEVEL_MAXSIZE = 256
+
+# DexScreener cache (30s TTL for real-time market structure)
+_DEXSCREENER_TTL_SECONDS = 30
+_DEXSCREENER_MAXSIZE = 512
 
 STABLECOINS = {"USDC", "USDT", "DAI", "FRAX", "TUSD", "USDP", "FDUSD", "USDE", "USDS"}
 
@@ -81,6 +90,23 @@ CHAIN_TO_COINGECKO = {
 }
 
 
+@dataclass(frozen=True)
+class SMCAnalysisResult:
+    """Smart Money Concepts market structure analysis result."""
+    market_regime: str  # "DISCOUNT_ACCUMULATION", "PREMIUM_EXPANSION", "NEUTRAL"
+    is_discount_zone: bool
+    ote_confluence: bool
+    liquidity_sweep: bool
+    invalidation_level: float
+    equilibrium_price: float
+    discount_zone_low: float
+    discount_zone_high: float
+    premium_zone_low: float
+    premium_zone_high: float
+    fvg_detected: bool = False
+    fvg_details: list[dict] | None = None
+
+
 class PriceOracle:
     def __init__(
         self,
@@ -95,6 +121,8 @@ class PriceOracle:
         # historical per-day-bucket cache: (chain:contract:day) -> price
         self._hist_cache: TTLCache[str, float] = TTLCache(maxsize=maxsize, ttl=ttl_seconds)
         self._level_cache: TTLCache[str, dict] = TTLCache(maxsize=_LEVEL_MAXSIZE, ttl=_LEVEL_TTL_SECONDS)
+        self._dexscreener_cache: TTLCache[str, dict] = TTLCache(maxsize=_DEXSCREENER_MAXSIZE, ttl=_DEXSCREENER_TTL_SECONDS)
+        self._smc_cache: TTLCache[str, SMCAnalysisResult] = TTLCache(maxsize=_DEXSCREENER_MAXSIZE, ttl=_DEXSCREENER_TTL_SECONDS)
         self._locks: dict[str, asyncio.Lock] = {}
         # (platform:contract) -> coingecko coin id, built once per session (ponytail:
         # ~5MB list; empty dict caches a failed fetch for the session too).
@@ -190,6 +218,31 @@ class PriceOracle:
                 self._level_cache[key] = levels
             return levels
 
+    async def get_smc_analysis(self, token_address: str, chain: str) -> SMCAnalysisResult | None:
+        """Get Smart Money Concepts market structure analysis for a token.
+
+        Uses DexScreener for real-time OHLCV, liquidity, and volume data.
+        Returns None if data unavailable.
+        """
+        token_address = (token_address or "").strip().lower()
+        if not token_address:
+            return None
+
+        key = f"{chain.lower()}:{token_address}"
+        cached = self._smc_cache.get(key)
+        if cached is not None:
+            return cached
+
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            cached = self._smc_cache.get(key)
+            if cached is not None:
+                return cached
+            result = await self._fetch_smc_analysis(token_address, chain)
+            if result:
+                self._smc_cache[key] = result
+            return result
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
@@ -252,6 +305,154 @@ class PriceOracle:
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
             logger.warning(f"OHLC lookup failed for {contract_address} on {chain}: {exc}")
             return {}
+
+    async def _fetch_smc_analysis(self, token_address: str, chain: str) -> SMCAnalysisResult | None:
+        """Fetch market structure data from DexScreener and compute SMC metrics."""
+        try:
+            response = await self._client.get(
+                DEXSCREENER_TOKEN_URL.format(token_address=token_address)
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            pairs = data.get("pairs", [])
+            if not pairs:
+                return None
+
+            # Find the best pair by liquidity (most reliable)
+            best_pair = max(pairs, key=lambda p: float(p.get("liquidity", {}).get("usd", 0) or 0))
+            if not best_pair:
+                return None
+
+            # Extract market data
+            price_usd = float(best_pair.get("priceUsd", 0) or 0)
+            if price_usd <= 0:
+                return None
+
+            # 24h price change and high/low
+            price_change_24h = float(best_pair.get("priceChange", {}).get("h24", 0) or 0)
+            high_24h = float(best_pair.get("high24h", 0) or 0)
+            low_24h = float(best_pair.get("low24h", 0) or 0)
+
+            # Volume
+            volume_5m = float(best_pair.get("volume", {}).get("m5", 0) or 0)
+            volume_1h = float(best_pair.get("volume", {}).get("h1", 0) or 0)
+            volume_24h = float(best_pair.get("volume", {}).get("h24", 0) or 0)
+
+            # Liquidity
+            liquidity_usd = float(best_pair.get("liquidity", {}).get("usd", 0) or 0)
+
+            if high_24h <= 0 or low_24h <= 0:
+                # Fallback: estimate from price change
+                if price_change_24h > 0:
+                    high_24h = price_usd * (1 + abs(price_change_24h) / 100)
+                    low_24h = price_usd
+                else:
+                    high_24h = price_usd
+                    low_24h = price_usd * (1 - abs(price_change_24h) / 100)
+
+            return self._compute_smc_metrics(
+                current_price=price_usd,
+                high_24h=high_24h,
+                low_24h=low_24h,
+                volume_5m=volume_5m,
+                volume_1h=volume_1h,
+                volume_24h=volume_24h,
+                liquidity_usd=liquidity_usd,
+            )
+
+        except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+            logger.warning(f"SMC analysis failed for {token_address} on {chain}: {exc}")
+            return None
+
+    def _compute_smc_metrics(
+        self,
+        current_price: float,
+        high_24h: float,
+        low_24h: float,
+        volume_5m: float,
+        volume_1h: float,
+        volume_24h: float,
+        liquidity_usd: float,
+    ) -> SMCAnalysisResult:
+        """Compute SMC market structure metrics from DexScreener data."""
+
+        # 1. Equilibrium (midpoint of 24h range)
+        equilibrium = (high_24h + low_24h) / 2
+
+        # 2. Discount / Premium zones
+        # Discount zone: price < equilibrium
+        # Premium zone: price > equilibrium
+        is_discount_zone = current_price < equilibrium
+
+        # 3. OTE (Optimal Trade Entry) - 0.618 to 0.786 retracement from equilibrium
+        # For discount zone: OTE is between equilibrium and low (retracement levels)
+        # For premium zone: OTE is between equilibrium and high
+        range_24h = high_24h - low_24h
+        if range_24h > 0:
+            if is_discount_zone:
+                # In discount, OTE is 0.618-0.786 retracement UP from low toward equilibrium
+                ote_low = low_24h + range_24h * 0.618
+                ote_high = low_24h + range_24h * 0.786
+                ote_confluence = ote_low <= current_price <= ote_high
+            else:
+                # In premium, OTE is 0.618-0.786 retracement DOWN from high toward equilibrium
+                ote_low = high_24h - range_24h * 0.786
+                ote_high = high_24h - range_24h * 0.618
+                ote_confluence = ote_low <= current_price <= ote_high
+        else:
+            ote_confluence = False
+
+        # 4. Liquidity sweep detection
+        # Simplified: flag if price is very close to 24h low (potential sweep of buy-side liquidity)
+        # or very close to 24h high (sell-side liquidity)
+        sweep_threshold_pct = 0.02  # within 2% of extreme
+        liquidity_sweep = False
+        if range_24h > 0:
+            distance_to_low = (current_price - low_24h) / range_24h
+            distance_to_high = (high_24h - current_price) / range_24h
+            liquidity_sweep = distance_to_low <= sweep_threshold_pct or distance_to_high <= sweep_threshold_pct
+
+        # 5. Invalidation level
+        # For discount accumulation: invalidation is break below 24h low
+        # For premium expansion: invalidation is break above 24h high
+        invalidation_level = low_24h if is_discount_zone else high_24h
+
+        # 6. Market regime
+        if is_discount_zone and ote_confluence:
+            market_regime = "DISCOUNT_ACCUMULATION"
+        elif not is_discount_zone and ote_confluence:
+            market_regime = "PREMIUM_EXPANSION"
+        elif is_discount_zone:
+            market_regime = "DISCOUNT_ACCUMULATION"
+        else:
+            market_regime = "PREMIUM_EXPANSION"
+
+        # 7. Discount/Premium zone boundaries
+        discount_zone_low = low_24h
+        discount_zone_high = equilibrium
+        premium_zone_low = equilibrium
+        premium_zone_high = high_24h
+
+        # 8. FVG detection (simplified - would need candle data)
+        # For now, we'll skip detailed FVG detection without full candle data
+        fvg_detected = False
+        fvg_details = None
+
+        return SMCAnalysisResult(
+            market_regime=market_regime,
+            is_discount_zone=is_discount_zone,
+            ote_confluence=ote_confluence,
+            liquidity_sweep=liquidity_sweep,
+            invalidation_level=invalidation_level,
+            equilibrium_price=equilibrium,
+            discount_zone_low=discount_zone_low,
+            discount_zone_high=discount_zone_high,
+            premium_zone_low=premium_zone_low,
+            premium_zone_high=premium_zone_high,
+            fvg_detected=fvg_detected,
+            fvg_details=fvg_details,
+        )
 
     async def _resolve_coin_id(self, contract_address: str, chain: str) -> str:
         platform = CHAIN_TO_COINGECKO.get(chain.lower())
