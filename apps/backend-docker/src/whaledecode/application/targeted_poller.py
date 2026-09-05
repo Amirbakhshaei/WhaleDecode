@@ -191,7 +191,8 @@ class TargetedPollerService:
         score = self._sentinel.score(activity)
         activity["score"] = score
         value_usd = float(activity.get("value_usd") or 0.0)
-        if value_usd < MIN_WHALE_THRESHOLD_USD:
+        floor_usd = float(MIN_WHALE_THRESHOLD_USD)
+        if value_usd < floor_usd:
             return False
         if score < self._settings.MIN_INVESTIGATION_SCORE * 100:
             return False

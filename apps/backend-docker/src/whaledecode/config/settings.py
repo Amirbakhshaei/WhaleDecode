@@ -110,8 +110,8 @@ class Settings(BaseSettings):
     # Aggregated net USD per transaction required before ingestion (the
     # webhook path's whale floor, now applied at the poller).
     TARGETED_MIN_TX_USD: float = 50_000.0
-    MAX_ETH_WALLETS_PER_POLL: int = 300
-    ETH_PUBLIC_RPC_URLS: str = "https://eth.merkle.io,https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://rpc.payload.de,https://cloudflare-eth.com,https://eth.blockpi.network/v1/rpc/public,https://eth.api.onfinality.io/public,https://public-eth.nownodes.io"
+    MAX_ETH_WALLETS_PER_POLL: int = 50
+    ETH_PUBLIC_RPC_URLS: str = "https://eth.drpc.org,https://rpc.mevblocker.io,https://1rpc.io/eth,https://ethereum-rpc.publicnode.com,https://eth.llamarpc.com,https://eth.blockpi.network/v1/rpc/public,https://eth.api.onfinality.io/public,https://public-eth.nownodes.io"
     BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.llamarpc.com"
     ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com,https://arbitrum.llamarpc.com"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
