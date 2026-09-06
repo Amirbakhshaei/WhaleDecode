@@ -67,14 +67,26 @@ class EvmTargetedPoller(TargetedChainPoller):
         router: RpcFailoverRouter,
         price_oracle: PriceOracle | None = None,
         rate_limiter: AsyncLimiter | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._chain_code = chain_code
         self._chain_label = chain_label
         self._router = router
         self._oracle = price_oracle or PriceOracle()
         self._rate_limiter = rate_limiter
+        self._settings = settings
         self._decimals_cache: dict[str, int] = {}
         self._last_block: int | None = None  # in-memory cursor; dedupe_key guards re-ingest after restart
+
+    def _max_block_range(self) -> int:
+        """Get the max block range for this chain from settings, with safe defaults."""
+        if self._settings is not None:
+            ranges = getattr(self._settings, "MAX_GET_LOGS_BLOCK_RANGE", {})
+            # Chain label mapping: "Ethereum" -> "Ethereum", "Arbitrum" -> "Arbitrum", "Base" -> "Base"
+            label_map = {"ETH": "Ethereum", "ARB": "Arbitrum", "BASE": "Base"}
+            chain_key = label_map.get(self._chain_code, self._chain_label)
+            return ranges.get(chain_key, 100)
+        return 100
 
     async def _rpc(self, method: str, params: list[Any]) -> Any:
         if self._rate_limiter is not None:
@@ -114,7 +126,7 @@ class EvmTargetedPoller(TargetedChainPoller):
         head = to_int(head_hex)
 
         # Range-based query: start from last_polled_block + 1 (or bootstrap
-        # window on first call). Cap at _MAX_BLOCK_RANGE to stay within
+        # window on first call). Cap at chain-specific max range to stay within
         # public-node payload size limits.
         if self._last_block is not None:
             from_block = self._last_block + 1
@@ -122,8 +134,9 @@ class EvmTargetedPoller(TargetedChainPoller):
             from_block = head - _BOOTSTRAP_BLOCK_RANGE
         to_block = head - 1  # skip the not-yet-final tip
         # Enforce max range cap — trim from_block if the gap is too wide.
-        if to_block - from_block >= _MAX_BLOCK_RANGE:
-            from_block = to_block - _MAX_BLOCK_RANGE + 1
+        max_range = self._max_block_range()
+        if to_block - from_block >= max_range:
+            from_block = to_block - max_range + 1
 
         padded_to_wallet = {
             pad_address_to_topic(w.address): w.id for w in targets if w.id is not None

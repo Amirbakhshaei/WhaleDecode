@@ -51,8 +51,11 @@ async def process_and_gate_candidate(candidate: CandidateEvent, price_oracle: An
         value_usd = 0.0
 
     candidate.raw_json["value_usd"] = value_usd
-    if value_usd < MIN_WHALE_THRESHOLD_USD:
-        logger.debug(f"Event {candidate.tx_hash} dropped: value ${value_usd:,.2f} < ${MIN_WHALE_THRESHOLD_USD:,.0f}")
+    # Explicit float cast to prevent lexicographical string comparison bugs
+    val = float(value_usd) if value_usd is not None else 0.0
+    floor = float(MIN_WHALE_THRESHOLD_USD)
+    if val < floor:
+        logger.debug(f"Event {candidate.tx_hash} dropped: value ${val:,.2f} < ${floor:,.0f}")
         candidate.status = "skipped"
         candidate.score = 0.0
         return False

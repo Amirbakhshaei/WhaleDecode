@@ -79,7 +79,7 @@ class TargetedPollerService:
         elif chain_code in _EVM_CHAINS:
             label, urls_key = _EVM_CHAINS[chain_code]
             router = self._router(chain_code.lower(), urls_key)
-            poller = EvmTargetedPoller(chain_code, label, router, rate_limiter=self._rate_limiter)
+            poller = EvmTargetedPoller(chain_code, label, router, rate_limiter=self._rate_limiter, settings=self._settings)
         else:
             log.warning("targeted_poller_unknown_chain", extra={"chain": chain_code})
             poller = None
