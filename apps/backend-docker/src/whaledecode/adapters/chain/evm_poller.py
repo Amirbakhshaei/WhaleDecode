@@ -22,6 +22,7 @@ from whaledecode.adapters.chain.normalizer import (
 )
 from whaledecode.adapters.chain.poller import TargetedChainPoller
 from whaledecode.adapters.pricing.oracle import PriceOracle
+from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, to_int
 
