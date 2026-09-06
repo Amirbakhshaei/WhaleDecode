@@ -32,7 +32,10 @@ class CuratedWalletRepository:
         if limit is None and cache_key in _ACTIVE_WALLET_CACHE:
             return _ACTIVE_WALLET_CACHE[cache_key]
 
-        stmt = select(CuratedWalletModel).where(CuratedWalletModel.is_active.is_(True))
+        stmt = select(CuratedWalletModel).where(
+            CuratedWalletModel.is_active.is_(True),
+            CuratedWalletModel.is_exchange.is_(False),
+        )
         if chain is not None:
             stmt = stmt.where(CuratedWalletModel.chain == chain)
         # Prioritize high-quality wallets (whales, institutions) over noise (CEX, MEV bots)
@@ -85,6 +88,7 @@ class CuratedWalletRepository:
             tags=",".join(wallet.tags),
             quality_score=wallet.quality_score,
             is_active=wallet.is_active,
+            is_exchange=wallet.is_exchange,
             is_monitored_active=wallet.is_monitored_active,
             tx_count_30d=wallet.tx_count_30d,
             velocity_penalty=wallet.velocity_penalty,
@@ -112,6 +116,7 @@ class CuratedWalletRepository:
         model.tags = ",".join(wallet.tags)
         model.quality_score = wallet.quality_score
         model.category = wallet.category
+        model.is_exchange = wallet.is_exchange
         model.is_monitored_active = wallet.is_monitored_active
         _ACTIVE_WALLET_CACHE.clear()
 
@@ -155,6 +160,7 @@ class CuratedWalletRepository:
             quality_score=model.quality_score,
             category=model.category,
             is_active=model.is_active,
+            is_exchange=model.is_exchange,
             is_monitored_active=model.is_monitored_active,
             tx_count_30d=model.tx_count_30d,
             last_activity_at=str(model.last_activity_at) if model.last_activity_at else None,

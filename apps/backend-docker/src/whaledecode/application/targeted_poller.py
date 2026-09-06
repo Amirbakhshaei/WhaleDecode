@@ -194,7 +194,9 @@ class TargetedPollerService:
         floor_usd = float(MIN_WHALE_THRESHOLD_USD)
         if value_usd < floor_usd:
             return False
-        if score < self._settings.MIN_INVESTIGATION_SCORE * 100:
+        # Sentinel score is 0-100; MIN_INVESTIGATION_SCORE (0.65) is compared directly
+        # (EventGate does the same: event.score < min_score_threshold).
+        if score < self._settings.MIN_INVESTIGATION_SCORE:
             return False
         return True
 

@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 
 
 def _to_row(seed) -> dict:
+    # Mark CEX wallets as is_exchange so they're used for funding-edge tracing
+    # but excluded from active polling (firehose noise).
+    is_exchange = seed.category == "Exchange" or "cex" in seed.tags
     return {
         "address": seed.address,
         "chain": seed.chain,
@@ -41,6 +44,7 @@ def _to_row(seed) -> dict:
         "tags": ",".join(seed.tags),
         "quality_score": seed.quality_score,
         "is_active": True,
+        "is_exchange": is_exchange,
     }
 
 
@@ -111,6 +115,7 @@ async def run_sync_pipeline() -> None:
                 "tags": stmt.excluded.tags,
                 "quality_score": stmt.excluded.quality_score,
                 "is_active": stmt.excluded.is_active,
+                "is_exchange": stmt.excluded.is_exchange,
                 "updated_at": func.now(),
             },
         )

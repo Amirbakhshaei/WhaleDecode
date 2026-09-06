@@ -9,6 +9,8 @@ class CuratedWalletModel(Base):
     Supports both EVM (0x…, 42-char hex) and Solana (Base58, 32-44 char) addresses.
     ``network_family`` tags the address family so downstream code (Alchemy EVM
     webhooks vs a future Helius/SVM webhook) can route by family.
+    ``is_exchange`` marks CEX deposit/hot wallets — used for funding-edge tracing
+    but excluded from active transaction polling to avoid firehose noise.
     """
 
     __tablename__ = "curated_wallets"
@@ -23,6 +25,7 @@ class CuratedWalletModel(Base):
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated
     quality_score: Mapped[float] = mapped_column(Float, default=80.0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_exchange: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     # Active-rotation lifecycle fields (migration 0010).
     is_monitored_active: Mapped[bool] = mapped_column(Boolean, default=False)
     tx_count_30d: Mapped[int] = mapped_column(Integer, default=0)

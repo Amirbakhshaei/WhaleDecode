@@ -8,7 +8,11 @@ CURATED_WALLET_BONUS = 10
 
 
 def score_base_value(usd_value: float) -> float:
-    """Base score from raw transfer value, on a granular tiered matrix."""
+    """Base score from raw transfer value, on a granular tiered matrix.
+
+    Aligned with MIN_WHALE_THRESHOLD_USD (50k) so transfers above the
+    ingestion floor receive a non-zero score and can pass the investigation gate.
+    """
     if usd_value >= SUPER_WHALE_TRANSFER_THRESHOLD_USD:
         return 60.0
     if usd_value >= 10_000_000:
@@ -17,6 +21,8 @@ def score_base_value(usd_value: float) -> float:
         return 45.0  # Passes if curated or accumulated
     if usd_value >= WHALE_TRANSFER_THRESHOLD_USD:
         return 35.0
+    if usd_value >= 50_000:  # MIN_WHALE_THRESHOLD_USD
+        return 25.0  # Above ingestion floor — eligible for investigation
     return 0.0
 
 

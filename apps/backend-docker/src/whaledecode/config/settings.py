@@ -112,10 +112,10 @@ class Settings(BaseSettings):
     TARGETED_MIN_TX_USD: float = 50_000.0
     MAX_ETH_WALLETS_PER_POLL: int = 50
     # Clean public RPC endpoints — bad nodes (cloudflare-eth.com, payload.de,
-    # ankr without API key) permanently removed. All support address-filtered eth_getLogs.
-    ETH_PUBLIC_RPC_URLS: str = "https://eth.drpc.org,https://rpc.mevblocker.io,https://1rpc.io/eth,https://ethereum-rpc.publicnode.com"
-    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base.drpc.org,https://1rpc.io/base"
-    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum.drpc.org,https://1rpc.io/arb"
+    # ankr without API key, 1rpc.io) permanently removed. All support address-filtered eth_getLogs.
+    ETH_PUBLIC_RPC_URLS: str = "https://rpc.mevblocker.io,https://eth.merkle.io,https://rpc.flashbots.net,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
+    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.drpc.org"
+    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one.publicnode.com,https://arbitrum.drpc.org"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 
     # Alert Pipeline
