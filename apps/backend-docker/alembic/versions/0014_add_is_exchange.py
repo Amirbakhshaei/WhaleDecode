@@ -7,8 +7,8 @@ Create Date: 2026-09-07
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0014_add_is_exchange"
-down_revision = "0013_candidate_error_message"
+revision = "0014"
+down_revision = "0013"
 branch_labels = None
 depends_on = None
 
