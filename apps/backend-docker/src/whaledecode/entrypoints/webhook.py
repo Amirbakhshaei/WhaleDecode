@@ -10,7 +10,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Callable
 
 from aiogram.types import Update
 from fastapi import FastAPI, Request
@@ -96,6 +96,67 @@ async def _try_claim_worker_lock(
         logger.info("worker_lock_held_by_another holder=%s locked_at=%s", row[0], row[1])
         await session.commit()
         return False
+
+
+async def _refresh_worker_lock(
+    factory: async_sessionmaker[AsyncSession],
+) -> bool:
+    """Refresh the worker lock timestamp (extend TTL).
+
+    Returns True if this instance still owns the lock.
+    """
+    await _ensure_worker_election_table(factory)
+    async with factory() as session:
+        result = await session.execute(
+            text(
+                "UPDATE worker_election SET locked_at = now() "
+                "WHERE id = 1 AND instance_id = :iid"
+            ),
+            {"iid": _INSTANCE_ID},
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+
+async def _worker_lock_maintenance(
+    factory: async_sessionmaker[AsyncSession],
+    stop_event: asyncio.Event,
+    is_worker: bool,
+    on_become_worker: Callable[[], Any] | None = None,
+) -> None:
+    """Background task: worker refreshes lock; non-worker retries election."""
+    if is_worker:
+        # Worker: refresh lock every 30s
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(30)
+                if stop_event.is_set():
+                    break
+                still_owner = await _refresh_worker_lock(factory)
+                if not still_owner:
+                    logger.warning("worker_lock_lost_during_refresh")
+                    break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.error("worker_lock_refresh_error", extra={"error": str(e)}, exc_info=True)
+    else:
+        # Non-worker: retry election every 60s
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(60)
+                if stop_event.is_set():
+                    break
+                became_worker = await _try_claim_worker_lock(factory)
+                if became_worker:
+                    logger.info("non_worker_became_worker_via_retry")
+                    if on_become_worker is not None:
+                        await on_become_worker()
+                    break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.error("worker_lock_retry_error", extra={"error": str(e)}, exc_info=True)
 
 
 async def _release_worker_lock(
@@ -251,6 +312,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("non_worker_instance")
 
+    # Callback for non-worker -> worker transition
+    async def _on_become_worker() -> None:
+        logger.info("starting_worker_tasks_after_lock_acquisition")
+        app.state.is_worker = True
+        app.state.startup_task = asyncio.create_task(_start_worker())
+
+    # Start lock maintenance (worker refreshes, non-worker retries)
+    app.state.lock_maintenance_task = asyncio.create_task(
+        _worker_lock_maintenance(factory, stop_event, is_worker, on_become_worker=_on_become_worker)
+    )
+
     yield
 
     # Teardown
@@ -261,6 +333,16 @@ async def lifespan(app: FastAPI):
             await startup_task
         except asyncio.CancelledError:
             pass
+
+    # Cancel lock maintenance task
+    lock_maintenance_task = getattr(app.state, "lock_maintenance_task", None)
+    if lock_maintenance_task is not None and not lock_maintenance_task.done():
+        lock_maintenance_task.cancel()
+        try:
+            await lock_maintenance_task
+        except asyncio.CancelledError:
+            pass
+
     await asyncio.sleep(0)
 
     stop_event = getattr(app.state, "stop_event", None)
@@ -291,7 +373,9 @@ async def lifespan(app: FastAPI):
         await bot.session.close()
 
     # Release the worker lock on clean shutdown.
-    if is_worker and session_factory is not None:
+    # Check current worker status (may have changed during runtime)
+    current_is_worker = getattr(app.state, "is_worker", is_worker)
+    if current_is_worker and session_factory is not None:
         await _release_worker_lock(session_factory)
 
 
