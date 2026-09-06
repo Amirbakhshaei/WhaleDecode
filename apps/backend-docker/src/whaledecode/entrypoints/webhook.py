@@ -235,6 +235,10 @@ async def lifespan(app: FastAPI):
     app.state.is_worker = is_worker
     logger.info("lifespan_start is_worker=%s", is_worker)
 
+    # Create stop_event early so it's available for lock maintenance
+    stop_event = asyncio.Event()
+    app.state.stop_event = stop_event
+
     async def _start_worker() -> None:
         """Full worker startup: bot, Telegram webhook, scheduler, poller."""
         if getattr(app.state, "bot", None) is not None:
@@ -262,8 +266,6 @@ async def lifespan(app: FastAPI):
                     app.state.startup_failed = f"channel_probe_failed: {e}"
                     logger.critical("channel_probe_unreachable_crash", extra={"channel_id": channel_id})
                     os._exit(1)
-            stop_event = asyncio.Event()
-            app.state.stop_event = stop_event
             await dp.emit_startup()
 
             # Stateless Telegram webhook — only the worker registers it.
