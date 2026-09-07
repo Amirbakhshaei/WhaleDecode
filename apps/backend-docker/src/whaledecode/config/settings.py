@@ -98,10 +98,10 @@ class Settings(BaseSettings):
     ETH_RPC_URL: str | None = None
     ARB_RPC_URL: str | None = None
     BASE_RPC_URL: str | None = None
-    POLL_INTERVAL_SECONDS: int = 30
+    POLL_INTERVAL_SECONDS: int = 25
     POLL_BATCH_SIZE: int = 50
     REORG_SAFE_BLOCKS: int = 64
-    MAX_GET_LOGS_BLOCK_RANGE: dict[str, int] = {"Ethereum": 5, "Base": 30, "Arbitrum": 10}
+    MAX_GET_LOGS_BLOCK_RANGE: dict[str, int] = {"Ethereum": 15, "Base": 30, "Arbitrum": 10}
 
     # Targeted failover poller (free public RPCs; replaces paid webhooks).
     # Comma-separated endpoint lists — the router rotates on 429/502/timeout.
