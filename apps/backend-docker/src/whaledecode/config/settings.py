@@ -117,17 +117,16 @@ class Settings(BaseSettings):
     # Tiered Ethereum RPC list: free foundation/anonymous nodes lead (primary
     # traffic), metered keys (Alchemy/Infura/Chainstack via ETH_RPC_URLS)
     # are appended at the router level when set — used only when all free
-    # nodes are in cooldown. cloudflare-eth.com and 1rpc.io/eth are the
+    # nodes are in cooldown. mevblocker.io and eth.merkle.io are the
     # highest-priority free primaries per the inverted-topic polling spec.
     ETH_PUBLIC_RPC_URLS: str = (
-        "https://rpc.mevblocker.io,https://eth.drpc.org,https://ethereum-rpc.publicnode.com,"
-        "https://1rpc.io/eth,https://cloudflare-eth.com"
+        "https://rpc.mevblocker.io,https://eth.merkle.io"
     )
     BASE_PUBLIC_RPC_URLS: str = (
-        "https://mainnet.base.org,https://base.llamarpc.com,https://1rpc.io/base"
+        "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.mevblocker.io"
     )
     ARB_PUBLIC_RPC_URLS: str = (
-        "https://arb1.arbitrum.io/rpc,https://arbitrum.llamarpc.com,https://1rpc.io/arb"
+        "https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com,https://arbitrum.mevblocker.io"
     )
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 

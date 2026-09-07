@@ -30,8 +30,8 @@ log = structlog.get_logger()
 
 # ponytail: per-call eth_getLogs block span stays strictly under the 10-block
 # limit (dRPC returns -32600 above 10 blocks; some L2 public nodes do the
-# same). 9 leaves one block of headroom in case the node rounds up.
-MAX_LOGS_RANGE_PER_CALL = 9
+# same). 8 leaves two blocks of headroom.
+MAX_LOGS_RANGE_PER_CALL = 8
 
 # On first boot (no cursor) we fall back to a small bootstrap window.
 _BOOTSTRAP_BLOCK_RANGE = 10
