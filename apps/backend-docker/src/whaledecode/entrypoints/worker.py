@@ -8,6 +8,7 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.fetcher import LiveBlockchainFetcher
 from whaledecode.application.services.investigation import build_investigation_service
@@ -206,6 +207,7 @@ async def _refresh_profiles(session_factory, settings) -> None:
 
 async def _reset_daily_counters(session_factory) -> None:
     from sqlalchemy import update
+
     from whaledecode.adapters.db.models.user import UserModel
 
     async with session_factory() as session:
@@ -222,6 +224,9 @@ async def _reset_daily_counters(session_factory) -> None:
 if __name__ == "__main__":
     import sys
 
+    from alembic.config import Config
+
+    from alembic import command
     from whaledecode.config.logging import setup_logging
     from whaledecode.config.settings import Settings
 
@@ -229,4 +234,13 @@ if __name__ == "__main__":
     _settings = Settings()
     _settings.inject_langsmith_env()
     setup_logging(_settings)
+    # ponytail: re-runnable deploys depend on migrations being applied; the
+    # Dockerfile CMD serves the API and `db-init` runs as the release phase,
+    # but `python -m whaledecode.entrypoints.worker` bypasses both. One-shot
+    # upgrade here keeps every launch path safe (no missing wallet_profiles).
+    _cfg = Config("alembic.ini")
+    from whaledecode.main import _alembic_url
+
+    _cfg.set_main_option("sqlalchemy.url", _alembic_url(_settings))
+    command.upgrade(_cfg, "head")
     asyncio.run(run_worker(_settings))

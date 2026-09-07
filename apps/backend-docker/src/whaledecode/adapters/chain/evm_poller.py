@@ -18,7 +18,7 @@ from whaledecode.adapters.chain.normalizer import (
     TRANSFER_EVENT_SIGNATURE,
     pad_address_to_topic,
     parse_token_amount,
-    wallet_id_from_transfer_topics,
+    unpad_address_from_topic,
 )
 from whaledecode.adapters.chain.poller import TargetedChainPoller
 from whaledecode.adapters.pricing.oracle import PriceOracle
@@ -58,6 +58,23 @@ def _transfer_topic_queries(padded: list[str]) -> list[list[Any]]:
         [TRANSFER_EVENT_SIGNATURE, None, chunk]
         for chunk in chunks
     ]
+
+
+def _wallet_from_topics(
+    topics: list[str], padded_to_wallet: dict[str, "CuratedWallet"]
+) -> "CuratedWallet | None":
+    """Map a Transfer log's topics to the tracked CuratedWallet (from or to side).
+
+    ponytail: same lookup logic as ``wallet_id_from_transfer_topics`` but returns
+    the full wallet object so we can stamp ``wallet_address`` on the activity
+    without an extra DB round-trip.
+    """
+    for idx in (1, 2):
+        if idx < len(topics) and topics[idx]:
+            wallet_obj = padded_to_wallet.get(topics[idx].lower())
+            if wallet_obj is not None:
+                return wallet_obj
+    return None
 
 
 class EvmTargetedPoller(TargetedChainPoller):
@@ -140,26 +157,37 @@ class EvmTargetedPoller(TargetedChainPoller):
             from_block = to_block - max_range + 1
 
         padded_to_wallet = {
-            pad_address_to_topic(w.address): w.id for w in targets if w.id is not None
+            pad_address_to_topic(w.address): w for w in targets if w.id is not None
         }
         padded = list(padded_to_wallet.keys())
 
         # Aggregate raw logs by transaction before any pricing/gating.
-        by_tx: dict[str, dict[str, Any]] = defaultdict(lambda: {"logs": [], "wallet_id": None})
+        by_tx: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"logs": [], "wallet_id": None, "wallet_address": "", "from": "", "to": ""}
+        )
         for topics in _transfer_topic_queries(padded):
             logs = await self._rpc(
                 "eth_getLogs",
                 [{"fromBlock": hex(from_block), "toBlock": hex(to_block), "topics": topics}],
             )
             for raw in logs or []:
-                wallet_id = wallet_id_from_transfer_topics(raw.get("topics", []), padded_to_wallet)
-                if wallet_id is None:
+                log_topics = raw.get("topics", [])
+                wallet_obj = _wallet_from_topics(log_topics, padded_to_wallet)
+                if wallet_obj is None or wallet_obj.id is None:
                     continue
                 tx_hash = str(raw.get("transactionHash", ""))
                 entry = by_tx[tx_hash]
                 entry["logs"].append(raw)
                 if entry["wallet_id"] is None:
-                    entry["wallet_id"] = wallet_id
+                    entry["wallet_id"] = wallet_obj.id
+                    entry["wallet_address"] = wallet_obj.address
+                # Stamp the counterparty so downstream enrichment (_counterparty
+                # in investigation.py, profiler enrich, telemetry) never falls
+                # through to a "" SQL bind parameter.
+                if len(log_topics) > 1 and not entry["from"]:
+                    entry["from"] = unpad_address_from_topic(log_topics[1])
+                if len(log_topics) > 2 and not entry["to"]:
+                    entry["to"] = unpad_address_from_topic(log_topics[2])
 
         activities: list[dict[str, Any]] = []
         for tx_hash, entry in by_tx.items():
@@ -168,9 +196,12 @@ class EvmTargetedPoller(TargetedChainPoller):
             if net_usd <= 0.0:
                 continue
             wallet_id = entry["wallet_id"]
+            wallet_address = entry["wallet_address"]
             assert wallet_id is not None
+            assert wallet_address, "poller must stamp wallet_address on every activity"
             activities.append({
                 "wallet_id": wallet_id,
+                "wallet_address": wallet_address,
                 "chain": self._chain_label,
                 "tx_hash": tx_hash,
                 "log_index": 0,  # aggregated row: one per tx, not per log
@@ -181,6 +212,8 @@ class EvmTargetedPoller(TargetedChainPoller):
                     "tx_hash": tx_hash,
                     "value_usd": net_usd,
                     "log_count": len(entry["logs"]),
+                    "from": entry["from"],
+                    "to": entry["to"],
                     "logs": entry["logs"],
                 },
                 "score": 0.0,

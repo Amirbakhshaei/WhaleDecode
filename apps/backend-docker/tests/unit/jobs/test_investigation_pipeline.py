@@ -57,7 +57,13 @@ def _candidate_event(wallet_id: int) -> CandidateEvent:
         log_index=0,
         block_number=100,
         event_type="TRANSFER",
-        raw_json={"transactionHash": TX_HASH, "value_usd": 100_000.0},
+        raw_json={
+            "transactionHash": TX_HASH,
+            "value_usd": 100_000.0,
+            "from": "0x1111111111111111111111111111111111111111",
+            "to": WALLET_ADDRESS,
+            "address": TOKEN_ADDRESS,
+        },
         score=40.0,
         dedupe_key="1:test:0",
     )
@@ -127,6 +133,10 @@ async def test_process_event_enriches_llm_payload_with_labels_and_category(
         "to": "0x28c6c06298d514db089934071355e5743bf21d60",
         "value_usd": 100_000.0,
     }
+    # Pre-LLM heuristic gate requires a syndicate marker on a CEX-only flow;
+    # the test predates the gate, so we stage one here.
+    event.cluster_origin = "test-syndicate"
+    event.coordinated_flag = True
 
     await service.process_event(event)
 
@@ -266,7 +276,13 @@ async def test_rate_limiter_blocks_burst_beyond_rpm(session_factory: async_sessi
 
     second_event = _candidate_event(wallet_id)
     second_event.dedupe_key = "1:test:1"
-    second_event.raw_json = {"transactionHash": TX_HASH, "value_usd": 100_000.0}
+    second_event.raw_json = {
+        "transactionHash": TX_HASH,
+        "value_usd": 100_000.0,
+        "from": "0x1111111111111111111111111111111111111111",
+        "to": WALLET_ADDRESS,
+        "address": TOKEN_ADDRESS,
+    }
 
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(service.process_event(second_event), timeout=0.5)

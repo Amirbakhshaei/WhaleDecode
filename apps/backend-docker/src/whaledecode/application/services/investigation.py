@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
@@ -25,6 +26,47 @@ from whaledecode.domain.services.event_gate import (
 )
 
 log = structlog.get_logger()
+
+# ponytail: free Gemini tier is 250k input tokens / minute. The per-instance
+# AsyncLimiter (14 RPM) bounds requests on a single worker process but the
+# `register_langgraph`-style reasonser shares nothing across processes — so a
+# burst from two workers still trips the upstream 429. A module-level
+# AsyncLimiter (10 RPM) plus a 6s minimum between successive calls inside
+# this process keeps us under the 250k TPM cap on a single replica; tighten
+# if the cap is hit on multi-replica deploys.
+_LLM_MIN_INTERVAL_SECONDS = 6.0
+_LLM_TOKEN_BUCKET: AsyncLimiter = AsyncLimiter(max_rate=10, time_period=60.0)
+_LLM_LAST_CALL_LOCK = asyncio.Lock()
+_LLM_LAST_CALL_MONOTONIC: float = 0.0
+
+
+def _llm_pacer():
+    """Async context manager that enforces a minimum interval between LLM calls.
+
+    Records the timestamp *after* the wrapped block returns so a slow model
+    doesn't let a queued follow-up sneak through immediately.
+    """
+    import time as _time
+
+    @asynccontextmanager
+    async def _cm():
+        global _LLM_LAST_CALL_MONOTONIC
+        async with _LLM_LAST_CALL_LOCK:
+            while True:
+                wait_for = (
+                    _LLM_LAST_CALL_MONOTONIC
+                    + _LLM_MIN_INTERVAL_SECONDS
+                    - _time.monotonic()
+                )
+                if wait_for <= 0:
+                    break
+                await asyncio.sleep(wait_for)
+            try:
+                yield
+            finally:
+                _LLM_LAST_CALL_MONOTONIC = _time.monotonic()
+
+    return _cm()
 
 
 def _unpad_address(address: str) -> str:
@@ -214,10 +256,28 @@ class InvestigationService:
         await self._enrich_edge_intelligence(event_dict)
         trace_task = self._spawn_cluster_trace(event_dict)
 
+        # ponytail: Gemini free tier is 250k input tokens/min — every LLM call
+        # we skip here is one we don't have to retry at 429. Two filters block
+        # the spend: (a) a ghost event with no resolvable counterparty and
+        # (b) a CEX-only flow with no syndicate cluster attached. Both can be
+        # detected deterministically from fields the LLM would otherwise have
+        # to re-derive.
+        heuristic_reason = self._pre_llm_heuristic_gate(event_dict)
+        if heuristic_reason is not None:
+            event.status = "skipped"
+            async with self._uow_factory() as uow:
+                await self._persist_skipped(uow, event)
+            log.info(
+                "[HEURISTIC_GATE_SKIP] Event ID=%s skipped before LLM. Reason=%s",
+                event.id,
+                heuristic_reason,
+            )
+            return {"status": "skipped", "reason": heuristic_reason}
+
         # Reasoner call happens outside any DB transaction — don't hold a connection across an LLM call.
         model_name = self._settings.MODEL_HEAVY_REASONING if self._settings else "heavy_reasoning"
         log.info(f"[LLM_SYNTHESIS] Generating analysis for Event ID={event.id} via model={model_name}...")
-        async with self._rate_limiter:
+        async with _llm_pacer(), _LLM_TOKEN_BUCKET:
             result = await self._reasoner.investigate_event(event_dict)
         log.info(
             f"[LLM_SYNTHESIS] Completed analysis for Event ID={event.id} "
@@ -378,6 +438,43 @@ class InvestigationService:
         event.cluster_origin = event_dict.get("cluster_origin") or None
         event.hop_count = event_dict.get("hop_count")
         event.coordinated_flag = bool(event_dict.get("coordinated_flag"))
+
+    @staticmethod
+    def _pre_llm_heuristic_gate(event_dict: dict[str, Any]) -> str | None:
+        """Pre-LLM hard filter to protect the free-tier Gemini quota.
+
+        Returns ``None`` when the event should reach the LLM, or a reason string
+        when it should be skipped without burning tokens. Three drops:
+        * ghost event — neither side resolves to a real address
+        * isolated CEX flow — both counterparties are exchanges, no syndicate
+        * conviction below threshold — deterministic score says skip
+        """
+        from_label = event_dict.get("from_label") or ""
+        to_label = event_dict.get("to_label") or ""
+        from_address = _counterparty(event_dict, "from")
+        to_address = _counterparty(event_dict, "to")
+        if not from_address and not to_address:
+            return "Heuristic gate dropped (no resolvable counterparty / ghost wallet)"
+        if (
+            from_label == "Unlabeled EOA"
+            and to_label == "Unlabeled EOA"
+            and from_address in ("unknown", "")
+        ):
+            return "Heuristic gate dropped (ghost wallet: 'unknown')"
+
+        event_category = event_dict.get("event_category") or ""
+        is_cex_only = "CEX" in event_category and "Whale" not in event_category
+        has_syndicate = bool(
+            event_dict.get("cluster_origin") or event_dict.get("is_syndicate")
+        )
+        if is_cex_only and not has_syndicate:
+            return "Heuristic gate dropped (raw CEX deposit/withdrawal, no syndicate cluster)"
+
+        conviction_ctx = event_dict.get("conviction") or {}
+        conviction_score = int(conviction_ctx.get("conviction_score") or 0)
+        if conviction_score < 30:
+            return f"Heuristic gate dropped (low conviction: {conviction_score} < 30)"
+        return None
 
     async def _pool_tvl_usd(self, chain: str, token: str) -> float:
         """Deepest DexScreener pool liquidity for ``token`` on ``chain`` (0.0 unknown)."""

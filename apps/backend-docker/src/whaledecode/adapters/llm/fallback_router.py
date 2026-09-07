@@ -1,5 +1,6 @@
 """Multi-provider LLM router using LangChain's native fallback mechanism."""
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -20,6 +21,70 @@ _RETRYABLE_EXCEPTIONS = (
 )
 
 _RATE_LIMIT_INDICATORS = ("rate limit", "429", "503", "usage limit", "quota", "capacity")
+
+# ponytail: Gemini free tier (250k input tokens/min) returns a structured
+# ResourceExhausted with an embedded retryDelay. Catching the concrete type
+# is sturdier than substring-matching the rendered message — Google SDK
+# versions rotate the wording but keep the type stable.
+try:
+    from google.api_core.exceptions import ResourceExhausted as _GoogleResourceExhausted
+
+    _QUOTA_EXCEPTIONS: tuple[type[BaseException], ...] = (_GoogleResourceExhausted,)
+except ImportError:  # google-api-core not installed (Groq-only deploys)
+    _GoogleResourceExhausted = None  # type: ignore[assignment]
+    _QUOTA_EXCEPTIONS = ()
+
+try:
+    from grpc import StatusCode as _GrpcStatusCode
+    from grpc.aio import AioRpcError as _AioRpcError
+
+    def _is_aio_resource_exhausted(exc: BaseException) -> bool:
+        code = getattr(exc, "code", lambda: None)()
+        return _AioRpcError is not None and isinstance(exc, _AioRpcError) and code == _GrpcStatusCode.RESOURCE_EXHAUSTED
+
+except ImportError:
+    _AioRpcError = None  # type: ignore[assignment]
+
+    def _is_aio_resource_exhausted(exc: BaseException) -> bool:
+        return False
+
+
+_QUOTA_DEFAULT_BACKOFF_SECONDS = 45.0
+_QUOTA_MAX_RETRIES = 3
+
+
+def _extract_retry_delay(exc: BaseException) -> float:
+    """Read the upstream ``retry_delay`` seconds off a Google quota error.
+
+    Returns ``_QUOTA_DEFAULT_BACKOFF_SECONDS`` when the SDK isn't installed or
+    no delay is exposed — better than guessing a worse number.
+    """
+    if _GoogleResourceExhausted is not None and isinstance(exc, _GoogleResourceExhausted):
+        try:
+            delay = exc.retry_delay  # google.api_core.exceptions.RetryError typed
+            if delay is not None:
+                return max(float(delay.total_seconds()), 1.0)
+        except AttributeError:
+            pass
+    metadata = getattr(exc, "metadata", None) or {}
+    if isinstance(metadata, dict):
+        retry_after = metadata.get("retry-after") or metadata.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), 1.0)
+            except (TypeError, ValueError):
+                pass
+    return _QUOTA_DEFAULT_BACKOFF_SECONDS
+
+
+def _is_quota_error(exc: BaseException) -> bool:
+    """True when ``exc`` is a Gemini/Groq quota-exhausted (transient, retryable)."""
+    if _QUOTA_EXCEPTIONS and isinstance(exc, _QUOTA_EXCEPTIONS):
+        return True
+    if _is_aio_resource_exhausted(exc):
+        return True
+    err_str = str(exc).lower()
+    return any(indicator in err_str for indicator in _RATE_LIMIT_INDICATORS)
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -110,12 +175,46 @@ class FallbackLLMRouter(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        """Async generate with fallback support."""
-        for attempt in range(len(self.fallbacks) + 1):
+        """Async generate with fallback support.
+
+        Quota errors (Gemini ``ResourceExhausted`` / gRPC ``RESOURCE_EXHAUSTED``)
+        are retried on the *primary* model after the upstream ``retry_delay``
+        instead of cascading to the fallback — a 429 means the primary will be
+        free again in seconds, while burning the fallback just hides the real
+        problem and loses context. Other errors still cascade.
+        """
+        last_quota_exc: BaseException | None = None
+        for attempt in range(_QUOTA_MAX_RETRIES):
             try:
-                return await self.primary._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+                return await self.primary._agenerate(
+                    messages, stop=stop, run_manager=run_manager, **kwargs
+                )
             except Exception as exc:
-                if attempt >= len(self.fallbacks):
+                if not _is_quota_error(exc):
+                    raise
+                delay = _extract_retry_delay(exc)
+                last_quota_exc = exc
+                log.warning(
+                    "llm_quota_throttled",
+                    attempt=attempt + 1,
+                    delay_seconds=round(delay, 2),
+                    model=self.primary.__class__.__name__,
+                    error=str(exc)[:160],
+                )
+                await asyncio.sleep(delay)
+        # Retries exhausted on a quota error — surface it rather than silently
+        # switching providers (the caller is best positioned to decide).
+        if last_quota_exc is not None:
+            raise last_quota_exc
+
+        # Non-quota errors: cascade through fallbacks.
+        for attempt in range(len(self.fallbacks)):
+            try:
+                return await self.fallbacks[attempt]._agenerate(
+                    messages, stop=stop, run_manager=run_manager, **kwargs
+                )
+            except Exception as exc:
+                if attempt >= len(self.fallbacks) - 1:
                     raise
                 if not self._should_fallback(exc):
                     raise
@@ -125,14 +224,6 @@ class FallbackLLMRouter(BaseChatModel):
                     error=str(exc)[:120],
                     fallback_model=self.fallbacks[attempt].__class__.__name__,
                 )
-                old_primary = self.primary
-                object.__setattr__(self, "primary", self.fallbacks[attempt])
-                object.__setattr__(self, "_runnable", self._build_runnable())
-                try:
-                    return await self.primary._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
-                finally:
-                    object.__setattr__(self, "primary", old_primary)
-                    object.__setattr__(self, "_runnable", self._build_runnable())
         raise RuntimeError("FallbackLLMRouter exhausted all models")
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:

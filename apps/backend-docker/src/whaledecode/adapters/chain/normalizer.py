@@ -8,10 +8,24 @@ TRANSFER_EVENT_SIGNATURE = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628
 def pad_address_to_topic(address: str) -> str:
     """Pad a 20-byte address to the 32-byte padded form used in log topics.
 
-    ``0x123...`` → ``0x000000000000000000000000123...`` (64 hex chars).
+    ``0x123...`` → ``0x000000000000000000000123...`` (64 hex chars).
     """
     body = address[2:] if address.lower().startswith("0x") else address
     return "0x" + body.lower().zfill(64)
+
+
+def unpad_address_from_topic(topic: str) -> str:
+    """Inverse of ``pad_address_to_topic``: 32-byte topic → 20-byte ``0x`` address.
+
+    Returns ``""`` when the topic isn't a valid 32-byte padded address — the
+    caller treats that as "no counterparty available" and falls back gracefully.
+    """
+    if not topic:
+        return ""
+    body = topic[2:] if topic.lower().startswith("0x") else topic
+    if len(body) != 64:
+        return ""
+    return "0x" + body[-40:].lower()
 
 
 def wallet_id_from_transfer_topics(topics: list[str], padded_to_wallet_id: dict[str, int]) -> int | None:

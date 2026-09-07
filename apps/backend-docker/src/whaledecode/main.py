@@ -216,5 +216,17 @@ def sync_curated():
     asyncio.run(run_sync_pipeline())
 
 
+@cli.command()
+def worker():
+    """Run the background AI worker (migrates DB first, then starts the consumer loop)."""
+    settings = _load_settings()
+    setup_logging(settings)
+    ctx = click.get_current_context()
+    ctx.invoke(migrate)
+    from whaledecode.entrypoints.worker import run_worker
+
+    asyncio.run(run_worker(settings))
+
+
 if __name__ == "__main__":
     cli()
