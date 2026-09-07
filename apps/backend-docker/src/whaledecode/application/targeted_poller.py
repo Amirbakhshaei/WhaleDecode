@@ -102,17 +102,28 @@ class TargetedPollerService:
 
     def _router(self, name: str, urls_key: str) -> RpcFailoverRouter:
         if name not in self._routers:
-            urls = split_urls(getattr(self._settings, urls_key, ""))
-            # ponytail: ETH has a tiered failover — free nodes lead (primary
-            # traffic), and the metered ETH_RPC_URLS (Alchemy/Infura/
-            # Chainstack) are appended last so each is only hit after every
-            # free URL is in cooldown. Saves metered credits for real outages.
+            # ponytail: when ETH_RPC_URLS is set, it REPLACES the public free
+            # pool entirely — the user supplies authenticated endpoints
+            # (Alchemy/Infura/Chainstack) and wants them to be the only nodes
+            # we hit, not appended behind anonymous cloudflare/drpc/1rpc. This
+            # also prevents the poller from silently racking up rate-limit
+            # counters on free nodes that aren't needed.
             if name == "eth" and self._settings.ETH_RPC_URLS:
-                urls = urls + split_urls(self._settings.ETH_RPC_URLS)
+                urls = split_urls(self._settings.ETH_RPC_URLS)
+            else:
+                urls = split_urls(getattr(self._settings, urls_key, ""))
             self._routers[name] = RpcFailoverRouter(
                 name,
                 urls,
                 cooldown_seconds=self._settings.TARGETED_RPC_COOLDOWN_SECONDS,
+            )
+            log.info(
+                "rpc_pool_loaded",
+                extra={
+                    "router": name,
+                    "nodes": len(urls),
+                    "first_url": urls[0] if urls else "",
+                },
             )
         return self._routers[name]
 

@@ -120,16 +120,14 @@ class Settings(BaseSettings):
     # nodes are in cooldown. cloudflare-eth.com and 1rpc.io/eth are the
     # highest-priority free primaries per the inverted-topic polling spec.
     ETH_PUBLIC_RPC_URLS: str = (
-        "https://cloudflare-eth.com,https://1rpc.io/eth,https://rpc.mevblocker.io,"
-        "https://eth.drpc.org,https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth"
+        "https://rpc.mevblocker.io,https://eth.drpc.org,https://ethereum-rpc.publicnode.com,"
+        "https://1rpc.io/eth,https://cloudflare-eth.com"
     )
     BASE_PUBLIC_RPC_URLS: str = (
-        "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.drpc.org,"
-        "https://1rpc.io/base"
+        "https://mainnet.base.org,https://base.llamarpc.com,https://1rpc.io/base"
     )
     ARB_PUBLIC_RPC_URLS: str = (
-        "https://arb1.arbitrum.io/rpc,https://arbitrum-one.publicnode.com,"
-        "https://arbitrum.drpc.org,https://1rpc.io/arb"
+        "https://arb1.arbitrum.io/rpc,https://arbitrum.llamarpc.com,https://1rpc.io/arb"
     )
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 

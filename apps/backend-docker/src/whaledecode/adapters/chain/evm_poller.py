@@ -43,6 +43,11 @@ _MAX_ADDRESSES_PER_GETLOGS = 20
 # RPC per chain per cycle on a tight loop.
 _BLOCK_HEAD_CACHE_SECONDS = 12.0
 
+# ponytail: per-call eth_getLogs block span stays strictly under the 10-block
+# limit (dRPC returns -32600 above 10 blocks; some L2 public nodes do the
+# same). 9 leaves one block of headroom in case the node rounds up.
+MAX_LOGS_RANGE_PER_CALL = 9
+
 # eth_call selector for decimals() on an ERC-20 contract.
 _DECIMALS_SELECTOR = "0x313ce567"
 
@@ -121,14 +126,13 @@ class EvmTargetedPoller(TargetedChainPoller):
         return head
 
     def _max_block_range(self) -> int:
-        """Get the max block range for this chain from settings, with safe defaults."""
-        if self._settings is not None:
-            ranges = getattr(self._settings, "MAX_GET_LOGS_BLOCK_RANGE", {})
-            # Chain label mapping: "Ethereum" -> "Ethereum", "Arbitrum" -> "Arbitrum", "Base" -> "Base"
-            label_map = {"ETH": "Ethereum", "ARB": "Arbitrum", "BASE": "Base"}
-            chain_key = label_map.get(self._chain_code, self._chain_label)
-            return ranges.get(chain_key, 100)
-        return 100
+        """Hard ceiling of MAX_LOGS_RANGE_PER_CALL blocks per eth_getLogs call.
+
+        The settings.MAX_GET_LOGS_BLOCK_RANGE dict can request larger windows
+        for fast L2s, but individual nodes (dRPC, public free providers) reject
+        ranges above 10 blocks with -32600. We clamp to 9 unconditionally.
+        """
+        return MAX_LOGS_RANGE_PER_CALL
 
     async def _rpc(self, method: str, params: list[Any]) -> Any:
         if self._rate_limiter is not None:
