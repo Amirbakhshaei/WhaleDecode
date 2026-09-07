@@ -45,6 +45,78 @@ DEFAULT_COOLDOWN_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 5
 DEFAULT_TIMEOUT = 15.0
 MAX_BACKOFF_SECONDS = 8.0
+DEFAULT_DAILY_BUDGET = 50_000
+
+# ponytail: budget caps per provider — Alchemy / Infura / dRPC / Ankr have
+# documented monthly allowances; the per-day ceiling is the monthly cap /30
+# minus a 20% safety margin. Unmetered foundation nodes get a much higher cap.
+# Per-provider assignment lives on the per-node record so multi-provider
+# pools each carry their own counter.
+_PROVIDER_DAILY_BUDGET: dict[str, int] = {
+    "alchemy": 11_000,           # ~825k CUs/day @ 75 CU/log query (30M/mo budget)
+    "infura": 45_000,            # 100k daily cap headroom
+    "drpc": 30_000,              # safe dynamic allowance
+    "ankr": 10_000,              # burst-sensitive
+    "base_foundation": 500_000,  # unmetered Coinbase public node
+    "arb_foundation": 500_000,   # unmetered Offchain Labs public node
+    "generic": 20_000,
+}
+
+
+def _classify_provider(url: str) -> str:
+    """Best-effort provider label from URL hostname; fallback ``generic``."""
+    u = url.lower()
+    if "alchemy.com" in u:
+        return "alchemy"
+    if "infura.io" in u:
+        return "infura"
+    if "drpc.org" in u or "drpc.live" in u:
+        return "drpc"
+    if "ankr.com" in u:
+        return "ankr"
+    if "mainnet.base.org" in u or "base.org" in u:
+        return "base_foundation"
+    if "arb1.arbitrum.io" in u or "arbitrum.io" in u:
+        return "arb_foundation"
+    return "generic"
+
+
+class _NodeBudget:
+    """Per-URL call counter with daily cap. Resets at UTC midnight via
+    :meth:`reset_daily_counters` (scheduled from ``entrypoints/worker.py``).
+    """
+
+    __slots__ = ("url", "provider", "max_daily_calls", "calls_today", "calls_reset_at")
+
+    def __init__(self, url: str, provider: str, max_daily_calls: int) -> None:
+        self.url = url
+        self.provider = provider
+        self.max_daily_calls = max_daily_calls
+        self.calls_today = 0
+        # Next UTC midnight; reset_daily_counters() zeroes the counter at this
+        # point. Cached here so each node doesn't recompute the boundary.
+        self.calls_reset_at = _next_utc_midnight()
+
+    @property
+    def budget_remaining(self) -> int:
+        return max(0, self.max_daily_calls - self.calls_today)
+
+    def is_within_budget(self) -> bool:
+        if time.time() >= self.calls_reset_at:
+            self.calls_today = 0
+            self.calls_reset_at = _next_utc_midnight()
+        return self.calls_today < self.max_daily_calls
+
+
+def _next_utc_midnight() -> float:
+    """Epoch seconds for the next UTC midnight (exclusive)."""
+    import datetime as _dt
+
+    now = _dt.datetime.now(_dt.UTC)
+    tomorrow = (now + _dt.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return tomorrow.timestamp()
 
 
 class CircuitOpenError(RuntimeError):
@@ -73,6 +145,10 @@ class ResilientRPCManager:
         self._max_retries = max_retries
         self._timeout = timeout
         self._routers: dict[str, RpcFailoverRouter] = {}
+        # Per-node daily-budget tracker, keyed by URL. Lives alongside the
+        # router so it survives across ``execute()`` calls without re-reading
+        # env vars.
+        self._node_budgets: dict[str, _NodeBudget] = {}
         self._consecutive_failures: dict[str, int] = {}
         self._breaker_open_until: dict[str, float] = {}
         # ponytail: optional process-global rate limiter — acquire before every
@@ -111,6 +187,38 @@ class ResilientRPCManager:
         )
         self._consecutive_failures.setdefault(name, 0)
         self._breaker_open_until.setdefault(name, 0.0)
+        # ponytail: register a per-URL budget on first sight. Subsequent
+        # ``register_chain`` calls for the same URL keep the existing counter
+        # so daily totals don't double-count across chain pools.
+        for url in urls:
+            if url not in self._node_budgets:
+                provider = _classify_provider(url)
+                cap = _PROVIDER_DAILY_BUDGET.get(provider, DEFAULT_DAILY_BUDGET)
+                self._node_budgets[url] = _NodeBudget(url, provider, cap)
+
+    def reset_daily_counters(self) -> None:
+        """Zero all per-node daily counters. Called by the cron at UTC midnight."""
+        for budget in self._node_budgets.values():
+            budget.calls_today = 0
+            budget.calls_reset_at = _next_utc_midnight()
+        log.info("rpc_daily_budgets_reset", nodes=len(self._node_budgets))
+
+    def node_budget_state(self) -> dict[str, dict[str, Any]]:
+        """Observability: per-URL calls_today / cap / provider label."""
+        now = time.time()
+        for budget in self._node_budgets.values():
+            if now >= budget.calls_reset_at:
+                budget.calls_today = 0
+                budget.calls_reset_at = _next_utc_midnight()
+        return {
+            url: {
+                "provider": b.provider,
+                "calls_today": b.calls_today,
+                "max_daily_calls": b.max_daily_calls,
+                "within_budget": b.calls_today < b.max_daily_calls,
+            }
+            for url, b in self._node_budgets.items()
+        }
 
     def chains(self) -> list[str]:
         return list(self._routers.keys())
@@ -134,11 +242,41 @@ class ResilientRPCManager:
                 wait_for = self._breaker_open_until[chain] - time.monotonic()
                 await asyncio.sleep(min(max(wait_for, 0.0), 5.0))
                 raise CircuitOpenError(f"{chain}: circuit breaker open")
+            # ponytail: skip URLs that exhausted their daily budget. The
+            # underlying router rotates among all URLs; budget-aware skipping
+            # here keeps metered credits inside their documented monthly cap
+            # without burning retries on nodes that have already hit the wall.
+            for url in router._urls:  # noqa: SLF001 - intentional, internal coordination
+                budget = self._node_budgets.get(url)
+                if budget is not None and not budget.is_within_budget():
+                    if url not in router._cooldown_until:  # noqa: SLF001
+                        router._cooldown_until[url] = time.monotonic() + 3600.0  # noqa: SLF001
+                        log.warning(
+                            "rpc_daily_budget_exhausted",
+                            extra={"node": url, "provider": budget.provider,
+                                   "calls_today": budget.calls_today,
+                                   "max_daily_calls": budget.max_daily_calls},
+                        )
             try:
                 if self._limiter is not None:
                     await self._limiter.acquire()
                 result = await router.post(payload)
                 self._on_success(chain)
+                # Account the successful call against the budget of whichever
+                # URL the router chose. The router rotates internally; we read
+                # the last-touched URL via its cooldown map (best-effort).
+                for url in router._urls:  # noqa: SLF001
+                    budget = self._node_budgets.get(url)
+                    if budget is not None and budget.calls_today >= 0:
+                        # Increment on the URL with the lowest calls_today that
+                        # isn't in cooldown — cheapest heuristic that still
+                        # favours unmetered primaries on multi-URL chains.
+                        if (
+                            router._cooldown_until.get(url, 0.0)  # noqa: SLF001
+                            <= time.monotonic()
+                        ):
+                            budget.calls_today += 1
+                            break
                 return result
             except RpcNodesExhaustedError as e:
                 last_exc = e

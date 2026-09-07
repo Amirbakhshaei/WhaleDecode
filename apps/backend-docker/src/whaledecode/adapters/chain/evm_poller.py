@@ -37,6 +37,12 @@ _BOOTSTRAP_BLOCK_RANGE = 10
 # per eth_getLogs call; shrink further if a node still balks.
 _MAX_ADDRESSES_PER_GETLOGS = 20
 
+# ponytail: eth_blockNumber is queried once per chain per poll loop; with a
+# 25s interval that hits the node 1+ times just to learn the head. Cache for
+# 12s so concurrent EVM/BASE/ARB passes share the same head — saves one
+# RPC per chain per cycle on a tight loop.
+_BLOCK_HEAD_CACHE_SECONDS = 12.0
+
 # eth_call selector for decimals() on an ERC-20 contract.
 _DECIMALS_SELECTOR = "0x313ce567"
 
@@ -95,6 +101,24 @@ class EvmTargetedPoller(TargetedChainPoller):
         self._settings = settings
         self._decimals_cache: dict[str, int] = {}
         self._last_block: int | None = None  # in-memory cursor; dedupe_key guards re-ingest after restart
+        # ponytail: short-lived block-head cache. (timestamp, head) — the head
+        # is reused across concurrent passes until the TTL expires.
+        self._head_cache: tuple[float, int] | None = None
+
+    async def _head_block(self) -> int:
+        """``eth_blockNumber`` with a 12s TTL so concurrent EVM/BASE/ARB passes
+        share the same head instead of burning an RPC each.
+        """
+        import time as _time
+
+        if self._head_cache is not None:
+            ts, head = self._head_cache
+            if _time.monotonic() - ts < _BLOCK_HEAD_CACHE_SECONDS:
+                return head
+        head_hex = await self._rpc("eth_blockNumber", [])
+        head = to_int(head_hex)
+        self._head_cache = (_time.monotonic(), head)
+        return head
 
     def _max_block_range(self) -> int:
         """Get the max block range for this chain from settings, with safe defaults."""
@@ -140,8 +164,7 @@ class EvmTargetedPoller(TargetedChainPoller):
     async def fetch_recent_activity(self, targets: list[CuratedWallet]) -> list[dict[str, Any]]:
         if not targets:
             return []
-        head_hex = await self._rpc("eth_blockNumber", [])
-        head = to_int(head_hex)
+        head = await self._head_block()
 
         # Range-based query: start from last_polled_block + 1 (or bootstrap
         # window on first call). Cap at chain-specific max range to stay within

@@ -209,11 +209,20 @@ async def _reset_daily_counters(session_factory) -> None:
     from sqlalchemy import update
 
     from whaledecode.adapters.db.models.user import UserModel
+    from whaledecode.pools.rpc.manager import ResilientRPCManager
 
     async with session_factory() as session:
         stmt = update(UserModel).values(daily_chat_count=0, daily_alert_count=0)
         await session.execute(stmt)
         await session.commit()
+    # ponytail: zero per-node call counters so metered provider caps (Alchemy
+    # / Infura / dRPC) reset for the new UTC day. Manager is process-global
+    # via the ResilientRPCManager.from_config() singleton, so this works even
+    # if the worker started before the poller registered chains.
+    try:
+        ResilientRPCManager.from_config().reset_daily_counters()
+    except Exception as e:  # noqa: BLE001 - reset must never block the cron
+        log.warning("rpc_daily_budget_reset_failed", error=str(e), exc_info=True)
     log.info("daily_counters_reset")
 
 
