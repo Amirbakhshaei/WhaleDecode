@@ -6,6 +6,7 @@ import click
 from whaledecode import __version__
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
+from whaledecode.infrastructure.rpc_router import split_urls
 
 
 @click.group()
@@ -40,16 +41,17 @@ def _check_rpc_isolation(settings: Settings) -> None:
     for webhook delivery only.
     """
     rpc_urls = [
-        ("ETH_RPC_URL", settings.ETH_RPC_URL),
-        ("ARB_RPC_URL", settings.ARB_RPC_URL),
-        ("BASE_RPC_URL", settings.BASE_RPC_URL),
+        ("ETH_RPC_URLS", split_urls(settings.ETH_RPC_URLS or "")),
+        ("ARB_RPC_URL", [settings.ARB_RPC_URL] if settings.ARB_RPC_URL else []),
+        ("BASE_RPC_URL", [settings.BASE_RPC_URL] if settings.BASE_RPC_URL else []),
     ]
-    for name, url in rpc_urls:
-        if url and "alchemy.com" in str(url).lower():
-            raise click.ClickException(
-                f"CRITICAL CONFIG ERROR: {name} points at Alchemy ({url!r}).\n"
-                "RPC telemetry must route to a dedicated provider (e.g. dRPC) to prevent CU exhaustion."
-            )
+    for name, urls in rpc_urls:
+        for url in urls:
+            if url and "alchemy.com" in str(url).lower():
+                raise click.ClickException(
+                    f"CRITICAL CONFIG ERROR: {name} points at Alchemy ({url!r}).\n"
+                    "RPC telemetry must route to a dedicated provider (e.g. dRPC) to prevent CU exhaustion."
+                )
 
 
 @cli.command()

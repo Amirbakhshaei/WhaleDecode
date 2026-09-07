@@ -104,11 +104,11 @@ class TargetedPollerService:
         if name not in self._routers:
             urls = split_urls(getattr(self._settings, urls_key, ""))
             # ponytail: ETH has a tiered failover — free nodes lead (primary
-            # traffic), and the metered ETH_RPC_URL (Alchemy/Infura/Chainstack)
-            # is appended last so it's only hit after every free URL is in
-            # cooldown. Saves metered credits for real outages.
-            if name == "eth" and self._settings.ETH_RPC_URL:
-                urls = urls + [self._settings.ETH_RPC_URL]
+            # traffic), and the metered ETH_RPC_URLS (Alchemy/Infura/
+            # Chainstack) are appended last so each is only hit after every
+            # free URL is in cooldown. Saves metered credits for real outages.
+            if name == "eth" and self._settings.ETH_RPC_URLS:
+                urls = urls + split_urls(self._settings.ETH_RPC_URLS)
             self._routers[name] = RpcFailoverRouter(
                 name,
                 urls,

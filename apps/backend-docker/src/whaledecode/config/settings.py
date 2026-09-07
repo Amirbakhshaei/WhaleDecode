@@ -94,8 +94,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: SecretStr | None = None
     OPENROUTER_API_KEY: SecretStr | None = None
 
-    # Chain Providers (per-chain RPC URLs; at least one needed for real data)
-    ETH_RPC_URL: str | None = None
+    # Chain Providers (per-chain RPC URLs; at least one needed for real data).
+    # ETH_RPC_URLS is a comma-separated list — the first entry is used for
+    # one-off RPC isolation checks (main.py) and seed verification; the poller
+    # appends ALL entries as tier-2 metered fallbacks after the free list.
+    ETH_RPC_URLS: str | None = None
     ARB_RPC_URL: str | None = None
     BASE_RPC_URL: str | None = None
     POLL_INTERVAL_SECONDS: int = 30
@@ -112,10 +115,10 @@ class Settings(BaseSettings):
     TARGETED_MIN_TX_USD: float = 50_000.0
     MAX_ETH_WALLETS_PER_POLL: int = 50
     # Tiered Ethereum RPC list: free foundation/anonymous nodes lead (primary
-    # traffic), metered keys (Alchemy/Infura/Chainstack via ETH_RPC_URL) are
-    # appended at the router level when set — used only when all free nodes are
-    # in cooldown. cloudflare-eth.com and 1rpc.io/eth are the highest-priority
-    # free primaries per the inverted-topic polling spec.
+    # traffic), metered keys (Alchemy/Infura/Chainstack via ETH_RPC_URLS)
+    # are appended at the router level when set — used only when all free
+    # nodes are in cooldown. cloudflare-eth.com and 1rpc.io/eth are the
+    # highest-priority free primaries per the inverted-topic polling spec.
     ETH_PUBLIC_RPC_URLS: str = (
         "https://cloudflare-eth.com,https://1rpc.io/eth,https://rpc.mevblocker.io,"
         "https://eth.drpc.org,https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth"

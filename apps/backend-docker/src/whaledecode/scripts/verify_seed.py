@@ -10,7 +10,9 @@ from pathlib import Path
 
 from web3 import Web3
 from web3.exceptions import Web3Exception
+
 from whaledecode.config.settings import Settings
+from whaledecode.infrastructure.rpc_router import split_urls
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -58,7 +60,9 @@ def main() -> int:
     settings = Settings()
 
     rpc_urls = {
-        "ETH": settings.ETH_RPC_URL or "",
+        # First ETH_RPC_URLS entry only — the verifier is a one-shot
+        # health check, not the long-running poller.
+        "ETH": split_urls(settings.ETH_RPC_URLS or "")[0] if settings.ETH_RPC_URLS else "",
         "BASE": settings.BASE_RPC_URL or "",
         "ARB": settings.ARB_RPC_URL or "",
     }
