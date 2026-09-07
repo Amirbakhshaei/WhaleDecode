@@ -28,9 +28,12 @@ from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, to_int
 
 log = structlog.get_logger()
 
-# Public nodes reject wide ranges; cap at 100 blocks to avoid payload size
-# limits. On first boot (no cursor) we fall back to a small window.
-_MAX_BLOCK_RANGE = 100
+# ponytail: per-call eth_getLogs block span stays strictly under the 10-block
+# limit (dRPC returns -32600 above 10 blocks; some L2 public nodes do the
+# same). 9 leaves one block of headroom in case the node rounds up.
+MAX_LOGS_RANGE_PER_CALL = 9
+
+# On first boot (no cursor) we fall back to a small bootstrap window.
 _BOOTSTRAP_BLOCK_RANGE = 10
 
 # ponytail: free RPCs return -32046/-32701 on wide topic arrays — 20 addresses
@@ -42,11 +45,6 @@ _MAX_ADDRESSES_PER_GETLOGS = 20
 # 12s so concurrent EVM/BASE/ARB passes share the same head — saves one
 # RPC per chain per cycle on a tight loop.
 _BLOCK_HEAD_CACHE_SECONDS = 12.0
-
-# ponytail: per-call eth_getLogs block span stays strictly under the 10-block
-# limit (dRPC returns -32600 above 10 blocks; some L2 public nodes do the
-# same). 9 leaves one block of headroom in case the node rounds up.
-MAX_LOGS_RANGE_PER_CALL = 9
 
 # eth_call selector for decimals() on an ERC-20 contract.
 _DECIMALS_SELECTOR = "0x313ce567"

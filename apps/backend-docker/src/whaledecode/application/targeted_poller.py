@@ -27,11 +27,13 @@ from whaledecode.domain.services.event_gate import MIN_WHALE_THRESHOLD_USD
 from whaledecode.infrastructure.pipeline_telemetry import (
     log_activities_fetched,
     log_ingest_duplicate,
+    log_ingest_evaluated,
     log_ingest_filtered,
     log_ingest_inserted,
     log_poll_start,
 )
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, split_urls
+from whaledecode.infrastructure.telemetry import start_trace
 from whaledecode.pools.rpc.manager import ResilientRPCManager
 
 log = structlog.get_logger()
@@ -140,6 +142,10 @@ class TargetedPollerService:
 
     async def poll_once(self) -> int:
         """One pass across all chains; returns number of pending events inserted."""
+        # ponytail: per-cycle trace_id so ETH/BASE/ARB sub-logs share a
+        # correlation root. Cheap (uuid4 hex) and survives the asyncio
+        # ContextVar copy across awaits.
+        start_trace()
         inserted = 0
         async with UnitOfWork(self._session_factory) as uow:
             for code in (*_EVM_CHAINS, "SOL"):
@@ -228,11 +234,26 @@ class TargetedPollerService:
         activity["score"] = score
         value_usd = float(activity.get("value_usd") or 0.0)
         floor_usd = float(MIN_WHALE_THRESHOLD_USD)
-        if value_usd < floor_usd:
-            return False
-        # Sentinel score is 0-100; MIN_INVESTIGATION_SCORE (0.65) is compared directly
-        # (EventGate does the same: event.score < min_score_threshold).
-        if score < self._settings.MIN_INVESTIGATION_SCORE:
+        gate_passed = value_usd >= floor_usd and score >= self._settings.MIN_INVESTIGATION_SCORE
+        # ponytail: one structured line per valuation decision — every input
+        # to the multiplication is logged so a missing oracle price or
+        # wrong-decimals bug is diagnosable from a single log search.
+        raw = activity.get("raw_json") if isinstance(activity.get("raw_json"), dict) else {}
+        log_ingest_evaluated(
+            chain=activity.get("chain", ""),
+            tx_hash=activity.get("tx_hash", ""),
+            wallet_address=activity.get("wallet_address", ""),
+            token_symbol=raw.get("symbol") or raw.get("asset") or "",
+            token_contract=raw.get("address") or raw.get("contract_address") or "",
+            raw_amount=raw.get("token_amount") or raw.get("amount") or 0,
+            decimals=raw.get("decimals") or 18,
+            token_units=float(raw.get("token_amount") or 0.0),
+            oracle_price_usd=float(raw.get("price_at_timestamp") or 0.0),
+            calculated_value_usd=value_usd,
+            floor_usd=floor_usd,
+            gate_passed=gate_passed,
+        )
+        if not gate_passed:
             return False
         return True
 

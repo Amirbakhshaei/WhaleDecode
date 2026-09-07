@@ -9,7 +9,6 @@ Centralized logging helpers for the data ingestion pipeline:
 All logs use structured JSON via structlog for easy querying (grep, Loki, Datadog, etc.).
 """
 import asyncio
-import logging
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -92,6 +91,119 @@ def log_ingest_filtered(
                 "reason": reason,
                 "value_usd": value_usd,
                 "floor_usd": floor,
+            }
+        ),
+    )
+
+
+def log_ingest_evaluated(
+    *,
+    chain: str,
+    tx_hash: str,
+    wallet_address: str,
+    token_symbol: str,
+    token_contract: str,
+    raw_amount: int | str,
+    decimals: int,
+    token_units: float,
+    oracle_price_usd: float,
+    calculated_value_usd: float,
+    floor_usd: float,
+    gate_passed: bool,
+) -> None:
+    """Full valuation decision record — every parameter that contributed to USD.
+
+    ponytail: log every input to the multiplication so a noisy or missing
+    oracle call can be diagnosed by reading one line. Cheap insurance against
+    silent 1e-12 price-oracle outages.
+    """
+    log.info(
+        "pipeline_ingest_evaluated",
+        extra=_base_extra(
+            {
+                "chain": chain,
+                "tx_hash": tx_hash,
+                "wallet_address": wallet_address,
+                "token_symbol": token_symbol,
+                "token_contract": token_contract,
+                "raw_amount": raw_amount,
+                "decimals": decimals,
+                "token_units": token_units,
+                "oracle_price_usd": oracle_price_usd,
+                "calculated_value_usd": round(calculated_value_usd, 2),
+                "floor_usd": floor_usd,
+                "gate_passed": gate_passed,
+            }
+        ),
+    )
+
+
+def log_profiler_enrich_attempt(chain: str, address: str) -> None:
+    log.info(
+        "profiler_enrich_attempt",
+        extra=_base_extra({"chain": chain, "address": address}),
+    )
+
+
+def log_profiler_enrich_success(
+    *,
+    address: str,
+    win_rate_30d: float | None,
+    pnl_usd: float | None,
+    sample_size: int | None,
+) -> None:
+    log.info(
+        "profiler_enrich_success",
+        extra=_base_extra(
+            {
+                "address": address,
+                "win_rate_30d": win_rate_30d,
+                "pnl_usd": pnl_usd,
+                "sample_size_30d": sample_size,
+            }
+        ),
+    )
+
+
+def log_profiler_enrich_not_found(address: str, *, reason: str) -> None:
+    log.info(
+        "profiler_enrich_not_found",
+        extra=_base_extra({"address": address, "reason": reason}),
+    )
+
+
+def log_scoring_matrix(
+    *,
+    event_id: int | None,
+    tx_hash: str,
+    volume_score: float,
+    pnl_score: float,
+    cluster_score: float,
+    final_conviction_score: float,
+    min_required_score: float,
+    value_usd: float,
+    min_usd: float,
+    channel_gate_passed: bool,
+) -> None:
+    """Deconstruct the scoring formula before channel publishing.
+
+    ponytail: emit every component so a regression on one weight surfaces
+    immediately in logs — easier than re-deriving from the final score.
+    """
+    log.info(
+        "scoring_matrix_evaluated",
+        extra=_base_extra(
+            {
+                "event_id": event_id,
+                "tx_hash": tx_hash,
+                "volume_score": volume_score,
+                "pnl_score": pnl_score,
+                "cluster_score": cluster_score,
+                "final_conviction_score": final_conviction_score,
+                "min_required_score": min_required_score,
+                "value_usd": value_usd,
+                "min_usd": min_usd,
+                "channel_gate_passed": channel_gate_passed,
             }
         ),
     )

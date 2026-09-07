@@ -20,6 +20,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.telegram.formatters.channel_formatter import (
     is_valid_synthesis,
@@ -36,10 +37,11 @@ from whaledecode.infrastructure.pipeline_telemetry import (
     log_channel_gate_check,
     log_channel_synthesis_validation,
     log_investigation_claim,
-    log_investigation_skipped,
     log_investigation_result,
+    log_investigation_skipped,
+    log_scoring_matrix,
 )
-from whaledecode.infrastructure.telemetry import capture_exception
+from whaledecode.infrastructure.telemetry import capture_exception, start_trace
 
 log = structlog.get_logger()
 
@@ -114,6 +116,9 @@ class BackgroundAIWorker:
         a terminal state — never re-claimed, never dispatched. Returns True when
         an event was claimed (caller resets its idle backoff).
         """
+        # ponytail: bind a per-event trace_id so every log line emitted during
+        # this claim cycle (claim → LLM → dispatch) can be correlated by grep.
+        start_trace()
         async with UnitOfWork(self._session_factory) as uow:
             claimed = await uow.candidate_events.claim_next_pending(limit=1)
             if not claimed:
@@ -144,6 +149,20 @@ class BackgroundAIWorker:
             min_usd = policy.min_usd_threshold if policy else CHANNEL_MIN_VALUE_USD
 
             passed_gate = score >= min_score and value_usd >= min_usd
+            # ponytail: deconstruct the scoring formula before publish so a
+            # regression on one weight surfaces in one log search.
+            log_scoring_matrix(
+                event_id=event.id,
+                tx_hash=str(event.tx_hash),
+                volume_score=float(result.get("volume_score", 0.0)),
+                pnl_score=float(result.get("pnl_score", 0.0)),
+                cluster_score=float(result.get("cluster_score", 0.0)),
+                final_conviction_score=float(score),
+                min_required_score=float(min_score),
+                value_usd=float(value_usd),
+                min_usd=float(min_usd),
+                channel_gate_passed=passed_gate,
+            )
             log_channel_gate_check(
                 event.id, event.dedupe_key, score, value_usd, min_score, min_usd, passed_gate
             )

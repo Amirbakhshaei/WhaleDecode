@@ -24,6 +24,11 @@ from whaledecode.domain.services.event_gate import (
     EventGate,
     process_and_gate_candidate,
 )
+from whaledecode.infrastructure.pipeline_telemetry import (
+    log_profiler_enrich_attempt,
+    log_profiler_enrich_not_found,
+    log_profiler_enrich_success,
+)
 
 log = structlog.get_logger()
 
@@ -395,10 +400,27 @@ class InvestigationService:
         # baseline instantly and backfills in the background).
         if self._profiler is not None:
             wallet_addr = _counterparty(event, "to")
+            log_profiler_enrich_attempt(chain, wallet_addr)
             try:
-                event.update(await self._profiler.enrich(chain, wallet_addr))
+                profile_ctx = await self._profiler.enrich(chain, wallet_addr)
             except Exception as exc:
                 log.warning(f"[EDGE_INTEL] profiler enrich failed: {exc}")
+                log_profiler_enrich_not_found(wallet_addr, reason=f"exception: {exc}")
+                return
+            event.update(profile_ctx)
+            # ponytail: structured success/failure trace for every enrich so a
+            # "wallet_win_rate_30d" outage shows up in one log search.
+            if profile_ctx.get("wallet_profile_cold_start"):
+                log_profiler_enrich_not_found(
+                    wallet_addr, reason="no_historical_data"
+                )
+            else:
+                log_profiler_enrich_success(
+                    address=wallet_addr,
+                    win_rate_30d=profile_ctx.get("wallet_win_rate_30d"),
+                    pnl_usd=profile_ctx.get("wallet_total_pnl_usd"),
+                    sample_size=profile_ctx.get("wallet_sample_size_30d"),
+                )
 
     def _spawn_cluster_trace(self, event: dict[str, Any]) -> asyncio.Task | None:
         """Module 2 prefetch: multi-hop funding attribution for unlabeled actors.
