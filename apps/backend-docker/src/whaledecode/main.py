@@ -6,7 +6,6 @@ import click
 from whaledecode import __version__
 from whaledecode.config.logging import setup_logging
 from whaledecode.config.settings import Settings
-from whaledecode.infrastructure.rpc_router import split_urls
 
 
 @click.group()
@@ -34,14 +33,18 @@ def _load_settings() -> Settings:
 
 
 def _check_rpc_isolation(settings: Settings) -> None:
-    """Warn loudly if any on-chain RPC URL points at Alchemy.
+    """Warn loudly if a direct-telemetry RPC URL points at Alchemy.
 
     RPC telemetry (eth_getBalance, Multicall3, …) bills CUs on Alchemy; it must
     route to a dedicated RPC provider (e.g. dRPC) so the CU budget is reserved
     for webhook delivery only.
+
+    Note: ``ETH_RPC_URLS`` is exempt — it's the tier-2 metered fallback list
+    consumed by the targeted poller, never the direct telemetry path. Alchemy
+    / Infura / Chainstack are intentionally allowed there as cost-controlled
+    backups behind the free foundation primaries.
     """
     rpc_urls = [
-        ("ETH_RPC_URLS", split_urls(settings.ETH_RPC_URLS or "")),
         ("ARB_RPC_URL", [settings.ARB_RPC_URL] if settings.ARB_RPC_URL else []),
         ("BASE_RPC_URL", [settings.BASE_RPC_URL] if settings.BASE_RPC_URL else []),
     ]
