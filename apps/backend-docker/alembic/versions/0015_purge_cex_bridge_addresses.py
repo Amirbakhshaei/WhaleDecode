@@ -20,12 +20,14 @@ depends_on = None
 
 
 # ponytail: lower-cased so a one-time LOWER() in the SQL matches mixed-case rows
-# that the upstream syncer inserted verbatim. Three addresses the user asked
-# to be removed from polling entirely.
+# that the upstream syncer inserted verbatim. Addresses the user asked to be
+# removed from polling entirely.
 _FUNDING_ONLY_ADDRESSES_LC = (
     "0x28c6c06298d514db089934071355e5743bf21d60",  # Binance Hot 14
     "0x09aea4b2242abc8bb4bb78d537a67a245a7bec64",  # Across Base SpokePool
     "0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",  # Across ARB SpokePool
+    "0xce16f69375520ab01377ce7b88f5ba8c48f8d666",  # Axelar Gateway
+    "0xf326e4de8f66a0bdc0970b79e0924e33c79f1915",  # MetaMask Fee Collector
 )
 
 

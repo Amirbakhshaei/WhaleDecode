@@ -82,14 +82,14 @@ class RpcFailoverRouter:
         name: str,
         urls: list[str],
         cooldown_seconds: float = 60.0,
-        timeout: float = 15.0,
+        timeout: float = 25.0,
     ) -> None:
         if not urls:
             raise ValueError(f"RpcFailoverRouter({name}) needs at least one URL")
         self._name = name
         self._urls = urls
         self._cooldown_seconds = cooldown_seconds
-        self._timeout = timeout
+        self._timeout = httpx.Timeout(timeout, connect=10.0)
         self._cooldown_until: dict[str, float] = {}
         self._rotation = itertools.cycle(range(len(urls)))
         self._client: httpx.AsyncClient | None = None

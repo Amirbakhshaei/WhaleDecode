@@ -36,6 +36,19 @@ from whaledecode.pools.rpc.manager import ResilientRPCManager
 
 log = structlog.get_logger()
 
+# ponytail: belt-and-suspenders exclusion list for firehose contracts. The
+# primary gate is ``curated_wallets.is_exchange`` (filtered by ``list_active``)
+# plus the FUNDING_ONLY_ADDRESSES set in curation/sources.py; this constant is
+# an extra defence in case a sync ever inserts one of these rows with the
+# wrong flag. All lower-cased so case mismatches in the seed don't bypass it.
+EXCLUDED_POLLING_ADDRESSES: set[str] = {
+    "0x28c6c06298d514db089934071355e5743bf21d60",  # Binance 14
+    "0x09aea4b2242abc8bb4bb78d537a67a245a7bec64",  # Across Base SpokePool
+    "0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",  # Across ARB SpokePool
+    "0xce16f69375520ab01377ce7b88f5ba8c48f8d666",  # Axelar Gateway
+    "0xf326e4de8f66a0bdc0970b79e0924e33c79f1915",  # MetaMask Fee Collector
+}
+
 # chain code (curated_wallets.chain) -> (label, settings key for RPC URLs)
 _EVM_CHAINS = {
     "ETH": ("Ethereum", "ETH_PUBLIC_RPC_URLS"),
@@ -113,6 +126,11 @@ class TargetedPollerService:
         async with UnitOfWork(self._session_factory) as uow:
             for code in (*_EVM_CHAINS, "SOL"):
                 wallets = await uow.curated_wallets.list_active(chain=code)
+                if not wallets:
+                    continue
+                # Filter the belt-and-suspenders exclusion list. Cheap in-memory
+                # scan; the set is <10 entries.
+                wallets = [w for w in wallets if w.address.lower() not in EXCLUDED_POLLING_ADDRESSES]
                 if not wallets:
                     continue
                 # Limit ETH wallets to reduce RPC load on free endpoints

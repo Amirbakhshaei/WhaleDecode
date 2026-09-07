@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from whaledecode.adapters.chain.normalizer import _classify_event, parse_token_amount
+from whaledecode.adapters.db.session import ensure_tables
 from whaledecode.application.services.investigation import (
     build_investigation_service,
 )
@@ -222,6 +223,17 @@ async def lifespan(app: FastAPI):
     global session_factory, _price_oracle
     init_sentry(settings)
     app.state.settings = settings
+
+    # ponytail: belt-and-suspenders table bootstrap. The release command runs
+    # `whaledecode db-init` (alembic upgrade head + seed) before the web
+    # process starts, so this is normally a no-op — but on a fresh DB or a
+    # redeploy that races the release phase, ``wallet_profiles`` and friends
+    # may be missing when the worker claims its first event. create_all is
+    # idempotent: extra calls are free.
+    try:
+        await ensure_tables(settings)
+    except Exception as e:  # noqa: BLE001 - don't crash boot over a soft-init failure
+        logger.warning("ensure_tables_failed", extra={"error": str(e)}, exc_info=True)
 
     # 1) Build services (needed by all instances for /health DB probe).
     factory, investigation_service, _ = build_investigation_service(settings)
