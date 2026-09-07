@@ -39,6 +39,7 @@ async def process_and_gate_candidate(candidate: CandidateEvent, price_oracle: An
     token_amount = _coerce_float_if_present(_first_present(raw, _TOKEN_AMOUNT_KEYS)) or transfer_amount(raw)
     asset = str(_first_present(raw, _ASSET_KEYS) or "").upper()
 
+    prior_value_usd = raw.get("value_usd")
     if timestamp is not None:
         unit_price = await price_oracle.get_token_price_usd_at(contract_address=contract_address, chain=candidate.chain, unix_ts=timestamp)
     else:
@@ -48,7 +49,9 @@ async def process_and_gate_candidate(candidate: CandidateEvent, price_oracle: An
     elif asset in STABLECOINS:
         value_usd = token_amount
     else:
-        value_usd = 0.0
+        # ponytail: oracle miss on a non-stable must not zero out a poller-priced
+        # value — keep the prior USD (or 0.0 if none) instead of forcing a skip.
+        value_usd = prior_value_usd if isinstance(prior_value_usd, (int, float)) else 0.0
 
     candidate.raw_json["value_usd"] = value_usd
     # Explicit float cast to prevent lexicographical string comparison bugs

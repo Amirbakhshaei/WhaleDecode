@@ -8,6 +8,7 @@ from aiolimiter import AsyncLimiter
 from cachetools import TTLCache  # type: ignore[import-untyped]
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from whaledecode.adapters.chain.normalizer import transfer_amount
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.adapters.llm_graph.formatting.sanitizer import sanitize_event_payload
@@ -17,7 +18,11 @@ from whaledecode.domain.entities.agent_run import AgentRun
 from whaledecode.domain.entities.candidate_event import CandidateEvent
 from whaledecode.domain.policies.conviction import Purchase, score_conviction
 from whaledecode.domain.ports.reasoner import ReasonerPort
-from whaledecode.domain.services.event_gate import EventGate, process_and_gate_candidate
+from whaledecode.domain.services.event_gate import (
+    MIN_WHALE_THRESHOLD_USD,
+    EventGate,
+    process_and_gate_candidate,
+)
 
 log = structlog.get_logger()
 
@@ -142,16 +147,57 @@ class InvestigationService:
         if self._price_oracle is not None and not await process_and_gate_candidate(
             event, self._price_oracle, timestamp=time.time()
         ):
+            raw_view = event.raw_json if isinstance(event.raw_json, dict) else {}
+            raw_val = raw_view.get("value_usd")
+            try:
+                val_float = float(raw_val) if raw_val is not None else 0.0
+            except (TypeError, ValueError):
+                val_float = 0.0
+            floor_float = float(MIN_WHALE_THRESHOLD_USD)
+            log.info(
+                "worker_eval_gate",
+                extra={
+                    "event_id": event.id,
+                    "raw_val": raw_val,
+                    "raw_val_type": type(raw_val).__name__,
+                    "value_usd": val_float,
+                    "floor_usd": floor_float,
+                },
+            )
             event.status = "skipped"
             async with self._uow_factory() as uow:
                 await self._persist_skipped(uow, event)
-            log.info(f"[FILTER_SKIP] Event ID={event.id} marked as skipped. Reason='Below $50k USD gate' | Tx={event.tx_hash}")
+            log.info(
+                f"[FILTER_SKIP] Event ID={event.id} marked as skipped. "
+                f"Reason='Below ${int(floor_float/1000)}k USD gate' "
+                f"(val=${val_float:,.2f}) | Tx={event.tx_hash}"
+            )
             return {"status": "skipped", "reason": "Below $50k USD gate"}
         if not self._gate.should_investigate(event):
+            raw_view = event.raw_json if isinstance(event.raw_json, dict) else {}
+            raw_val = raw_view.get("value_usd")
+            try:
+                val_float = float(raw_val) if raw_val is not None else 0.0
+            except (TypeError, ValueError):
+                val_float = 0.0
+            log.info(
+                "worker_eval_gate",
+                extra={
+                    "event_id": event.id,
+                    "raw_val": raw_val,
+                    "raw_val_type": type(raw_val).__name__,
+                    "value_usd": val_float,
+                    "event_score": event.score,
+                    "passed": False,
+                },
+            )
             event.status = "skipped"
             async with self._uow_factory() as uow:
                 await self._persist_skipped(uow, event)
-            log.info(f"[FILTER_SKIP] Event ID={event.id} marked as skipped. Reason='Below gate threshold' | Tx={event.tx_hash}")
+            log.info(
+                f"[FILTER_SKIP] Event ID={event.id} marked as skipped. "
+                f"Reason='Below gate threshold' (val=${val_float:,.2f}, score={event.score:.2f}) | Tx={event.tx_hash}"
+            )
             return {"status": "skipped", "reason": "Below gate threshold"}
 
         # Stage 2: Payload sanitization — compact raw RPC data for token efficiency.

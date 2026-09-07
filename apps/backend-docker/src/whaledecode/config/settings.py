@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     MAX_ETH_WALLETS_PER_POLL: int = 50
     # Clean public RPC endpoints — bad nodes (cloudflare-eth.com, payload.de,
     # ankr without API key, 1rpc.io) permanently removed. All support address-filtered eth_getLogs.
-    ETH_PUBLIC_RPC_URLS: str = "https://rpc.mevblocker.io,https://eth.merkle.io,https://rpc.flashbots.net,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
+    ETH_PUBLIC_RPC_URLS: str = "https://rpc.mevblocker.io,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
     BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.drpc.org"
     ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one.publicnode.com,https://arbitrum.drpc.org"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"

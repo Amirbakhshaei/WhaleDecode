@@ -17,8 +17,10 @@ import logging
 import click
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from whaledecode.adapters.alchemy.webhook_manager import AlchemyWebhookManager
 from whaledecode.adapters.curation import (
+    FUNDING_ONLY_ADDRESSES,
     DefiLlamaAdapter,
     DuneSpellbookAdapter,
     is_webhook_eligible,
@@ -33,8 +35,14 @@ log = logging.getLogger(__name__)
 
 def _to_row(seed) -> dict:
     # Mark CEX wallets as is_exchange so they're used for funding-edge tracing
-    # but excluded from active polling (firehose noise).
-    is_exchange = seed.category == "Exchange" or "cex" in seed.tags
+    # but excluded from active polling (firehose noise). Bridge SpokePools and
+    # other infrastructure contracts in FUNDING_ONLY_ADDRESSES get the same
+    # treatment: visible to the LLM as origin labels, never eth_getLogs targets.
+    is_exchange = (
+        seed.category == "Exchange"
+        or "cex" in seed.tags
+        or seed.address.lower() in FUNDING_ONLY_ADDRESSES
+    )
     return {
         "address": seed.address,
         "chain": seed.chain,

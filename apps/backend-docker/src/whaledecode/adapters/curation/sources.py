@@ -105,6 +105,18 @@ DISALLOWED_WEBHOOK_ADDRESSES: set[str] = {
     # High-Velocity Exchange Hot Routers (>100k txs/day)
     "0x28c6c06298d514db089934071355e5743bf21d60",  # Binance Hot 14
     "0x21a31ee1afc51d94c2efccaa2092ad1028285549",  # Binance Hot 15
+    # Bridge SpokePools / cross-chain protocol contracts (global transfer firehoses)
+    "0x09aea4b2242abc8bb4bb78d537a67a245a7bec64",  # Across Base SpokePool Proxy
+    "0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",  # Across ARB SpokePool Proxy
+}
+
+# Funding-edge tracing only — explicitly tagged for cross-referencing deposits
+# without ever becoming an eth_getLogs polling target. Excluded by
+# CuratedWalletRepository.list_active via is_exchange=True.
+FUNDING_ONLY_ADDRESSES: set[str] = {
+    "0x28c6c06298d514db089934071355e5743bf21d60",  # Binance Hot 14
+    "0x09aea4b2242abc8bb4bb78d537a67a245a7bec64",  # Across Base SpokePool
+    "0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",  # Across ARB SpokePool
 }
 
 
