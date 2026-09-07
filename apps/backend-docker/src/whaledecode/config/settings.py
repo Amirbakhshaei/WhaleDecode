@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     ETH_RPC_URL: str | None = None
     ARB_RPC_URL: str | None = None
     BASE_RPC_URL: str | None = None
-    POLL_INTERVAL_SECONDS: int = 25
+    POLL_INTERVAL_SECONDS: int = 30
     POLL_BATCH_SIZE: int = 50
     REORG_SAFE_BLOCKS: int = 64
     MAX_GET_LOGS_BLOCK_RANGE: dict[str, int] = {"Ethereum": 15, "Base": 30, "Arbitrum": 10}
@@ -111,11 +111,14 @@ class Settings(BaseSettings):
     # webhook path's whale floor, now applied at the poller).
     TARGETED_MIN_TX_USD: float = 50_000.0
     MAX_ETH_WALLETS_PER_POLL: int = 50
-    # Clean public RPC endpoints — bad nodes (cloudflare-eth.com, payload.de,
-    # ankr without API key, 1rpc.io) permanently removed. All support address-filtered eth_getLogs.
+    # Tiered Ethereum RPC list: free foundation/anonymous nodes lead (primary
+    # traffic), metered keys (Alchemy/Infura/Chainstack via ETH_RPC_URL) are
+    # appended at the router level when set — used only when all free nodes are
+    # in cooldown. cloudflare-eth.com and 1rpc.io/eth are the highest-priority
+    # free primaries per the inverted-topic polling spec.
     ETH_PUBLIC_RPC_URLS: str = (
-        "https://rpc.mevblocker.io,https://eth.drpc.org,https://ethereum-rpc.publicnode.com,"
-        "https://1rpc.io/eth,https://rpc.ankr.com/eth"
+        "https://cloudflare-eth.com,https://1rpc.io/eth,https://rpc.mevblocker.io,"
+        "https://eth.drpc.org,https://ethereum-rpc.publicnode.com,https://rpc.ankr.com/eth"
     )
     BASE_PUBLIC_RPC_URLS: str = (
         "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.drpc.org,"
