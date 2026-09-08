@@ -92,7 +92,7 @@ class LiveBlockchainFetcher:
             try:
                 block = await self._provider.get_block_number(chain)
             except Exception as e:
-                log.error("fetcher_block_failed", extra={"chain": chain, "error": str(e)})
+                log.error("fetcher_block_failed", extra={"chain": chain, "error": str(e)}, exc_info=True)
                 continue
 
             on_chain = [w for w in wallets if w.chain.label() == chain]
@@ -117,7 +117,7 @@ class LiveBlockchainFetcher:
                             topics=topics,
                         )
                     except Exception as e:
-                        log.error("fetcher_logs_failed", extra={"chain": chain, "batch": i, "error": str(e)})
+                        log.error("fetcher_logs_failed", extra={"chain": chain, "batch": i, "error": str(e)}, exc_info=True)
                         continue
                     for raw_log in logs:
                         wallet_id = wallet_id_from_transfer_topics(raw_log.get("topics", []), padded_to_wallet)

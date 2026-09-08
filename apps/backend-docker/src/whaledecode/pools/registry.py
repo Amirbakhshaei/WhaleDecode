@@ -77,7 +77,7 @@ class PoolRegistry:
                 try:
                     pool = self._pool_from_seed(chain_name, cfg.chain_id, spec)
                 except (KeyError, ValueError) as exc:
-                    log.warning("seed_skipped", extra={"chain": chain_name, "error": str(exc)})
+                    log.warning("seed_skipped", extra={"chain": chain_name, "error": str(exc)}, exc_info=True)
                     continue
                 out.append(pool)
         return out
@@ -97,13 +97,13 @@ class PoolRegistry:
             try:
                 present = await self._batch_bytecode_present(chain_name, chain_pools)
             except Exception as exc:
-                log.warning("bytecode_check_failed", extra={"chain": chain_name, "error": str(exc)})
+                log.warning("bytecode_check_failed", extra={"chain": chain_name, "error": str(exc)}, exc_info=True)
                 present = [True] * len(chain_pools)  # fall back to adapter-only verification
 
             try:
                 states = await self._batch_state(chain_name, chain_pools)
             except Exception as exc:
-                log.warning("multicall_state_failed", extra={"chain": chain_name, "error": str(exc)})
+                log.warning("multicall_state_failed", extra={"chain": chain_name, "error": str(exc)}, exc_info=True)
                 states = [PoolState(p.address, p.chain_id) for p in chain_pools]
 
             for pool, has_code, state in zip(chain_pools, present, states):
@@ -230,7 +230,7 @@ class PoolRegistry:
             try:
                 state = adapter.decode_state(pool, per_pool_rows[pool.address], block_number)
             except Exception as exc:
-                log.warning("state_decode_failed", extra={"address": pool.address, "error": str(exc)})
+                log.warning("state_decode_failed", extra={"address": pool.address, "error": str(exc)}, exc_info=True)
                 state = PoolState(pool.address, pool.chain_id, block_number=block_number)
             out.append(state)
         return out

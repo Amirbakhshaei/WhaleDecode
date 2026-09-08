@@ -294,7 +294,7 @@ class InvestigationService:
             try:
                 await asyncio.wait_for(asyncio.shield(trace_task), timeout=5.0)
             except (TimeoutError, Exception) as exc:
-                log.warning(f"[EDGE_INTEL] cluster trace incomplete: {exc}")
+                log.warning(f"[EDGE_INTEL] cluster trace incomplete: {exc}", exc_info=True)
                 trace_task.cancel()
         # Copy deterministic enrichment onto the persisted entity.
         self._sync_intel_fields(event, event_dict)
@@ -382,7 +382,7 @@ class InvestigationService:
                 wallets = await uow.curated_wallets.list_active()
             labels = {w.address.lower(): (w.label or w.category) for w in wallets}
         except Exception as exc:
-            log.warning(f"[EDGE_INTEL] curated wallet lookup failed: {exc}")
+            log.warning(f"[EDGE_INTEL] curated wallet lookup failed: {exc}", exc_info=True)
         event["_known_labels"] = labels
 
         # Module 3a — Pool Impact Ratio (DexScreener TVL, cached).
@@ -404,7 +404,7 @@ class InvestigationService:
             try:
                 profile_ctx = await self._profiler.enrich(chain, wallet_addr)
             except Exception as exc:
-                log.warning(f"[EDGE_INTEL] profiler enrich failed: {exc}")
+                log.warning(f"[EDGE_INTEL] profiler enrich failed: {exc}", exc_info=True)
                 log_profiler_enrich_not_found(wallet_addr, reason=f"exception: {exc}")
                 return
             event.update(profile_ctx)
@@ -515,7 +515,7 @@ class InvestigationService:
             finally:
                 await client.aclose()
         except Exception as exc:
-            log.warning(f"[EDGE_INTEL] dexscreener tvl failed for {token}: {exc}")
+            log.warning(f"[EDGE_INTEL] dexscreener tvl failed for {token}: {exc}", exc_info=True)
             return 0.0
         chain_slug = {"ethereum": "ethereum", "eth": "ethereum", "arbitrum": "arbitrum", "arb": "arbitrum", "base": "base"}
         want = chain_slug.get(chain.lower(), "")

@@ -170,7 +170,7 @@ class TargetedPollerService:
                 try:
                     activities = await poller.fetch_recent_activity(list(wallets))
                 except Exception as e:  # noqa: BLE001 - one chain down ≠ all chains down
-                    log.error("targeted_poll_failed", extra={"chain": code, "error": str(e)})
+                    log.error("targeted_poll_failed", extra={"chain": code, "error": str(e)}, exc_info=True)
                     continue
                 # Telemetry: log activities fetched per wallet
                 for wallet in wallets:

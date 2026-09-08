@@ -69,7 +69,7 @@ class SolanaTargetedPoller(TargetedChainPoller):
                     [wallet.address, {"limit": _SIGNATURES_PER_ADDRESS}],
                 )
             except Exception as e:  # noqa: BLE001 - one dead address must not kill the pass
-                log.warning("solana_poll_address_failed", extra={"address": wallet.address[:10], "error": str(e)})
+                log.warning("solana_poll_address_failed", extra={"address": wallet.address[:10], "error": str(e)}, exc_info=True)
                 continue
 
             seen = self._seen.setdefault(wallet.address, set())
