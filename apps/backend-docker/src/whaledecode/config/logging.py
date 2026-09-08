@@ -1,48 +1,64 @@
 import logging
 import sys
-
 import structlog
 from whaledecode.config.settings import Settings
 
 
 def setup_logging(settings: Settings) -> None:
-    # 1. Route stdlib (and therefore structlog's stdlib-backed) output to STDOUT
-    #    so application logs are cleanly captured by container log collectors.
-    root = logging.getLogger()
-    root.handlers.clear()
-    root.addHandler(logging.StreamHandler(sys.stdout))
-    try:
-        root.setLevel(settings.LOG_LEVEL.upper())
-    except Exception:
-        root.setLevel(logging.INFO)
-        logging.getLogger(__name__).warning("invalid_log_level_fallback_to_info", extra={"log_level": settings.LOG_LEVEL})
-    # Keep stdlib formatting minimal — structlog already renders timestamp/level.
-    for handler in root.handlers:
-        handler.setFormatter(logging.Formatter("%(message)s"))
+    """
+    Configures structlog and standard library logging to output
+    unified, pure JSON to sys.stdout without dropping message payloads.
+    """
+    # 1. Reset root logger and remove any existing misconfigured handlers
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
 
-    # 2. Silence raw SQLAlchemy polling/engine noise in production.
+    # 2. Shared processors across structlog and third-party libraries (uvicorn, httpx)
+    shared_processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.dict_tracebacks,
+    ]
+
+    # 3. Configure structlog to wrap events for the standard library formatter
+    structlog.configure(
+        processors=shared_processors + [
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+    # 4. Attach StreamHandler with ProcessorFormatter to the root logger
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared_processors,
+            processor=structlog.processors.JSONRenderer(),
+        )
+    )
+    root_logger.addHandler(handler)
+
+    # 5. Prevent uvicorn from overriding root handlers
+    for uvicorn_logger in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        log = logging.getLogger(uvicorn_logger)
+        log.handlers.clear()
+        log.propagate = True
+
+    # 6. Silence raw SQLAlchemy polling/engine noise in production
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
-    # httpx logs one INFO line per RPC request — pure noise at poll cadence.
+    # httpx logs one INFO line per RPC request — pure noise at poll cadence
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    # 3. Single-owner loggers: propagate=False stops the duplicate multiline
+    # 7. Single-owner loggers: propagate=False stops the duplicate multiline
     # streams that appear when a logger bubbles records into root while also
     # being handled elsewhere. App ("whaledecode.*") loggers intentionally keep
     # propagation — root is their only output handler.
     for name in ("sqlalchemy.engine", "sqlalchemy.pool"):
         logging.getLogger(name).propagate = False
-
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
-            structlog.processors.dict_tracebacks,
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.stdlib.BoundLogger,
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
