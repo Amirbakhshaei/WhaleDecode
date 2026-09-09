@@ -94,10 +94,13 @@ class CapabilityAwareRpcRouter:
         # Backward-compat: swallow old (name, urls, ...) positional args
         self._name = kwargs.get("name") or (args[0] if args else "default")
 
-        # 1. Load authenticated providers for Ethereum from environment
+        # 1. Load authenticated providers for each chain from environment
         eth_auth = _parse_env_urls("ETH_RPC_URLS") or _parse_env_urls("ETHEREUM_RPC_URL")
+        base_auth = _parse_env_urls("BASE_RPC_URLS")
+        arb_auth = _parse_env_urls("ARB_RPC_URLS")
+        sol_auth = _parse_env_urls("SOL_RPC_URLS") or _parse_env_urls("SOLANA_RPC_URL")
 
-        # 2. Build structured chain pools (dedicated = log-capable, public = fallback)
+        # Build structured chain pools (dedicated = log-capable, public = fallback)
         self.pools: Dict[str, Dict[str, List[dict]]] = {
             "ethereum": {
                 "dedicated": [
@@ -106,49 +109,61 @@ class CapabilityAwareRpcRouter:
                 ],
                 "public": [
                     {"url": "https://rpc.mevblocker.io", "failures": 0, "cooldown": 0.0, "name": "eth_mevblocker"},
-                    {"url": "https://eth.llamarpc.com", "failures": 0, "cooldown": 0.0, "name": "eth_llama"},
+                    {"url": "https://rpc.ankr.com/eth", "failures": 0, "cooldown": 0.0, "name": "eth_ankr"},
                 ],
             },
             "base": {
                 "dedicated": [
                     {"url": u, "failures": 0, "cooldown": 0.0, "name": f"base_auth_{i}"}
-                    for i, u in enumerate(_parse_env_urls("BASE_RPC_URLS"))
+                    for i, u in enumerate(base_auth)
                 ],
                 "public": [
                     {"url": "https://mainnet.base.org", "failures": 0, "cooldown": 0.0, "name": "base_foundation"},
-                    {"url": "https://base.drpc.org", "failures": 0, "cooldown": 0.0, "name": "base_drpc"},
-                    {"url": "https://base.llamarpc.com", "failures": 0, "cooldown": 0.0, "name": "base_llama"},
+                    {"url": "https://developer-access-mainnet.base.org", "failures": 0, "cooldown": 0.0, "name": "base_dev"},
                 ],
             },
             "arbitrum": {
                 "dedicated": [
                     {"url": u, "failures": 0, "cooldown": 0.0, "name": f"arb_auth_{i}"}
-                    for i, u in enumerate(_parse_env_urls("ARB_RPC_URLS"))
+                    for i, u in enumerate(arb_auth)
                 ],
                 "public": [
                     {"url": "https://arb1.arbitrum.io/rpc", "failures": 0, "cooldown": 0.0, "name": "arb_foundation"},
-                    {"url": "https://arbitrum.drpc.org", "failures": 0, "cooldown": 0.0, "name": "arb_drpc"},
-                    {"url": "https://arbitrum.llamarpc.com", "failures": 0, "cooldown": 0.0, "name": "arb_llama"},
+                ],
+            },
+            "solana": {
+                "dedicated": [
+                    {"url": u, "failures": 0, "cooldown": 0.0, "name": f"sol_auth_{i}"}
+                    for i, u in enumerate(sol_auth)
+                ],
+                "public": [
+                    {"url": "https://api.mainnet-beta.solana.com", "failures": 0, "cooldown": 0.0, "name": "sol_foundation"},
+                    {"url": "https://rpc.ankr.com/solana", "failures": 0, "cooldown": 0.0, "name": "sol_ankr"},
+                    {"url": "https://solana.api.pocket.network", "failures": 0, "cooldown": 0.0, "name": "sol_pocket"},
                 ],
             },
         }
 
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+        # Custom headers prevent Cloudflare 403/525 drops on public Solana nodes
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        self._client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(15.0, connect=5.0))
         self._rr_indices = {chain: 0 for chain in self.pools}
+        logger.info("rpc_router_initialized", chains=list(self.pools.keys()))
 
     def _get_eligible_nodes(self, chain: str, method: str) -> List[dict]:
         chain_pool = self.pools.get(chain.lower(), {})
         now = time.time()
 
-        # eth_getLogs REQUIRES dedicated nodes if available to prevent -32701
+        # EVM eth_getLogs requires dedicated indexers; Solana/basic EVM use both tiers
         if method == "eth_getLogs":
-            candidates = chain_pool.get("dedicated", [])
-            # If no dedicated nodes configured for chain, fallback to public foundation nodes
-            if not candidates:
-                candidates = chain_pool.get("public", [])
+            candidates = chain_pool.get("dedicated", []) or chain_pool.get("public", [])
         else:
-            # Basic methods (eth_blockNumber) prioritize public nodes to preserve paid CUs
-            candidates = chain_pool.get("public", []) + chain_pool.get("dedicated", [])
+            # Solana and basic EVM calls can use both public and dedicated pools
+            candidates = chain_pool.get("dedicated", []) + chain_pool.get("public", [])
 
         # Filter out nodes currently in cooldown
         available = [n for n in candidates if n["cooldown"] <= now]

@@ -66,7 +66,7 @@ class SolanaTargetedPoller(TargetedChainPoller):
             try:
                 sigs = await self._rpc(
                     "getSignaturesForAddress",
-                    [wallet.address, {"limit": _SIGNATURES_PER_ADDRESS}],
+                    [wallet.address, {"limit": _SIGNATURES_PER_ADDRESS, "commitment": "confirmed"}],
                 )
             except Exception as e:  # noqa: BLE001 - one dead address must not kill the pass
                 log.warning("solana_poll_address_failed", extra={"address": wallet.address[:10], "error": str(e)}, exc_info=True)
