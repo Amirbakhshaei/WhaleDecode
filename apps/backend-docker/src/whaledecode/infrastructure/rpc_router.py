@@ -9,10 +9,9 @@ flagged with a temporary cooldown and skipped, then automatically retried
 after the penalty expires. No health-check thread needed — real traffic is
 the probe.
 """
-import itertools
 import os
 import time
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import httpx
 import structlog
@@ -20,9 +19,10 @@ import structlog
 logger = structlog.get_logger("rpc_router")
 
 
-def _get_env_rpc_list(var_name: str) -> list[str]:
-    raw = os.getenv(var_name, "").strip()
-    return [u.strip() for u in raw.split(",") if u.strip()]
+def _parse_env_urls(env_var: str) -> List[str]:
+    raw = os.getenv(env_var, "").strip()
+    return [url.strip() for url in raw.split(",") if url.strip()]
+
 
 # Status codes meaning "this node is unhealthy/rate-limited for us" → failover.
 # 520-524: Cloudflare-origin failures (llamarpc et al. return bare 521s).
@@ -80,114 +80,160 @@ class RpcNodesExhaustedError(RuntimeError):
     """Every node in the array failed or is cooling down."""
 
 
-class RpcFailoverRouter:
-    """Round-robin JSON-RPC dispatcher over an array of public endpoints."""
+class CapabilityAwareRpcRouter:
+    """Method-aware RPC router with dedicated/public tier selection.
 
-    def __init__(
-        self,
-        name: str = "default",
-        urls: list[str] | None = None,
-        cooldown_seconds: float = 60.0,
-        timeout: float = 25.0,
-    ) -> None:
-        # Load authenticated keys from environment
-        eth_env_nodes = _get_env_rpc_list("ETH_RPC_URLS") or _get_env_rpc_list("ETHEREUM_RPC_URL")
+    * ``dedicated`` nodes (Alchemy/Infura/dRPC/Ankr from env) handle
+      ``eth_getLogs`` so public nodes never return ``-32701``.
+    * ``public`` nodes serve basic methods (``eth_blockNumber``,
+      ``eth_getTransactionReceipt``) to preserve paid CU quotas.
+    * Purged: all ``publicnode.com`` URLs.
+    """
 
-        if urls is None:
-            urls = []
-        self._name = name
-        self._urls = urls
-        self._cooldown_seconds = cooldown_seconds
-        self._timeout = httpx.Timeout(timeout, connect=10.0)
-        self._cooldown_until: dict[str, float] = {}
-        self._rotation = itertools.cycle(range(max(len(urls), 1)))
-        self._client: httpx.AsyncClient | None = None
+    def __init__(self, *args, **kwargs):
+        # Backward-compat: swallow old (name, urls, ...) positional args
+        self._name = kwargs.get("name") or (args[0] if args else "default")
 
-        # Define bulletproof pools with multiple fallbacks; no publicnode.com
-        self.pools = {
-            "ethereum": [
-                *[{"url": u, "name": f"eth_custom_{i}", "weight": 10, "cooldown": 0.0} for i, u in enumerate(eth_env_nodes)],
-                {"url": "https://rpc.mevblocker.io", "name": "eth_mevblocker", "weight": 5, "cooldown": 0.0},
-                {"url": "https://eth.llamarpc.com", "name": "eth_llama", "weight": 3, "cooldown": 0.0},
-                {"url": "https://rpc.ankr.com/eth", "name": "eth_ankr", "weight": 2, "cooldown": 0.0},
-            ],
-            "base": [
-                {"url": "https://mainnet.base.org", "name": "base_foundation", "weight": 10, "cooldown": 0.0},
-                {"url": "https://base.drpc.org", "name": "base_drpc", "weight": 5, "cooldown": 0.0},
-                {"url": "https://base.llamarpc.com", "name": "base_llama", "weight": 3, "cooldown": 0.0},
-            ],
-            "arbitrum": [
-                {"url": "https://arb1.arbitrum.io/rpc", "name": "arb_foundation", "weight": 10, "cooldown": 0.0},
-                {"url": "https://arbitrum.drpc.org", "name": "arb_drpc", "weight": 5, "cooldown": 0.0},
-                {"url": "https://arbitrum.llamarpc.com", "name": "arb_llama", "weight": 3, "cooldown": 0.0},
-            ],
+        # 1. Load authenticated providers for Ethereum from environment
+        eth_auth = _parse_env_urls("ETH_RPC_URLS") or _parse_env_urls("ETHEREUM_RPC_URL")
+
+        # 2. Build structured chain pools (dedicated = log-capable, public = fallback)
+        self.pools: Dict[str, Dict[str, List[dict]]] = {
+            "ethereum": {
+                "dedicated": [
+                    {"url": u, "failures": 0, "cooldown": 0.0, "name": f"eth_auth_{i}"}
+                    for i, u in enumerate(eth_auth)
+                ],
+                "public": [
+                    {"url": "https://rpc.mevblocker.io", "failures": 0, "cooldown": 0.0, "name": "eth_mevblocker"},
+                    {"url": "https://eth.llamarpc.com", "failures": 0, "cooldown": 0.0, "name": "eth_llama"},
+                ],
+            },
+            "base": {
+                "dedicated": [
+                    {"url": u, "failures": 0, "cooldown": 0.0, "name": f"base_auth_{i}"}
+                    for i, u in enumerate(_parse_env_urls("BASE_RPC_URLS"))
+                ],
+                "public": [
+                    {"url": "https://mainnet.base.org", "failures": 0, "cooldown": 0.0, "name": "base_foundation"},
+                    {"url": "https://base.drpc.org", "failures": 0, "cooldown": 0.0, "name": "base_drpc"},
+                    {"url": "https://base.llamarpc.com", "failures": 0, "cooldown": 0.0, "name": "base_llama"},
+                ],
+            },
+            "arbitrum": {
+                "dedicated": [
+                    {"url": u, "failures": 0, "cooldown": 0.0, "name": f"arb_auth_{i}"}
+                    for i, u in enumerate(_parse_env_urls("ARB_RPC_URLS"))
+                ],
+                "public": [
+                    {"url": "https://arb1.arbitrum.io/rpc", "failures": 0, "cooldown": 0.0, "name": "arb_foundation"},
+                    {"url": "https://arbitrum.drpc.org", "failures": 0, "cooldown": 0.0, "name": "arb_drpc"},
+                    {"url": "https://arbitrum.llamarpc.com", "failures": 0, "cooldown": 0.0, "name": "arb_llama"},
+                ],
+            },
         }
 
-        logger.info(
-            "rpc_pools_initialized",
-            eth_nodes=len(self.pools["ethereum"]),
-            base_nodes=len(self.pools["base"]),
-            arb_nodes=len(self.pools["arbitrum"]),
-            has_auth_eth=bool(eth_env_nodes),
-        )
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+        self._rr_indices = {chain: 0 for chain in self.pools}
 
-    async def post(self, payload: dict[str, Any]) -> Any:
-        """Send one JSON-RPC payload, failover on unhealthy nodes.
+    def _get_eligible_nodes(self, chain: str, method: str) -> List[dict]:
+        chain_pool = self.pools.get(chain.lower(), {})
+        now = time.time()
 
-        Raises :class:`RpcNodesExhaustedError` only when every node has been
-        tried in this pass.
-        """
-        if not self._urls:
-            raise RpcNodesExhaustedError(f"{self._name}: no URLs configured")
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout)
-        now = time.monotonic()
-        last_error: Exception | None = None
-        # Try every node once per call; cooled-down ones are skipped instantly.
-        for _ in range(len(self._urls)):
-            idx = next(self._rotation)
-            url = self._urls[idx]
-            if self._cooldown_until.get(url, 0) > now:
-                continue
+        # eth_getLogs REQUIRES dedicated nodes if available to prevent -32701
+        if method == "eth_getLogs":
+            candidates = chain_pool.get("dedicated", [])
+            # If no dedicated nodes configured for chain, fallback to public foundation nodes
+            if not candidates:
+                candidates = chain_pool.get("public", [])
+        else:
+            # Basic methods (eth_blockNumber) prioritize public nodes to preserve paid CUs
+            candidates = chain_pool.get("public", []) + chain_pool.get("dedicated", [])
+
+        # Filter out nodes currently in cooldown
+        available = [n for n in candidates if n["cooldown"] <= now]
+        if not available and candidates:
+            # If all are cooling down, select the node that clears earliest
+            earliest = min(candidates, key=lambda n: n["cooldown"])
+            return [earliest]
+
+        return available
+
+    def _penalize_node(self, node: dict, reason: str):
+        node["failures"] += 1
+        # Exponential backoff capped at 5 minutes
+        duration = min(300.0, 10.0 * (1.5 ** (node["failures"] - 1)))
+        node["cooldown"] = time.time() + duration
+        logger.warning("rpc_node_cooldown", node=node["name"], duration=duration, reason=reason)
+
+    async def _post_impl(self, chain: str, method: str, params: list) -> Any:
+        chain_key = chain.lower()
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        nodes = self._get_eligible_nodes(chain_key, method)
+
+        if not nodes:
+            raise RuntimeError(f"{chain}: no operational nodes available for method {method}")
+
+        last_error = None
+        for _ in range(len(nodes)):
+            # Weighted round-robin across available nodes
+            idx = self._rr_indices[chain_key] % len(nodes)
+            node = nodes[idx]
+            self._rr_indices[chain_key] = (idx + 1) % len(nodes)
+
             try:
-                resp = await self._client.post(url, json=payload)
-                if resp.status_code in _FAILOVER_STATUS:
-                    self._penalize(url, f"HTTP {resp.status_code}")
-                    last_error = RuntimeError(f"{url} returned {resp.status_code}")
+                resp = await self._client.post(node["url"], json=payload)
+                if resp.status_code != 200:
+                    self._penalize_node(node, f"HTTP {resp.status_code}")
+                    last_error = f"HTTP {resp.status_code}"
                     continue
-                resp.raise_for_status()
-            except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as e:
-                self._penalize(url, type(e).__name__)
-                last_error = e
-                continue
-            try:
-                body = resp.json()
-            except ValueError as e:
-                self._penalize(url, "non-json response")
-                last_error = e
-                continue
-            if "error" in body:
-                err = body["error"]
-                if _is_node_capacity_error(err):
-                    # Node policy/capacity limit — rotate to the next node.
-                    self._penalize(url, f"RPC {err.get('code')}")
-                    last_error = RuntimeError(f"RPC error from {url}: {err}")
+
+                data = resp.json()
+                if "error" in data:
+                    err = data["error"]
+                    err_code = err.get("code")
+                    err_msg = err.get("message", "")
+
+                    # Reject nodes that require an address for log queries
+                    if err_code == -32701:
+                        self._penalize_node(node, "RPC -32701: Contract address required")
+                    else:
+                        self._penalize_node(node, f"RPC {err_code}: {err_msg}")
+
+                    last_error = err_msg
                     continue
-                # Genuine param/protocol error: the node is healthy — surface it
-                # instead of burning the array on a request that can't succeed.
-                raise RuntimeError(f"RPC error from {url}: {err}")
-            return body.get("result")
-        raise RpcNodesExhaustedError(f"{self._name}: all nodes failed") from last_error
 
-    def _penalize(self, url: str, reason: str) -> None:
-        until = time.monotonic() + self._cooldown_seconds
-        self._cooldown_until[url] = max(self._cooldown_until.get(url, 0), until)
-        logger.warning("rpc_node_cooldown", extra={"router": self._name, "node": url, "reason": reason})
+                # Successful execution: reset failure counter
+                node["failures"] = 0
+                return data.get("result")
 
-    async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+            except Exception as e:
+                self._penalize_node(node, type(e).__name__)
+                last_error = str(e)
+
+        raise RuntimeError(f"{chain}: all nodes failed for {method}. Last error: {last_error}")
+
+    # Backward-compatible wrapper for existing pollers (payload dict interface)
+    async def post(self, chain_or_payload, method=None, params=None) -> Any:
+        if isinstance(chain_or_payload, dict):
+            payload = chain_or_payload
+            method = payload.get("method")
+            params = payload.get("params", [])
+            chain = getattr(self, "_name", None) or "ethereum"
+            return await self._post_impl(chain, method, params)
+        else:
+            return await self._post_impl(str(chain_or_payload), method, params or [])
+
+    # New explicit interface
+    async def call(self, chain: str, method: str, params: list) -> Any:
+        return await self._post_impl(chain, method, params)
+
+    async def aclose(self):
+        await self._client.aclose()
+
+
+# Backward-compat alias for existing imports
+RpcFailoverRouter = CapabilityAwareRpcRouter
 
 
 def split_urls(raw: str | None) -> list[str]:
