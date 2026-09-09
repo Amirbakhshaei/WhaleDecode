@@ -138,7 +138,6 @@ class CapabilityAwareRpcRouter:
                 ],
                 "public": [
                     {"url": "https://api.mainnet-beta.solana.com", "failures": 0, "cooldown": 0.0, "name": "sol_foundation"},
-                    {"url": "https://rpc.ankr.com/solana", "failures": 0, "cooldown": 0.0, "name": "sol_ankr"},
                     {"url": "https://solana.api.pocket.network", "failures": 0, "cooldown": 0.0, "name": "sol_pocket"},
                 ],
             },

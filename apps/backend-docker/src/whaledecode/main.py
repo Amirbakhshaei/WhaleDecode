@@ -62,7 +62,7 @@ def serve():
     """Run FastAPI app (Telegram bot + webhook server) via Uvicorn."""
     import sys
 
-    print("whaledecode serve: starting", file=sys.stderr, flush=True)
+    print("whaledecode serve: starting", file=sys.stdout, flush=True)
     settings = _load_settings()
     _check_rpc_isolation(settings)
     setup_logging(settings)
@@ -75,7 +75,7 @@ def serve():
         "whaledecode.entrypoints.webhook:app",
         host="0.0.0.0",
         port=settings.PORT,
-        log_level=settings.LOG_LEVEL.lower(),
+        log_level="warning",
         workers=1,  # single process per replica; Telegram pushes via /webhook/telegram (stateless)
     )
 

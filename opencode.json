@@ -1,4 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@langchain/langsmith-opencode"]
+  "plugin": ["@langchain/langsmith-opencode"],
+  "provider": {
+    "cloudflare-ai-gateway": {
+      "models": {
+        "google-ai-studio/gemini-3.5-flash": {},
+        "google-ai-studio/gemini-3.7-flash": {},
+        "google/gemini-3.5-flash": {},
+        "google/gemini-3.7-flash": {}
 }
