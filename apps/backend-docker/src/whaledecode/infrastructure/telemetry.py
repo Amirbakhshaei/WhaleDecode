@@ -58,23 +58,18 @@ def get_trace_id() -> str:
 
 
 def format_railway_message(_, __, event_dict):
-    """
-    Synthesizes a readable string into event_dict['message']
-    so Railway's console and log downloads render full text.
-    """
+    """Ensures event_dict['message'] is non-empty so Railway UI and CLI render log text."""
     event = event_dict.get("event", "")
     details = []
-    for k, v in event_dict.items():
-        if k in ("event", "level", "timestamp", "message", "logger"):
+    for k, v in list(event_dict.items()):
+        if k in ("event", "level", "timestamp", "message", "msg", "logger"):
             continue
         if k == "extra" and isinstance(v, dict):
             for ek, ev in v.items():
                 details.append(f"{ek}={ev}")
-        else:
+        elif k != "exception":
             details.append(f"{k}={v}")
-    formatted = f"{event} {' '.join(details)}".strip()
-    event_dict["message"] = formatted
-    event_dict["msg"] = formatted
+    event_dict["message"] = f"{event} {' '.join(details)}".strip()
     return event_dict
 
 

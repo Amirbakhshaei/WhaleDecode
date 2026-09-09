@@ -27,6 +27,8 @@ def setup_logging(settings: Settings) -> None:
     for name in ("sqlalchemy.engine", "sqlalchemy.pool"):
         logging.getLogger(name).propagate = False
 
+    from whaledecode.infrastructure.telemetry import format_railway_message
+
     # 3. Configure structlog with PrintLoggerFactory — writes JSON directly to stdout
     structlog.configure(
         processors=[
@@ -35,6 +37,7 @@ def setup_logging(settings: Settings) -> None:
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.dict_tracebacks,
+            format_railway_message,
             structlog.processors.JSONRenderer(),
         ],
         logger_factory=structlog.PrintLoggerFactory(sys.stdout),

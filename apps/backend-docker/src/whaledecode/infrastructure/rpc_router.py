@@ -10,13 +10,19 @@ after the penalty expires. No health-check thread needed — real traffic is
 the probe.
 """
 import itertools
+import os
 import time
 from typing import Any
 
 import httpx
 import structlog
 
-log = structlog.get_logger()
+logger = structlog.get_logger("rpc_router")
+
+
+def _get_env_rpc_list(var_name: str) -> list[str]:
+    raw = os.getenv(var_name, "").strip()
+    return [u.strip() for u in raw.split(",") if u.strip()]
 
 # Status codes meaning "this node is unhealthy/rate-limited for us" → failover.
 # 520-524: Cloudflare-origin failures (llamarpc et al. return bare 521s).
@@ -79,34 +85,51 @@ class RpcFailoverRouter:
 
     def __init__(
         self,
-        name: str,
-        urls: list[str],
+        name: str = "default",
+        urls: list[str] | None = None,
         cooldown_seconds: float = 60.0,
         timeout: float = 25.0,
     ) -> None:
-        if not urls:
-            raise ValueError(f"RpcFailoverRouter({name}) needs at least one URL")
+        # Load authenticated keys from environment
+        eth_env_nodes = _get_env_rpc_list("ETH_RPC_URLS") or _get_env_rpc_list("ETHEREUM_RPC_URL")
+
+        if urls is None:
+            urls = []
         self._name = name
         self._urls = urls
         self._cooldown_seconds = cooldown_seconds
         self._timeout = httpx.Timeout(timeout, connect=10.0)
         self._cooldown_until: dict[str, float] = {}
-        self._rotation = itertools.cycle(range(len(urls)))
+        self._rotation = itertools.cycle(range(max(len(urls), 1)))
         self._client: httpx.AsyncClient | None = None
+
+        # Define bulletproof pools with multiple fallbacks; no publicnode.com
         self.pools = {
             "ethereum": [
-                {"url": "https://rpc.mevblocker.io", "name": "mevblocker_eth", "weight": 2, "cooldown": 0.0},
+                *[{"url": u, "name": f"eth_custom_{i}", "weight": 10, "cooldown": 0.0} for i, u in enumerate(eth_env_nodes)],
+                {"url": "https://rpc.mevblocker.io", "name": "eth_mevblocker", "weight": 5, "cooldown": 0.0},
+                {"url": "https://eth.llamarpc.com", "name": "eth_llama", "weight": 3, "cooldown": 0.0},
+                {"url": "https://rpc.ankr.com/eth", "name": "eth_ankr", "weight": 2, "cooldown": 0.0},
             ],
             "base": [
                 {"url": "https://mainnet.base.org", "name": "base_foundation", "weight": 10, "cooldown": 0.0},
                 {"url": "https://base.drpc.org", "name": "base_drpc", "weight": 5, "cooldown": 0.0},
-                {"url": "https://developer-access-mainnet.base.org", "name": "base_developer", "weight": 3, "cooldown": 0.0},
+                {"url": "https://base.llamarpc.com", "name": "base_llama", "weight": 3, "cooldown": 0.0},
             ],
             "arbitrum": [
                 {"url": "https://arb1.arbitrum.io/rpc", "name": "arb_foundation", "weight": 10, "cooldown": 0.0},
                 {"url": "https://arbitrum.drpc.org", "name": "arb_drpc", "weight": 5, "cooldown": 0.0},
+                {"url": "https://arbitrum.llamarpc.com", "name": "arb_llama", "weight": 3, "cooldown": 0.0},
             ],
         }
+
+        logger.info(
+            "rpc_pools_initialized",
+            eth_nodes=len(self.pools["ethereum"]),
+            base_nodes=len(self.pools["base"]),
+            arb_nodes=len(self.pools["arbitrum"]),
+            has_auth_eth=bool(eth_env_nodes),
+        )
 
     async def post(self, payload: dict[str, Any]) -> Any:
         """Send one JSON-RPC payload, failover on unhealthy nodes.
@@ -114,6 +137,8 @@ class RpcFailoverRouter:
         Raises :class:`RpcNodesExhaustedError` only when every node has been
         tried in this pass.
         """
+        if not self._urls:
+            raise RpcNodesExhaustedError(f"{self._name}: no URLs configured")
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=self._timeout)
         now = time.monotonic()
@@ -157,7 +182,7 @@ class RpcFailoverRouter:
     def _penalize(self, url: str, reason: str) -> None:
         until = time.monotonic() + self._cooldown_seconds
         self._cooldown_until[url] = max(self._cooldown_until.get(url, 0), until)
-        log.warning("rpc_node_cooldown", extra={"router": self._name, "node": url, "reason": reason})
+        logger.warning("rpc_node_cooldown", extra={"router": self._name, "node": url, "reason": reason})
 
     async def aclose(self) -> None:
         if self._client is not None:
