@@ -93,6 +93,20 @@ class RpcFailoverRouter:
         self._cooldown_until: dict[str, float] = {}
         self._rotation = itertools.cycle(range(len(urls)))
         self._client: httpx.AsyncClient | None = None
+        self.pools = {
+            "ethereum": [
+                {"url": "https://rpc.mevblocker.io", "name": "mevblocker_eth", "weight": 2, "cooldown": 0.0},
+            ],
+            "base": [
+                {"url": "https://mainnet.base.org", "name": "base_foundation", "weight": 10, "cooldown": 0.0},
+                {"url": "https://base.drpc.org", "name": "base_drpc", "weight": 5, "cooldown": 0.0},
+                {"url": "https://developer-access-mainnet.base.org", "name": "base_developer", "weight": 3, "cooldown": 0.0},
+            ],
+            "arbitrum": [
+                {"url": "https://arb1.arbitrum.io/rpc", "name": "arb_foundation", "weight": 10, "cooldown": 0.0},
+                {"url": "https://arbitrum.drpc.org", "name": "arb_drpc", "weight": 5, "cooldown": 0.0},
+            ],
+        }
 
     async def post(self, payload: dict[str, Any]) -> Any:
         """Send one JSON-RPC payload, failover on unhealthy nodes.

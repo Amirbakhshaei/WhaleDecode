@@ -186,33 +186,46 @@ class EvmTargetedPoller(TargetedChainPoller):
         }
         padded = list(padded_to_wallet.keys())
 
+        CHUNK_SIZE = 40
+        all_logs = []
+        padded_wallets = list(padded_to_wallet.keys())
+
+        for i in range(0, len(padded_wallets), CHUNK_SIZE):
+            chunk = padded_wallets[i : i + CHUNK_SIZE]
+
+            outflow_topics = [TRANSFER_EVENT_SIGNATURE, chunk, None]
+            inflow_topics = [TRANSFER_EVENT_SIGNATURE, None, chunk]
+
+            out_logs = await self._rpc("eth_getLogs", [{"fromBlock": hex(from_block), "toBlock": hex(to_block), "topics": outflow_topics}])
+            in_logs = await self._rpc("eth_getLogs", [{"fromBlock": hex(from_block), "toBlock": hex(to_block), "topics": inflow_topics}])
+
+            if isinstance(out_logs, list):
+                all_logs.extend(out_logs)
+            if isinstance(in_logs, list):
+                all_logs.extend(in_logs)
+
         # Aggregate raw logs by transaction before any pricing/gating.
         by_tx: dict[str, dict[str, Any]] = defaultdict(
             lambda: {"logs": [], "wallet_id": None, "wallet_address": "", "from": "", "to": ""}
         )
-        for topics in _transfer_topic_queries(padded):
-            logs = await self._rpc(
-                "eth_getLogs",
-                [{"fromBlock": hex(from_block), "toBlock": hex(to_block), "topics": topics}],
-            )
-            for raw in logs or []:
-                log_topics = raw.get("topics", [])
-                wallet_obj = _wallet_from_topics(log_topics, padded_to_wallet)
-                if wallet_obj is None or wallet_obj.id is None:
-                    continue
-                tx_hash = str(raw.get("transactionHash", ""))
-                entry = by_tx[tx_hash]
-                entry["logs"].append(raw)
-                if entry["wallet_id"] is None:
-                    entry["wallet_id"] = wallet_obj.id
-                    entry["wallet_address"] = wallet_obj.address
-                # Stamp the counterparty so downstream enrichment (_counterparty
-                # in investigation.py, profiler enrich, telemetry) never falls
-                # through to a "" SQL bind parameter.
-                if len(log_topics) > 1 and not entry["from"]:
-                    entry["from"] = unpad_address_from_topic(log_topics[1])
-                if len(log_topics) > 2 and not entry["to"]:
-                    entry["to"] = unpad_address_from_topic(log_topics[2])
+        for raw in all_logs:
+            log_topics = raw.get("topics", [])
+            wallet_obj = _wallet_from_topics(log_topics, padded_to_wallet)
+            if wallet_obj is None or wallet_obj.id is None:
+                continue
+            tx_hash = str(raw.get("transactionHash", ""))
+            entry = by_tx[tx_hash]
+            entry["logs"].append(raw)
+            if entry["wallet_id"] is None:
+                entry["wallet_id"] = wallet_obj.id
+                entry["wallet_address"] = wallet_obj.address
+            # Stamp the counterparty so downstream enrichment (_counterparty
+            # in investigation.py, profiler enrich, telemetry) never falls
+            # through to a "" SQL bind parameter.
+            if len(log_topics) > 1 and not entry["from"]:
+                entry["from"] = unpad_address_from_topic(log_topics[1])
+            if len(log_topics) > 2 and not entry["to"]:
+                entry["to"] = unpad_address_from_topic(log_topics[2])
 
         activities: list[dict[str, Any]] = []
         for tx_hash, entry in by_tx.items():

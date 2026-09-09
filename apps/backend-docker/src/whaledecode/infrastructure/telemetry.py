@@ -57,20 +57,24 @@ def get_trace_id() -> str:
     return trace_context.get().get("trace_id", "trace-unset")
 
 
-def inject_railway_message(_, __, event_dict):
+def format_railway_message(_, __, event_dict):
     """
-    Synthesizes a complete text representation into event_dict['message']
-    so Railway's console and log downloads never render blank lines.
+    Synthesizes a readable string into event_dict['message']
+    so Railway's console and log downloads render full text.
     """
     event = event_dict.get("event", "")
-    kv_pairs = []
+    details = []
     for k, v in event_dict.items():
-        if k in ("event", "level", "timestamp", "message", "msg"):
+        if k in ("event", "level", "timestamp", "message", "logger"):
             continue
-        kv_pairs.append(f"{k}={v}")
-    formatted_text = f"{event} {' '.join(kv_pairs)}".strip()
-    event_dict["message"] = formatted_text
-    event_dict["msg"] = formatted_text
+        if k == "extra" and isinstance(v, dict):
+            for ek, ev in v.items():
+                details.append(f"{ek}={ev}")
+        else:
+            details.append(f"{k}={v}")
+    formatted = f"{event} {' '.join(details)}".strip()
+    event_dict["message"] = formatted
+    event_dict["msg"] = formatted
     return event_dict
 
 
@@ -85,7 +89,7 @@ def setup_telemetry():
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.dict_tracebacks,
-            inject_railway_message,
+            format_railway_message,  # Injects event_dict['message']
             structlog.processors.JSONRenderer(),
         ],
         logger_factory=structlog.PrintLoggerFactory(sys.stdout),
