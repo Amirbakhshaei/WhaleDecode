@@ -2,7 +2,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, List
 
 import structlog
 from aiolimiter import AsyncLimiter
@@ -620,3 +620,37 @@ def build_investigation_service(
         ),
         reasoner,
     )
+
+def extract_solana_edge_context(log_messages: List[str]) -> dict:
+    context = {"dex": "Unknown", "is_pump_fun": False, "is_jito_bundled": False, "bonding_curve_trade": False}
+    for log in log_messages:
+        if "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P" in log:
+            context["is_pump_fun"] = True
+            context["dex"] = "Pump.fun"
+        elif "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8" in log:
+            context["dex"] = "Raydium AMM"
+        elif "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4" in log:
+            context["dex"] = "Jupiter Aggregator"
+        elif "T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt" in log:
+            context["is_jito_bundled"] = True
+    return context
+
+SOLANA_REASONING_PROMPT = """
+You are WhaleDecode's Senior On-Chain Solana Analyst.
+Analyze the following transaction executed by Smart Money:
+
+Wallet: {wallet_address}
+Classification: {classification}
+Value USD: ${value_usd:,.2f}
+DEX / Protocol: {dex}
+Pump.fun Bonding Curve Trade: {is_pump_fun}
+MEV Protected via Jito: {is_jito_bundled}
+
+Token Changes:
+{token_breakdown}
+
+Evaluate:
+1. Trade execution intent (Accumulation, Distribution, Pump.fun Snipe, Bonding Curve Exit).
+2. Conviction Score (0-100) based on position size relative to pool liquidity and Jito tip commitment.
+3. Market impact assessment.
+"""

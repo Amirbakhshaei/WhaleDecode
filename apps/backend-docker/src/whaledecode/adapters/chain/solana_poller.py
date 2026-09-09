@@ -1,102 +1,116 @@
-"""Solana targeted poller: getSignaturesForAddress per curated wallet.
-
-Public Solana RPCs are strict (400ms blocks, low rate ceilings), so requests
-are paced with an inter-call sleep and rely on the router's cooldown for 429s
-(asynchronous backoff without a bespoke retry ladder).
-"""
-from typing import Any
-
+"""Solana ingestion: targeted signature polling → parsed transaction delta accounting."""
+from typing import Any, Dict, List, Optional
 import structlog
-from whaledecode.adapters.chain.poller import TargetedChainPoller, backoff_sleep
-from whaledecode.domain.entities.curated_wallet import CuratedWallet
-from whaledecode.infrastructure.rpc_router import RpcFailoverRouter
 
-log = structlog.get_logger()
+logger = structlog.get_logger("solana_poller")
 
-# Signatures per address per pass — one whale rarely does more in 30s.
-_SIGNATURES_PER_ADDRESS = 25
-# Pace between per-address calls: well above Solana's slot time, far below
-# any public node's per-second ceiling.
-_REQUEST_PACE_SECONDS = 0.5
-
-# Base58 pubkey charset: no 0/O/I/l. Guards against corrupt seed rows (EVM
-# 0x… addresses stored under chain='SOL') wasting an RPC call each pass.
-_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-_B58_INDEX = {ch: i for i, ch in enumerate(_BASE58_ALPHABET)}
+SOL_MINT = "So11111111111111111111111111111111111111112"
+LAMPORTS_PER_SOL = 1_000_000_000
 
 
-def _base58_decoded_length(address: str) -> int:
-    """Byte length of the base58 payload; -1 when any char is invalid."""
-    num = 0
-    for ch in address:
-        idx = _B58_INDEX.get(ch)
-        if idx is None:
-            return -1
-        num = num * 58 + idx
-    leading_zeros = len(address) - len(address.lstrip("1"))
-    body_len = (num.bit_length() + 7) // 8 if num else 0
-    return leading_zeros + body_len
+class SolanaTargetedPoller:
+    def __init__(self, rpc_router, max_tx_per_poll: int = 15):
+        self.router = rpc_router
+        self.max_tx_per_poll = max_tx_per_poll
+        self.last_signatures: Dict[str, str] = {}
 
+    async def _rpc(self, method: str, params: list) -> Any:
+        return await self.router.post("solana", method, params)
 
-def is_valid_solana_address(address: str) -> bool:
-    """True only for well-formed 32-byte base58 pubkeys."""
-    if not address or not 32 <= len(address) <= 44:
-        return False
-    return _base58_decoded_length(address) == 32
+    async def fetch_wallet_activity(self, wallet_address: str) -> List[Dict[str, Any]]:
+        last_sig = self.last_signatures.get(wallet_address)
+        params = [wallet_address, {"limit": self.max_tx_per_poll, "commitment": "confirmed"}]
+        if last_sig:
+            params[1]["until"] = last_sig
 
+        try:
+            signatures_info = await self._rpc("getSignaturesForAddress", params)
+        except Exception as e:
+            logger.warning("solana_signature_fetch_failed", address=wallet_address[:10], error=str(e))
+            return []
 
-class SolanaTargetedPoller(TargetedChainPoller):
-    def __init__(self, router: RpcFailoverRouter) -> None:
-        self._router = router
-        # ponytail: seen-signature sets live in memory only — a restart
-        # re-emits the most recent window; dedupe_key absorbs the duplicates.
-        self._seen: dict[str, set[str]] = {}
+        if not signatures_info:
+            return []
 
-    async def _rpc(self, method: str, params: list[Any]) -> Any:
-        return await self._router.post({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        self.last_signatures[wallet_address] = signatures_info[0]["signature"]
 
-    async def fetch_recent_activity(self, targets: list[CuratedWallet]) -> list[dict[str, Any]]:
-        activities: list[dict[str, Any]] = []
-        for wallet in targets:
-            if wallet.id is None:
+        activities: List[Dict[str, Any]] = []
+        for sig_obj in signatures_info:
+            sig = sig_obj.get("signature")
+            if sig_obj.get("err"):
                 continue
-            if not is_valid_solana_address(wallet.address):
-                log.warning("solana_invalid_address_skipped", extra={"address": wallet.address[:10]})
+            tx_data = await self._fetch_parsed_transaction(sig)
+            if not tx_data:
                 continue
-            try:
-                sigs = await self._rpc(
-                    "getSignaturesForAddress",
-                    [wallet.address, {"limit": _SIGNATURES_PER_ADDRESS, "commitment": "confirmed"}],
-                )
-            except Exception as e:  # noqa: BLE001 - one dead address must not kill the pass
-                log.warning("solana_poll_address_failed", extra={"address": wallet.address[:10], "error": str(e)}, exc_info=True)
-                continue
-
-            seen = self._seen.setdefault(wallet.address, set())
-            # getSignaturesForAddress returns newest-first.
-            new = [s for s in (sigs or []) if s.get("err") is None and s["signature"] not in seen]
-            for entry in new:
-                signature = entry["signature"]
-                seen.add(signature)
-                if len(seen) > 512:  # bound RAM: keep the newest half when the cap is hit
-                    seen = set(list(seen)[:256])
-                    self._seen[wallet.address] = seen
-                activities.append({
-                    "wallet_id": wallet.id,
-                    "chain": "Solana",
-                    "tx_hash": signature,
-                    "log_index": 0,
-                    "block_number": int(entry.get("slot") or 0),
-                    # ponytail: no tx decoding yet — value_usd stays 0 so these
-                    # rows score below the alert gate until a decoder lands.
-                    # Upgrade path: fetchTransaction → parse SPL transfers → price.
-                    "event_type": "ACTIVITY",
-                    "raw_json": {"signature": signature, "slot": entry.get("slot")},
-                    "score": 0.0,
-                    "dedupe_key": f"{wallet.id}:{signature}:0",
-                })
-            await backoff_sleep(_REQUEST_PACE_SECONDS)
-
-        if targets:
-            log.info("solana_poll_complete", extra={"targets": len(targets), "found": len(activities)})
+            parsed = self._parse_deltas(wallet_address, sig, tx_data)
+            if parsed:
+                activities.append(parsed)
         return activities
+
+    async def _fetch_parsed_transaction(self, signature: str) -> Optional[Dict[str, Any]]:
+        params = [
+            signature,
+            {
+                "encoding": "jsonParsed",
+                "commitment": "confirmed",
+                "maxSupportedTransactionVersion": 0,
+            },
+        ]
+        try:
+            return await self._rpc("getTransaction", params)
+        except Exception as e:
+            logger.warning("solana_tx_fetch_failed", signature=signature, error=str(e))
+            return None
+
+    def _parse_deltas(self, wallet: str, signature: str, tx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        meta = tx.get("meta")
+        transaction = tx.get("transaction", {})
+        if not meta or not transaction:
+            return None
+
+        account_keys = transaction.get("message", {}).get("accountKeys", [])
+        pubkeys = [k.get("pubkey") if isinstance(k, dict) else k for k in account_keys]
+        if wallet not in pubkeys:
+            return None
+
+        wallet_idx = pubkeys.index(wallet)
+        pre_lamports = meta.get("preBalances", [])[wallet_idx] if wallet_idx < len(meta.get("preBalances", [])) else 0
+        post_lamports = meta.get("postBalances", [])[wallet_idx] if wallet_idx < len(meta.get("postBalances", [])) else 0
+        fee = meta.get("fee", 0) if wallet_idx == 0 else 0
+        sol_delta = (post_lamports - pre_lamports + fee) / LAMPORTS_PER_SOL
+
+        pre_tokens = {
+            t["mint"]: float(t["uiTokenAmount"]["uiAmount"] or 0)
+            for t in meta.get("preTokenBalances", [])
+            if t.get("owner") == wallet
+        }
+        post_tokens = {
+            t["mint"]: float(t["uiTokenAmount"]["uiAmount"] or 0)
+            for t in meta.get("postTokenBalances", [])
+            if t.get("owner") == wallet
+        }
+
+        all_mints = set(pre_tokens.keys()).union(post_tokens.keys())
+        token_deltas = {}
+        for mint in all_mints:
+            delta = post_tokens.get(mint, 0.0) - pre_tokens.get(mint, 0.0)
+            if abs(delta) > 1e-9:
+                token_deltas[mint] = delta
+
+        classification = "TRANSFER"
+        if sol_delta != 0 and token_deltas:
+            classification = "BUY" if sol_delta < 0 else "SELL"
+        elif len(token_deltas) >= 2:
+            classification = "SWAP"
+
+        return {
+            "chain": "SOL",
+            "signature": signature,
+            "wallet_address": wallet,
+            "block_time": tx.get("blockTime"),
+            "slot": tx.get("slot"),
+            "sol_delta": sol_delta,
+            "token_deltas": token_deltas,
+            "classification": classification,
+            "log_messages": meta.get("logMessages", []),
+        }
