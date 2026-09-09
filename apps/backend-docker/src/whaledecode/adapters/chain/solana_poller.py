@@ -2,13 +2,16 @@
 from typing import Any, Dict, List, Optional
 import structlog
 
+from whaledecode.adapters.chain.poller import TargetedChainPoller
+from whaledecode.domain.entities.curated_wallet import CuratedWallet
+
 logger = structlog.get_logger("solana_poller")
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 LAMPORTS_PER_SOL = 1_000_000_000
 
 
-class SolanaTargetedPoller:
+class SolanaTargetedPoller(TargetedChainPoller):
     def __init__(self, rpc_router, max_tx_per_poll: int = 15):
         self.router = rpc_router
         self.max_tx_per_poll = max_tx_per_poll
@@ -46,6 +49,35 @@ class SolanaTargetedPoller:
             if parsed:
                 activities.append(parsed)
         return activities
+
+    async def fetch_recent_activity(self, targets: list[CuratedWallet]) -> list[dict[str, Any]]:
+        # ponytail: reuse per-wallet fetch; map to interface contract.
+        all_activities: list[dict[str, Any]] = []
+        for wallet in targets:
+            if wallet.id is None:
+                continue
+            wallet_acts = await self.fetch_wallet_activity(wallet.address)
+            for act in wallet_acts:
+                all_activities.append({
+                    "wallet_id": wallet.id,
+                    "wallet_address": wallet.address,
+                    "chain": "SOL",
+                    "tx_hash": act.get("signature"),
+                    "log_index": 0,
+                    "block_number": int(act.get("slot") or 0),
+                    "event_type": act.get("classification", "TRANSFER"),
+                    "value_usd": 0.0,
+                    "raw_json": {
+                        "signature": act.get("signature"),
+                        "sol_delta": act.get("sol_delta"),
+                        "token_deltas": act.get("token_deltas"),
+                        "classification": act.get("classification"),
+                        "slot": act.get("slot"),
+                    },
+                    "score": 0.0,
+                    "dedupe_key": f"{wallet.id}:{act.get('signature')}:0",
+                })
+        return all_activities
 
     async def _fetch_parsed_transaction(self, signature: str) -> Optional[Dict[str, Any]]:
         params = [
