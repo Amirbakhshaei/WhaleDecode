@@ -44,6 +44,11 @@ _CAPACITY_MESSAGE_HINTS = (
     "exceeded",
 )
 
+# Solana-specific: these are valid "not found" responses, NOT node failures.
+# -32020: Transaction not found
+# -32011: Transaction history not available from this node
+_NON_PENALTY_CODES = {-32020, -32011}
+
 
 def _is_node_capacity_error(err: dict) -> bool:
     if err.get("code") in _NODE_CAPACITY_CODES:
@@ -91,14 +96,46 @@ class CapabilityAwareRpcRouter:
     """
 
     def __init__(self, *args, **kwargs):
-        # Backward-compat: swallow old (name, urls, ...) positional args
+        # Backward-compat: accept old signature (name, urls, cooldown_seconds, timeout)
+        # and new signature (name=..., urls=..., cooldown_seconds=..., timeout=...)
         self._name = kwargs.get("name") or (args[0] if args else "default")
+        custom_urls = kwargs.get("urls") or (args[1] if len(args) > 1 else None)
+        custom_cooldown = kwargs.get("cooldown_seconds") or (args[2] if len(args) > 2 else None)
+        custom_timeout = kwargs.get("timeout") or (args[3] if len(args) > 3 else None)
 
         # 1. Load authenticated providers for each chain from environment
         eth_auth = _parse_env_urls("ETH_RPC_URLS") or _parse_env_urls("ETHEREUM_RPC_URL")
         base_auth = _parse_env_urls("BASE_RPC_URLS")
         arb_auth = _parse_env_urls("ARB_RPC_URLS")
         sol_auth = _parse_env_urls("SOL_RPC_URLS") or _parse_env_urls("SOLANA_RPC_URL")
+
+        # 2. If custom URLs provided, use them for the router's chain (backward compat)
+        #    Detect which chain the custom URLs belong to by name or default to ethereum
+        chain_key = self._name.lower()
+        custom_overrides_known_chain = False
+        if custom_urls:
+            # Replace the appropriate chain's pools with the custom URLs
+            # Split into dedicated/public if possible, otherwise use as dedicated
+            custom_nodes = [
+                {"url": u, "failures": 0, "cooldown": 0.0, "name": f"{chain_key}_custom_{i}"}
+                for i, u in enumerate(custom_urls)
+            ]
+            # Override the pool for this chain
+            if chain_key in ("ethereum", "eth"):
+                eth_auth = custom_urls
+                custom_overrides_known_chain = True
+            elif chain_key in ("base",):
+                base_auth = custom_urls
+                custom_overrides_known_chain = True
+            elif chain_key in ("arbitrum", "arb"):
+                arb_auth = custom_urls
+                custom_overrides_known_chain = True
+            elif chain_key in ("solana", "sol"):
+                sol_auth = custom_urls
+                custom_overrides_known_chain = True
+            else:
+                # Unknown chain - add as new pool
+                pass
 
         # Build structured chain pools (dedicated = log-capable, public = fallback)
         self.pools: Dict[str, Dict[str, List[dict]]] = {
@@ -143,13 +180,26 @@ class CapabilityAwareRpcRouter:
             },
         }
 
+        # If custom URLs override a known chain, clear its public pool (tests expect only custom nodes)
+        if custom_overrides_known_chain:
+            self.pools[chain_key]["public"] = []
+
+        # Add custom chain pool if needed (for backward compat with tests)
+        if custom_urls and chain_key not in ("ethereum", "eth", "base", "arbitrum", "arb", "solana", "sol"):
+            custom_nodes = [
+                {"url": u, "failures": 0, "cooldown": 0.0, "name": f"{chain_key}_custom_{i}"}
+                for i, u in enumerate(custom_urls)
+            ]
+            self.pools[chain_key] = {"dedicated": custom_nodes, "public": []}
+
         # Custom headers prevent Cloudflare 403/525 drops on public Solana nodes
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        self._client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(15.0, connect=5.0))
+        timeout_val = custom_timeout or 15.0
+        self._client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout_val, connect=5.0))
         self._rr_indices = {chain: 0 for chain in self.pools}
         logger.info("rpc_router_initialized", chains=list(self.pools.keys()))
 
@@ -211,6 +261,10 @@ class CapabilityAwareRpcRouter:
                     # Reject nodes that require an address for log queries
                     if err_code == -32701:
                         self._penalize_node(node, "RPC -32701: Contract address required")
+                    elif err_code in _NON_PENALTY_CODES:
+                        # Valid "not found" response — don't penalize the node
+                        last_error = err_msg
+                        continue
                     else:
                         self._penalize_node(node, f"RPC {err_code}: {err_msg}")
 
@@ -225,7 +279,28 @@ class CapabilityAwareRpcRouter:
                 self._penalize_node(node, type(e).__name__)
                 last_error = str(e)
 
-        raise RuntimeError(f"{chain}: all nodes failed for {method}. Last error: {last_error}")
+        raise RpcNodesExhaustedError(f"{chain}: all nodes failed for {method}. Last error: {last_error}")
+
+    # Backward-compat properties for ResilientRPCManager
+    @property
+    def _urls(self) -> list[str]:
+        """All URLs for this router's chain (for budget tracking)."""
+        chain_pool = self.pools.get(self._name.lower(), {})
+        urls = []
+        for tier in chain_pool.values():
+            urls.extend(n["url"] for n in tier)
+        return urls
+
+    @property
+    def _cooldown_until(self) -> dict[str, float]:
+        """Mapping of URL -> cooldown timestamp (for budget tracking)."""
+        chain_pool = self.pools.get(self._name.lower(), {})
+        result = {}
+        for tier in chain_pool.values():
+            for node in tier:
+                if node["cooldown"] > time.time():
+                    result[node["url"]] = node["cooldown"]
+        return result
 
     # Backward-compatible wrapper for existing pollers (payload dict interface)
     async def post(self, chain_or_payload, method=None, params=None) -> Any:
