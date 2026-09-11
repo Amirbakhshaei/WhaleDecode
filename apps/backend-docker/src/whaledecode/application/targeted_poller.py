@@ -23,7 +23,7 @@ from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
-from whaledecode.domain.services.event_gate import MIN_WHALE_THRESHOLD_USD
+
 from whaledecode.infrastructure.pipeline_telemetry import (
     log_activities_fetched,
     log_ingest_duplicate,
@@ -31,6 +31,7 @@ from whaledecode.infrastructure.pipeline_telemetry import (
     log_ingest_filtered,
     log_ingest_inserted,
     log_poll_start,
+    log_rpc_health_snapshot,
 )
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, split_urls
 from whaledecode.infrastructure.telemetry import start_trace
@@ -104,27 +105,39 @@ class TargetedPollerService:
 
     def _router(self, name: str, urls_key: str) -> RpcFailoverRouter:
         if name not in self._routers:
-            # ponytail: when ETH_RPC_URLS is set, it REPLACES the public free
-            # pool entirely — the user supplies authenticated endpoints
-            # (Alchemy/Infura/Chainstack) and wants them to be the only nodes
-            # we hit, not appended behind anonymous cloudflare/drpc/1rpc. This
-            # also prevents the poller from silently racking up rate-limit
-            # counters on free nodes that aren't needed.
+            # Get per-chain cooldown
+            cooldown_attr = f"TARGETED_RPC_COOLDOWN_SECONDS_{name.upper()}"
+            cooldown = getattr(self._settings, cooldown_attr, self._settings.TARGETED_RPC_COOLDOWN_SECONDS)
+            
+            # Explicit tier separation: public URLs as primary, dedicated (auth) as fallback for ETH
+            public_urls = split_urls(getattr(self._settings, urls_key, ""))
+            dedicated_urls = []
+            
+            # For ETH: use authenticated endpoints as dedicated tier
             if name == "eth" and self._settings.ETH_RPC_URLS:
-                urls = split_urls(self._settings.ETH_RPC_URLS)
-            else:
-                urls = split_urls(getattr(self._settings, urls_key, ""))
+                dedicated_urls = split_urls(self._settings.ETH_RPC_URLS)
+                log.info(
+                    "rpc_pool_tiered",
+                    extra={
+                        "router": name,
+                        "public_nodes": len(public_urls),
+                        "dedicated_nodes": len(dedicated_urls),
+                    },
+                )
+            
             self._routers[name] = RpcFailoverRouter(
                 name,
-                urls,
-                cooldown_seconds=self._settings.TARGETED_RPC_COOLDOWN_SECONDS,
+                public_urls=public_urls,
+                dedicated_urls=dedicated_urls,
+                cooldown_seconds=cooldown,
             )
             log.info(
                 "rpc_pool_loaded",
                 extra={
                     "router": name,
-                    "nodes": len(urls),
-                    "first_url": urls[0] if urls else "",
+                    "public_nodes": len(public_urls),
+                    "dedicated_nodes": len(dedicated_urls),
+                    "cooldown_seconds": cooldown,
                 },
             )
         return self._routers[name]
@@ -160,7 +173,39 @@ class TargetedPollerService:
                 # Limit ETH wallets to reduce RPC load on free endpoints
                 if code == "ETH" and len(wallets) > self._settings.MAX_ETH_WALLETS_PER_POLL:
                     wallets = wallets[: self._settings.MAX_ETH_WALLETS_PER_POLL]
-                log_poll_start(code, len(wallets))
+                # Get RPC endpoints for logging
+                router = self._router(code.lower(), _EVM_CHAINS.get(code, ("", ""))[1]) if code in _EVM_CHAINS else self._router("solana", "SOL_PUBLIC_RPC_URLS")
+                rpc_endpoints = []
+                nodes = []
+                try:
+                    nodes = router.get_node_stats(code.lower())
+                    rpc_endpoints = [n.get("url", "") for n in nodes]
+                except Exception:
+                    pass
+                log_poll_start(code, len(wallets), rpc_endpoints=rpc_endpoints)
+                
+                # RPC health snapshot (every 10th poll)
+                if not hasattr(self, "_poll_counter"):
+                    self._poll_counter = 0
+                self._poll_counter += 1
+                if self._poll_counter % 10 == 0:
+                    active_node = None
+                    cooldown_count = 0
+                    failed_count = 0
+                    try:
+                        active_node = router.get_active_node(code.lower())
+                        cooldown_count = sum(1 for n in nodes if n.get("in_cooldown"))
+                        failed_count = sum(1 for n in nodes if n.get("failed"))
+                    except Exception:
+                        pass
+                    log_rpc_health_snapshot(
+                        chain=code,
+                        nodes=nodes,
+                        active_node=active_node,
+                        nodes_in_cooldown=cooldown_count,
+                        nodes_failed=failed_count,
+                    )
+                
                 poller = self._poller_for(code)
                 if poller is None:
                     continue
@@ -180,13 +225,17 @@ class TargetedPollerService:
                 kept = []
                 for a in activities:
                     if not self._passes_gate(a):
+                        # Use the same floor calculation as _passes_gate for consistency
+                        chain = a.get("chain", code).upper()
+                        floor_attr = f"TARGETED_MIN_TX_USD_{chain}"
+                        floor_usd = float(getattr(self._settings, floor_attr, self._settings.TARGETED_MIN_TX_USD))
                         log_ingest_filtered(
                             a.get("chain", code),
                             a.get("wallet_address", "unknown"),
                             a.get("tx_hash", "unknown"),
                             "below_usd_floor",
                             float(a.get("value_usd") or 0.0),
-                            MIN_WHALE_THRESHOLD_USD,
+                            floor_usd,
                         )
                         continue
                     if not is_valid_ingest_hash(a["tx_hash"], a["chain"]):
@@ -224,8 +273,7 @@ class TargetedPollerService:
     def _passes_gate(self, activity: dict[str, Any]) -> bool:
         """Unified pre-INSERT gate: mirrors the investigation worker's checks.
 
-        Uses MIN_WHALE_THRESHOLD_USD (the same floor ``EventGate`` enforces
-        after oracle re-pricing) so an event that passes here will not be
+        Uses per-chain USD floor so an event that passes here will not be
         immediately skipped downstream.  The Sentinel score is also checked —
         a zero-conviction event can never clear the investigation score gate,
         so inserting it only wastes a DB row and a worker claim cycle.
@@ -233,7 +281,11 @@ class TargetedPollerService:
         score = self._sentinel.score(activity)
         activity["score"] = score
         value_usd = float(activity.get("value_usd") or 0.0)
-        floor_usd = float(MIN_WHALE_THRESHOLD_USD)
+        chain = activity.get("chain", "").upper()
+        
+        # Per-chain USD floor
+        floor_attr = f"TARGETED_MIN_TX_USD_{chain}"
+        floor_usd = float(getattr(self._settings, floor_attr, self._settings.TARGETED_MIN_TX_USD))
         gate_passed = value_usd >= floor_usd and score >= self._settings.MIN_INVESTIGATION_SCORE
         # ponytail: one structured line per valuation decision — every input
         # to the multiplication is logged so a missing oracle price or

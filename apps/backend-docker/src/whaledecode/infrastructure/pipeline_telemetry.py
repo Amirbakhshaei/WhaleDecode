@@ -12,12 +12,25 @@ import asyncio
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import structlog
 
 from whaledecode.config.settings import Settings
 
 log = structlog.get_logger()
+
+
+def _redact_url(url: str) -> str:
+    """Redact sensitive parts of a URL for logging (query params, auth tokens)."""
+    try:
+        parsed = urlparse(url)
+        # Keep scheme, host, port, path; redact query and fragment
+        safe = parsed._replace(query="[REDACTED]", fragment="")
+        return urlunparse(safe)
+    except Exception:
+        return "[REDACTED]"
+
 
 # Context var for request-scoped correlation IDs
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
@@ -44,12 +57,16 @@ def _base_extra(extra: dict[str, Any] | None = None) -> dict[str, Any]:
 
 # ─── Ingestion Stage ────────────────────────────────────────────────────
 
-def log_poll_start(chain: str, wallet_count: int) -> None:
+def log_poll_start(chain: str, wallet_count: int, rpc_endpoints: list[str] | None = None, block_range: int | None = None, max_block_range: int | None = None) -> None:
     """Log poller pass start for a chain."""
-    log.info(
-        "pipeline_poll_start",
-        extra=_base_extra({"chain": chain, "wallets_polled": wallet_count}),
-    )
+    extra = _base_extra({"chain": chain, "wallets_polled": wallet_count})
+    if rpc_endpoints:
+        extra["rpc_endpoints"] = [_redact_url(e) for e in rpc_endpoints]
+    if block_range is not None:
+        extra["block_range"] = block_range
+    if max_block_range is not None:
+        extra["max_block_range"] = max_block_range
+    log.info("pipeline_poll_start", extra=extra)
 
 
 def log_activities_fetched(
@@ -247,6 +264,63 @@ def log_ingest_duplicate(
     )
 
 
+def log_evm_poll_complete(
+    chain: str,
+    targets: int,
+    txs: int,
+    block_range: list[int],
+    raw_logs_fetched: int = 0,
+    logs_after_aggregation: int = 0,
+    min_value_usd: float = 0.0,
+    max_value_usd: float = 0.0,
+    avg_value_usd: float = 0.0,
+    rpc_node_used: str = "",
+    rpc_latency_ms: float = 0.0,
+) -> None:
+    """Log EVM poll completion with detailed diagnostics."""
+    extra = _base_extra({
+        "chain": chain,
+        "targets": targets,
+        "txs": txs,
+        "range": block_range,
+        "raw_logs_fetched": raw_logs_fetched,
+        "logs_after_aggregation": logs_after_aggregation,
+        "min_value_usd": min_value_usd,
+        "max_value_usd": max_value_usd,
+        "avg_value_usd": avg_value_usd,
+        "rpc_node_used": _redact_url(rpc_node_used) if rpc_node_used else "",
+        "rpc_latency_ms": rpc_latency_ms,
+    })
+    log.info("evm_poll_complete", extra=extra)
+
+
+def log_rpc_health_snapshot(
+    chain: str,
+    nodes: list[dict],
+    active_node: str | None = None,
+    nodes_in_cooldown: int = 0,
+    nodes_failed: int = 0,
+) -> None:
+    """Periodic RPC node health snapshot for debugging."""
+    # Sanitize node URLs in the nodes list
+    sanitized_nodes = []
+    for n in nodes:
+        sanitized = dict(n)
+        if "url" in sanitized:
+            sanitized["url"] = _redact_url(sanitized["url"])
+        sanitized_nodes.append(sanitized)
+    
+    extra = _base_extra({
+        "chain": chain,
+        "total_nodes": len(nodes),
+        "active_node": active_node,
+        "nodes_in_cooldown": nodes_in_cooldown,
+        "nodes_failed": nodes_failed,
+        "nodes": sanitized_nodes,
+    })
+    log.info("rpc_health_snapshot", extra=extra)
+
+
 # ─── Investigation Stage ────────────────────────────────────────────────
 
 def log_investigation_claim(event_id: int, dedupe_key: str, tx_hash: str, chain: str) -> None:
@@ -388,6 +462,8 @@ def log_channel_dispatch(
     message_id: int | None,
     success: bool,
     error: str | None = None,
+    dispatch_latency_ms: float | None = None,
+    message_size_bytes: int | None = None,
 ) -> None:
     """Log Telegram dispatch outcome."""
     level = log.info if success else log.error
@@ -403,6 +479,10 @@ def log_channel_dispatch(
     )
     if error:
         extra["error"] = error
+    if dispatch_latency_ms is not None:
+        extra["dispatch_latency_ms"] = dispatch_latency_ms
+    if message_size_bytes is not None:
+        extra["message_size_bytes"] = message_size_bytes
     level("pipeline_channel_dispatch", extra=extra)
 
 
@@ -413,10 +493,11 @@ async def periodic_heartbeat(
     session_factory,
     interval_seconds: int = 60,
     stop_event: asyncio.Event | None = None,
+    rpc_manager: Any | None = None,
 ) -> None:
     """Emit periodic pipeline health metrics.
 
-    Logs: pending queue depth, recent throughput, worker status, channel config.
+    Logs: pending queue depth, recent throughput, worker status, channel config, RPC health.
     """
     from whaledecode.adapters.db.uow import UnitOfWork
 
@@ -428,6 +509,27 @@ async def periodic_heartbeat(
                 completed_today = await uow.candidate_events.count_published_since(
                     datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
                 )
+            
+            # RPC health snapshot if manager available
+            rpc_health = {}
+            if rpc_manager is not None:
+                try:
+                    for chain_name in ["ethereum", "arbitrum", "base", "solana"]:
+                        router = rpc_manager.get_router(chain_name)
+                        if router:
+                            nodes = router.get_node_stats()
+                            active = router.get_active_node()
+                            cooldown_count = sum(1 for n in nodes if n.get("in_cooldown"))
+                            failed_count = sum(1 for n in nodes if n.get("failed"))
+                            rpc_health[chain_name] = {
+                                "total_nodes": len(nodes),
+                                "active_node": active,
+                                "nodes_in_cooldown": cooldown_count,
+                                "nodes_failed": failed_count,
+                            }
+                except Exception:
+                    pass  # Don't let RPC health break heartbeat
+            
             log.info(
                 "pipeline_heartbeat",
                 extra=_base_extra(
@@ -438,6 +540,7 @@ async def periodic_heartbeat(
                             settings.CHANNEL_CHAT_ID or settings.TELEGRAM_CHANNEL_ID
                         ),
                         "poll_interval_seconds": settings.POLL_INTERVAL_SECONDS,
+                        "rpc_health": rpc_health,
                     }
                 ),
             )

@@ -24,6 +24,18 @@ def _parse_env_urls(env_var: str) -> List[str]:
     return [url.strip() for url in raw.split(",") if url.strip()]
 
 
+def _redact_url(url: str) -> str:
+    """Redact sensitive parts of a URL for logging (query params, auth tokens)."""
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        # Keep scheme, host, port, path; redact query and fragment
+        safe = parsed._replace(query="[REDACTED]", fragment="")
+        return urlunparse(safe)
+    except Exception:
+        return "[REDACTED]"
+
+
 # Status codes meaning "this node is unhealthy/rate-limited for us" → failover.
 # 520-524: Cloudflare-origin failures (llamarpc et al. return bare 521s).
 _FAILOVER_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
@@ -97,11 +109,15 @@ class CapabilityAwareRpcRouter:
 
     def __init__(self, *args, **kwargs):
         # Backward-compat: accept old signature (name, urls, cooldown_seconds, timeout)
-        # and new signature (name=..., urls=..., cooldown_seconds=..., timeout=...)
+        # and new signature (name=..., urls=..., cooldown_seconds=..., timeout=..., 
+        #                  public_urls=..., dedicated_urls=...)
         self._name = kwargs.get("name") or (args[0] if args else "default")
         custom_urls = kwargs.get("urls") or (args[1] if len(args) > 1 else None)
         custom_cooldown = kwargs.get("cooldown_seconds") or (args[2] if len(args) > 2 else None)
         custom_timeout = kwargs.get("timeout") or (args[3] if len(args) > 3 else None)
+        # New explicit tier parameters
+        public_urls = kwargs.get("public_urls")
+        dedicated_urls = kwargs.get("dedicated_urls")
 
         # 1. Load authenticated providers for each chain from environment
         eth_auth = _parse_env_urls("ETH_RPC_URLS") or _parse_env_urls("ETHEREUM_RPC_URL")
@@ -180,8 +196,22 @@ class CapabilityAwareRpcRouter:
             },
         }
 
-        # If custom URLs override a known chain, clear its public pool (tests expect only custom nodes)
-        if custom_overrides_known_chain:
+        # Apply explicit public/dedicated URLs if provided (takes precedence over env)
+        if dedicated_urls is not None:
+            dedicated_nodes = [
+                {"url": u, "failures": 0, "cooldown": 0.0, "name": f"{chain_key}_dedicated_{i}"}
+                for i, u in enumerate(dedicated_urls)
+            ]
+            self.pools[chain_key]["dedicated"] = dedicated_nodes
+        if public_urls is not None:
+            public_nodes = [
+                {"url": u, "failures": 0, "cooldown": 0.0, "name": f"{chain_key}_public_{i}"}
+                for i, u in enumerate(public_urls)
+            ]
+            self.pools[chain_key]["public"] = public_nodes
+
+        # If custom URLs override a known chain and no explicit tiers given, clear its public pool (tests expect only custom nodes)
+        if custom_overrides_known_chain and dedicated_urls is None and public_urls is None:
             self.pools[chain_key]["public"] = []
 
         # Add custom chain pool if needed (for backward compat with tests)
@@ -201,7 +231,40 @@ class CapabilityAwareRpcRouter:
         timeout_val = custom_timeout or 15.0
         self._client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout_val, connect=5.0))
         self._rr_indices = {chain: 0 for chain in self.pools}
+        # Track last used node per chain for telemetry
+        self._last_node: Dict[str, Optional[dict]] = {chain: None for chain in self.pools}
         logger.info("rpc_router_initialized", chains=list(self.pools.keys()))
+
+    def get_node_stats(self, chain: Optional[str] = None) -> List[dict]:
+        """Return sanitized node statistics for monitoring."""
+        chains = [chain.lower()] if chain else list(self.pools.keys())
+        result = []
+        for ch in chains:
+            pool = self.pools.get(ch, {})
+            for tier in ("dedicated", "public"):
+                for node in pool.get(tier, []):
+                    result.append({
+                        "chain": ch,
+                        "tier": tier,
+                        "name": node["name"],
+                        "url": _redact_url(node["url"]),
+                        "failures": node["failures"],
+                        "in_cooldown": node["cooldown"] > time.time(),
+                        "cooldown_until": node["cooldown"] if node["cooldown"] > time.time() else None,
+                    })
+        return result
+
+    def get_active_node(self, chain: Optional[str] = None) -> Optional[str]:
+        """Return the name of the last used node for a chain, or all chains if none specified."""
+        if chain:
+            ch = chain.lower()
+            node = self._last_node.get(ch)
+            return node["name"] if node else None
+        # Return first non-None last node
+        for node in self._last_node.values():
+            if node:
+                return node["name"]
+        return None
 
     def _get_eligible_nodes(self, chain: str, method: str) -> List[dict]:
         chain_pool = self.pools.get(chain.lower(), {})
@@ -271,8 +334,9 @@ class CapabilityAwareRpcRouter:
                     last_error = err_msg
                     continue
 
-                # Successful execution: reset failure counter
+                # Successful execution: reset failure counter and track last node
                 node["failures"] = 0
+                self._last_node[chain_key] = node
                 return data.get("result")
 
             except Exception as e:

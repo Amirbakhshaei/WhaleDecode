@@ -23,7 +23,6 @@ from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.config.settings import Settings
 from whaledecode.domain.policies.sentinel import SentinelEngine
 from whaledecode.domain.schemas.ingest import is_valid_ingest_hash
-from whaledecode.domain.services.event_gate import MIN_WHALE_THRESHOLD_USD
 
 log = structlog.get_logger()
 
@@ -57,10 +56,15 @@ def _transfer_topic_queries(padded_wallets: list[str]) -> list[list[Any]]:
 class LiveBlockchainFetcher:
     """Polls RPC nodes and inserts high-conviction events as ``pending``."""
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession], settings: Settings) -> None:
+    def __init__(
+        self, 
+        session_factory: async_sessionmaker[AsyncSession], 
+        settings: Settings,
+        rpc_manager: Any | None = None,
+    ) -> None:
         self._session_factory = session_factory
         self._settings = settings
-        self._provider = create_chain_provider(settings)
+        self._provider = create_chain_provider(settings, rpc=rpc_manager)
         self._sentinel = SentinelEngine()
 
     async def run(self, stop_event: asyncio.Event | None = None) -> None:
@@ -177,7 +181,10 @@ class LiveBlockchainFetcher:
         # ponytail: USD floor enforced here too — without this, low-value
         # events slip into candidate_events and waste investigation LLM calls.
         value_usd = float(event.get("value_usd") or 0.0)
-        if value_usd < MIN_WHALE_THRESHOLD_USD:
+        chain = event.get("chain", "").upper()
+        floor_attr = f"TARGETED_MIN_TX_USD_{chain}"
+        floor_usd = float(getattr(self._settings, floor_attr, self._settings.TARGETED_MIN_TX_USD))
+        if value_usd < floor_usd:
             return False
         return bool(event["score"] >= self._settings.ALERT_SCORE_THRESHOLD * 100)
 

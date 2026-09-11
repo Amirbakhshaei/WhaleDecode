@@ -109,18 +109,27 @@ class Settings(BaseSettings):
     # Targeted failover poller (free public RPCs; replaces paid webhooks).
     # Comma-separated endpoint lists — the router rotates on 429/502/timeout.
     TARGETED_POLLER_ENABLED: bool = True
+    # Per-chain RPC cooldown: longer for authenticated endpoints that fail with -32701
     TARGETED_RPC_COOLDOWN_SECONDS: float = 60.0
-    # Aggregated net USD per transaction required before ingestion (the
-    # webhook path's whale floor, now applied at the poller).
-    TARGETED_MIN_TX_USD: float = 50_000.0
+    TARGETED_RPC_COOLDOWN_SECONDS_ETH: float = 300.0
+    TARGETED_RPC_COOLDOWN_SECONDS_BASE: float = 60.0
+    TARGETED_RPC_COOLDOWN_SECONDS_ARB: float = 60.0
+    TARGETED_RPC_COOLDOWN_SECONDS_SOL: float = 60.0
+    # Per-chain USD floor — lower for L2s where whale activity is smaller
+    TARGETED_MIN_TX_USD_ETH: float = 25_000.0
+    TARGETED_MIN_TX_USD_BASE: float = 10_000.0
+    TARGETED_MIN_TX_USD_ARB: float = 10_000.0
+    TARGETED_MIN_TX_USD_SOL: float = 5_000.0
+    # Legacy single-value fallbacks (used if per-chain not set)
+    TARGETED_MIN_TX_USD: float = 25_000.0
     MAX_ETH_WALLETS_PER_POLL: int = 50
     # Tiered Ethereum RPC list: free foundation/anonymous nodes lead (primary
     # traffic), metered keys (Alchemy/Infura/Chainstack via ETH_RPC_URLS)
     # are appended at the router level when set — used only when all free
     # nodes are in cooldown. rpc.mevblocker.io is the highest-priority free primary.
-    ETH_PUBLIC_RPC_URLS: str = "https://rpc.mevblocker.io"
-    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com"
-    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com"
+    ETH_PUBLIC_RPC_URLS: str = "https://rpc.mevblocker.io,https://eth.llamarpc.com,https://ethereum-rpc.publicnode.com"
+    BASE_PUBLIC_RPC_URLS: str = "https://mainnet.base.org,https://base-rpc.publicnode.com,https://base.blockpi.network/v1/rpc/public"
+    ARB_PUBLIC_RPC_URLS: str = "https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com,https://arbitrum.blockpi.network/v1/rpc/public"
     SOL_PUBLIC_RPC_URLS: str = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com"
 
     # Alert Pipeline

@@ -5,6 +5,7 @@ Claims ``pending`` candidate_events with atomic row locks, runs
 Decoupled from the fetcher: it only reads the database and talks to Telegram.
 """
 import asyncio
+import time
 import traceback
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -375,6 +376,7 @@ class BackgroundAIWorker:
                         bot_username=self._settings.BOT_USERNAME,
                     )
                 )
+                start = time.monotonic()
                 sent = await safe_telegram_send(
                     self._bot,
                     self._channel_id,
@@ -390,6 +392,8 @@ class BackgroundAIWorker:
                     ),
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
+                dispatch_latency_ms = (time.monotonic() - start) * 1000
+                msg_size = len(msg.encode()) if msg else 0
                 if sent is None:
                     log.error(
                         "worker_dispatch_send_failed",
@@ -405,7 +409,7 @@ class BackgroundAIWorker:
                 await uow.commit()
                 log.info("worker_dispatched_campaign_created", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
                 log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={msg_id}")
-                log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "CREATED", msg_id, True)
+                log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "CREATED", msg_id, True, dispatch_latency_ms=dispatch_latency_ms, message_size_bytes=msg_size)
                 return True
 
             if action == "MUTATED":
@@ -420,13 +424,17 @@ class BackgroundAIWorker:
                     )
                 else:
                     try:
+                        mutated_msg = format_mutated_campaign_alert(campaign)
+                        start = time.monotonic()
                         await self._bot.edit_message_text(
                             chat_id=self._channel_id,
                             message_id=campaign.telegram_message_id,
-                            text=format_mutated_campaign_alert(campaign),
+                            text=mutated_msg,
                             parse_mode=ParseMode.HTML,
                             link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
+                        dispatch_latency_ms = (time.monotonic() - start) * 1000
+                        msg_size = len(mutated_msg.encode())
                     except (TelegramAPIError, TelegramNetworkError, TelegramServerError, TelegramRetryAfter) as e:
                         log.warning(
                             "worker_mutated_edit_failed_fallback_to_threaded",
@@ -444,19 +452,23 @@ class BackgroundAIWorker:
                         await uow.commit()
                         log.info("worker_dispatched_campaign_mutated", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
                         log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={campaign.telegram_message_id}")
-                        log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "MUTATED", campaign.telegram_message_id, True)
+                        log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "MUTATED", campaign.telegram_message_id, True, dispatch_latency_ms=dispatch_latency_ms, message_size_bytes=msg_size)
                         return True
                     # fall through to THREADED fallback when edit failed or missing id
 
             # THREADED (including MUTATED fallback)
+            threaded_msg = format_threaded_campaign_alert(event, campaign)
+            start = time.monotonic()
             sent = await safe_telegram_send(
                 self._bot,
                 self._channel_id,
-                format_threaded_campaign_alert(event, campaign),
+                threaded_msg,
                 reply_to_message_id=campaign.telegram_message_id,
                 parse_mode=ParseMode.HTML,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
+            dispatch_latency_ms = (time.monotonic() - start) * 1000
+            msg_size = len(threaded_msg.encode())
             if sent is None:
                 log.error(
                     "worker_dispatch_send_failed",
@@ -472,5 +484,5 @@ class BackgroundAIWorker:
             await uow.commit()
             log.info("worker_dispatched_campaign_threaded", extra={"dedupe_key": event.dedupe_key, "campaign_id": campaign.id})
             log.info(f"[TELEGRAM_DISPATCH] ✅ Broadcasted Event ID={event.id} to Telegram! Campaign={campaign.id} MsgID={new_msg_id}")
-            log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "THREADED", new_msg_id, True)
+            log_channel_dispatch(event.id, event.dedupe_key, campaign.id, "THREADED", new_msg_id, True, dispatch_latency_ms=dispatch_latency_ms, message_size_bytes=msg_size)
             return True

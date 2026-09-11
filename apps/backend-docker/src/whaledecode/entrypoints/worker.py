@@ -2,6 +2,8 @@ import asyncio
 import os
 import signal
 import sys
+import traceback
+from typing import Any
 
 import structlog
 from aiogram import Bot
@@ -9,6 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from whaledecode.adapters.chain.factory import build_resilient_rpc
 from whaledecode.adapters.db.uow import UnitOfWork
 from whaledecode.application.fetcher import LiveBlockchainFetcher
 from whaledecode.application.services.investigation import build_investigation_service
@@ -27,6 +30,9 @@ async def run_worker(settings: Settings) -> None:
         token=settings.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+
+    # Shared RPC manager for fetcher + heartbeat telemetry
+    rpc_manager = build_resilient_rpc(settings)
 
     def _uow() -> UnitOfWork:
         return UnitOfWork(session_factory)
@@ -65,11 +71,11 @@ async def run_worker(settings: Settings) -> None:
             pass
 
     # Start fetcher (polling) and supervisor tasks
-    fetcher = LiveBlockchainFetcher(session_factory, settings)
+    fetcher = LiveBlockchainFetcher(session_factory, settings, rpc_manager=rpc_manager)
     fetcher_task = asyncio.create_task(fetcher.run(stop_event))
 
     supervisor_tasks = launch_supervisor_tasks(
-        session_factory, investigation_service, settings, bot, stop_event
+        session_factory, investigation_service, settings, bot, stop_event, rpc_manager
     )
 
     try:
@@ -79,6 +85,7 @@ async def run_worker(settings: Settings) -> None:
         for t in supervisor_tasks:
             t.cancel()
         await asyncio.gather(fetcher_task, *supervisor_tasks, return_exceptions=True)
+        await rpc_manager.aclose()
         await reasoner.close()
         await bot.session.close()
         log.info("worker_stopped")
@@ -90,6 +97,7 @@ def launch_supervisor_tasks(
     settings: Settings,
     bot: Bot,
     stop_event: asyncio.Event,
+    rpc_manager: Any | None = None,
 ) -> list[asyncio.Task]:
     """Start the consumer supervisor tasks (worker + alert loop + cron jobs).
     Returns list of tasks to be awaited/cancelled by caller.
@@ -143,7 +151,7 @@ def launch_supervisor_tasks(
 
     # Pipeline heartbeat: periodic health metrics
     heartbeat_task = asyncio.create_task(
-        periodic_heartbeat(settings, session_factory, interval_seconds=60, stop_event=stop_event)
+        periodic_heartbeat(settings, session_factory, interval_seconds=60, stop_event=stop_event, rpc_manager=rpc_manager)
     )
 
     tasks = [

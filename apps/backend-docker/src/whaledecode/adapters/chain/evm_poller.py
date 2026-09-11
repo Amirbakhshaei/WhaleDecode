@@ -12,6 +12,7 @@ from collections import defaultdict
 from typing import Any
 
 import structlog
+import time
 from aiolimiter import AsyncLimiter
 
 from whaledecode.adapters.chain.normalizer import (
@@ -24,6 +25,7 @@ from whaledecode.adapters.chain.poller import TargetedChainPoller
 from whaledecode.adapters.pricing.oracle import PriceOracle
 from whaledecode.config.settings import Settings
 from whaledecode.domain.entities.curated_wallet import CuratedWallet
+from whaledecode.infrastructure.pipeline_telemetry import log_evm_poll_complete
 from whaledecode.infrastructure.rpc_router import RpcFailoverRouter, to_int
 
 log = structlog.get_logger()
@@ -259,10 +261,34 @@ class EvmTargetedPoller(TargetedChainPoller):
             })
 
         self._last_block = to_block
-        log.info(
-            "evm_poll_complete",
-            extra={"chain": self._chain_code, "targets": len(targets), "txs": len(activities),
-                   "range": [from_block, to_block]},
+        
+        # Calculate value stats for enhanced logging
+        values_usd = [a.get("value_usd", 0.0) for a in activities]
+        min_value = min(values_usd) if values_usd else 0.0
+        max_value = max(values_usd) if values_usd else 0.0
+        avg_value = sum(values_usd) / len(values_usd) if values_usd else 0.0
+        
+        # Get active RPC node info
+        rpc_node = ""
+        try:
+            router = getattr(self._router, "_router", None)
+            if router:
+                rpc_node = router.get_active_node() or ""
+        except Exception:
+            pass
+        
+        log_evm_poll_complete(
+            chain=self._chain_code,
+            targets=len(targets),
+            txs=len(activities),
+            block_range=[from_block, to_block],
+            raw_logs_fetched=len(all_logs),
+            logs_after_aggregation=len(activities),
+            min_value_usd=min_value,
+            max_value_usd=max_value,
+            avg_value_usd=avg_value,
+            rpc_node_used=rpc_node,
+            rpc_latency_ms=0.0,  # TODO: track actual RPC latency
         )
         return activities
 

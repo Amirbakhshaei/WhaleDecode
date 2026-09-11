@@ -17,12 +17,15 @@ Or via the CLI:  ``whaledecode poller``
 """
 import asyncio
 import signal
+from typing import Any
 
 import structlog
 
+from whaledecode.adapters.chain.factory import build_resilient_rpc
 from whaledecode.adapters.db.session import create_session_factory
 from whaledecode.application.targeted_poller import TargetedPollerService
 from whaledecode.config.settings import Settings
+from whaledecode.infrastructure.pipeline_telemetry import periodic_heartbeat
 from whaledecode.infrastructure.telemetry import init_sentry
 
 log = structlog.get_logger()
@@ -69,6 +72,11 @@ async def run_poller(settings: Settings) -> None:
     # Health server runs concurrently with the poll loop; SIGTERM stops both.
     health_task = asyncio.create_task(_run_health_server(settings))
 
+    # Pipeline heartbeat: periodic health metrics
+    heartbeat_task = asyncio.create_task(
+        periodic_heartbeat(settings, session_factory, interval_seconds=60, stop_event=stop_event, rpc_manager=rpc_manager)
+    )
+
     log.info("poller_started")
     try:
         await service.run(stop_event)
@@ -76,8 +84,10 @@ async def run_poller(settings: Settings) -> None:
         stop_event.set()
         await service.aclose()
         await session_factory.dispose()
+        await rpc_manager.aclose()
         health_task.cancel()
-        await asyncio.gather(health_task, return_exceptions=True)
+        heartbeat_task.cancel()
+        await asyncio.gather(health_task, heartbeat_task, return_exceptions=True)
         log.info("poller_stopped")
 
 def main() -> None:
