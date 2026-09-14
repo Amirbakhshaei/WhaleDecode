@@ -10,7 +10,9 @@
       },
       "models": {
         "gemini-3.8-flash": {
-          "name": "Gemini 3.8 Flash"
+          "name": "Gemini 3.8 Flash"},
+          "gemini-3.5-flash": {
+          "name": "Gemini 3.5 Flash"
         }
       }
     }

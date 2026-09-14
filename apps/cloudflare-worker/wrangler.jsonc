@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "whaledecode_db",
-      "database_id": "28fbd1f7-8185-447d-b73c-f47c0b08cbdc",
+      "database_id": "70b64a07-98b5-42ae-a0b1-251c7d52f8c5",
       "migrations_dir": "migrations"
     }
   ],

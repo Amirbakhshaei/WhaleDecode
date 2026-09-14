@@ -6,10 +6,12 @@ export interface Env {
   BOT_TOKEN: string;
   CHANNEL_CHAT_ID: string;
   GEMINI_API_KEY: string;
+  DRPC_URL_SECONDARY?: string;
   GROQ_API_KEY: string;
   GROQ_API_KEY_SECONDARY?: string;
   ALCHEMY_WEBHOOK_SIGNING_KEYS?: string;
   LLM_MODEL?: string;
+  AI_GATEWAY_URL?: string;
   GROQ_MODEL?: string;
   TELEGRAM_BOT_USERNAME?: string;
 }
