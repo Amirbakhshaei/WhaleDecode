@@ -10,8 +10,25 @@ import path from "path";
 const DB_NAME = "whaledecode_db";
 const SAVE_PATH = path.resolve(import.meta.dirname, ".last_alchemy_clean.json");
 const ALCHEMY_URL = process.env.ALCHEMY_WEBHOOK_URL || "https://dashboard.alchemy.com/api/update-webhook-addresses";
-const WEBHOOK_ID = process.env.ALCHEMY_WEBHOOK_ID || "";
-const API_KEY = process.env.ALCHEMY_API_KEY || "";
+
+// ponytail: parse .env manually so script works without dotenv dependency
+function loadEnvFile(p) {
+  try {
+    const txt = fs.readFileSync(p, "utf-8");
+    for (const line of txt.split(/\r?\n/)) {
+      const idx = line.indexOf("=");
+      if (idx > 0 && !line.startsWith("#")) {
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        if (k && process.env[k] === undefined) process.env[k] = v.replace(/^["']|["']$/g, "");
+      }
+    }
+  } catch {}
+}
+loadEnvFile(path.resolve(import.meta.dirname, "../.env"));
+
+const WEBHOOK_ID = process.env.ALCHEMY_WEBHOOK_ID || process.env.ALCHEMY_WEBHOOK_ID_ETH || "";
+const API_TOKEN = process.env.ALCHEMY_API_KEY || process.env.ALCHEMY_AUTH_TOKEN || "";
 const USE_REMOTE = !!process.env.USE_REMOTE;
 
 function runD1(query) {
@@ -64,23 +81,29 @@ async function main() {
   if (!WEBHOOK_ID && !ALCHEMY_URL) {
     console.log("[sync] No Alchemy webhook config found; skipping remote update (dry-run mode).");
   } else {
+    const prev = (() => { try { return JSON.parse(fs.readFileSync(SAVE_PATH, "utf-8")); } catch { return []; } })();
+    const prevSet = new Set(prev);
+    const currSet = new Set(uniqueCurrent);
+    const toAdd = uniqueCurrent.filter((a) => !prevSet.has(a));
+    const toRemove = prev.filter((a) => !currSet.has(a));
+
     const payload = {
       webhook_id: WEBHOOK_ID,
-      addresses: uniqueCurrent,
-      overwrite: true,
+      addresses_to_add: toAdd,
+      addresses_to_remove: toRemove,
     };
     try {
       const res = await fetch(ALCHEMY_URL, {
-        method: "POST",
+        method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
+          ...(API_TOKEN ? { "X-Alchemy-Token": API_TOKEN } : {}),
         },
         body: JSON.stringify(payload),
       });
       const body = await res.text();
       if (res.ok) {
-        console.log(`[sync] Alchemy webhook updated: HTTP ${res.status}`);
+        console.log(`[sync] Alchemy webhook updated: HTTP ${res.status} (added=${toAdd.length}, removed=${toRemove.length})`);
       } else {
         console.error(`[sync] Alchemy webhook update failed: HTTP ${res.status} — ${body.slice(0, 200)}`);
       }
