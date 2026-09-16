@@ -21,6 +21,10 @@ export interface CuratedWallet {
   chain: string;
   label: string;
   tags: string;
+  is_exchange?: number;
+  is_mev?: number;
+  is_active?: number;
+  quality_score?: number;
 }
 
 export interface WhaleActivity {

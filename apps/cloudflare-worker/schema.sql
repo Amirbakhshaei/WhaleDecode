@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS curated_wallets (
   category TEXT,
   quality_score REAL DEFAULT 0.0,
   is_active INTEGER DEFAULT 1,
+  is_exchange INTEGER DEFAULT 0,
+  is_mev INTEGER DEFAULT 0,
+  tags TEXT DEFAULT '',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (address, chain)
 );
@@ -80,4 +83,11 @@ CREATE INDEX IF NOT EXISTS idx_candidate_events_tx_chain ON candidate_events (tx
 CREATE INDEX IF NOT EXISTS idx_curated_wallets_addr_chain ON curated_wallets (address, chain);
 CREATE INDEX IF NOT EXISTS idx_alerts_published ON alerts (published_at);
 CREATE INDEX IF NOT EXISTS idx_tracked_wallets_user ON tracked_wallets (user_id);
+CREATE TABLE IF NOT EXISTS blacklisted_addresses (
+  address TEXT PRIMARY KEY,
+  reason TEXT,
+  added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_blacklisted_address ON blacklisted_addresses(address);
+
 CREATE INDEX IF NOT EXISTS idx_wallet_profiles_addr_chain ON wallet_profiles (address, chain);

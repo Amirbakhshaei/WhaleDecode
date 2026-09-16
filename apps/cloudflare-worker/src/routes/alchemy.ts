@@ -3,8 +3,13 @@ import type { Env, WhaleActivity, CuratedWallet } from "../types";
 import { findCuratedWallet } from "../db";
 import { analyzeEvent } from "../llm";
 import { sendToChannel } from "../telegramClient";
+import { BLACKLISTED_ADDRESSES } from "../blacklist";
 
 export const alchemyRouter = new Hono<{ Bindings: Env }>();
+
+const BLACKLIST_SET = new Set(BLACKLISTED_ADDRESSES.map((a) => a.toLowerCase()));
+const MIN_TX_VALUE_USD = 5000;
+const ALLOWED_CATEGORIES = new Set(["external", "token"]);
 
 function extractActivities(payload: unknown): WhaleActivity[] {
   if (Array.isArray(payload)) return payload as WhaleActivity[];
@@ -87,7 +92,10 @@ alchemyRouter.post("/", async (c) => {
   const raw = await c.req.text();
   const signingKey = c.env.ALCHEMY_WEBHOOK_SIGNING_KEYS;
   const sig = c.req.header("X-Alchemy-Signature") ?? null;
-  if (signingKey && sig) {
+
+  // 1. Immediate Signature Validation — strict
+  if (signingKey) {
+    if (!sig) return c.json({ success: false, error: "invalid_signature" }, 401);
     const ok = await verifySignature(raw, sig, signingKey);
     if (!ok) return c.json({ success: false, error: "invalid_signature" }, 401);
   }
@@ -100,11 +108,32 @@ alchemyRouter.post("/", async (c) => {
   }
   const activities = extractActivities(payload);
 
-  c.executionCtx?.waitUntil(
-    runPipeline(c.env, activities).catch((e) =>
-      console.error("alchemy_pipeline_error", String(e)),
-    ),
-  );
+  // 2. Pre-filtering — drop noise instantly without downstream calls
+  const filtered: WhaleActivity[] = [];
+  for (const act of activities) {
+    const cat = (act.category || (payload as Record<string, unknown>)?.category || "").toString().toLowerCase();
+    if (cat && !ALLOWED_CATEGORIES.has(cat)) continue;
 
-  return c.json({ success: true, queued: true }, 200);
+    const fromAddr = ((act.fromAddress ?? "") as string).toLowerCase();
+    const toAddr = ((act.toAddress ?? "") as string).toLowerCase();
+    if (fromAddr && BLACKLIST_SET.has(fromAddr)) continue;
+    if (toAddr && BLACKLIST_SET.has(toAddr)) continue;
+
+    const valStr = (act.value ?? "").toString();
+    const valNum = parseFloat(valStr);
+    if (!valStr || Number.isNaN(valNum) || valNum < MIN_TX_VALUE_USD) continue;
+
+    filtered.push(act);
+  }
+
+  // 3. Execution Decoupling — ack immediately; pipeline async
+  if (filtered.length > 0) {
+    c.executionCtx?.waitUntil(
+      runPipeline(c.env, filtered).catch((e) =>
+        console.error("alchemy_pipeline_error", String(e)),
+      ),
+    );
+  }
+
+  return new Response("EVENT_ACKNOWLEDGED", { status: 200 });
 });

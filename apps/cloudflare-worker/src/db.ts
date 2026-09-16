@@ -7,7 +7,7 @@ export async function findCuratedWallet(
 ): Promise<CuratedWallet | null> {
   const row = await db
     .prepare(
-      "SELECT address, chain, label, tags FROM curated_wallets WHERE address = ? AND is_active = 1 LIMIT 1",
+      "SELECT address, chain, label, tags, quality_score, is_exchange, is_mev FROM curated_wallets WHERE address = ? AND is_active = 1 AND (is_exchange = 0 OR is_exchange IS NULL) AND (is_mev = 0 OR is_mev IS NULL) LIMIT 1",
     )
     .bind(address.toLowerCase())
     .first<CuratedWallet>();

@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "migrate:local": "wrangler d1 migrations apply whaledecode_db --local",
     "migrate:remote": "wrangler d1 migrations apply whaledecode_db --remote",
-    "register:webhooks": "node scripts/registerWebhooks.mjs"
+    "register:webhooks": "node scripts/registerWebhooks.mjs",
+    "sync:alchemy": "node scripts/sync_alchemy_clean.mjs"
   },
   "keywords": [],
   "author": "",
