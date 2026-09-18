@@ -1,0 +1,17 @@
+{
+  "name": "whaledecode-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --test-reporter=spec --import tsx test/*.test.ts",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.3"
+    }
+}

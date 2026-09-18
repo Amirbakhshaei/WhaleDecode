@@ -7,6 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
+    "build": "wrangler deploy --dry-run",
+    "test": "node scripts/e2e_stress_test.mjs",
     "migrate:local": "wrangler d1 migrations apply whaledecode_db --local",
     "migrate:remote": "wrangler d1 migrations apply whaledecode_db --remote",
     "register:webhooks": "node scripts/registerWebhooks.mjs",

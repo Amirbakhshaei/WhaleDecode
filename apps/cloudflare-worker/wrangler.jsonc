@@ -12,6 +12,8 @@
       "migrations_dir": "migrations"
     }
   ],
+  "triggers": { "crons": ["0 14 * * *"] },
+  "observability": { "enabled": true, "logs": { "enabled": true }, "traces": { "enabled": true } },
   "vars": {
     "TELEGRAM_BOT_USERNAME": "WhaleDecodeBot",
     "LLM_MODEL": "gemini-2.5-flash",

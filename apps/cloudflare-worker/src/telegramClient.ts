@@ -5,8 +5,10 @@ export async function sendMessage(
   chatId: string | number,
   text: string,
 ): Promise<void> {
+  const token = env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN;
+  if (!token) throw new Error("telegram_not_configured");
   const res = await fetch(
-    `https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`,
+    `https://api.telegram.org/bot${token}/sendMessage`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -25,5 +27,5 @@ export async function sendMessage(
 }
 
 export function sendToChannel(env: Env, text: string): Promise<void> {
-  return sendMessage(env, env.CHANNEL_CHAT_ID, text);
+  return sendMessage(env, env.TELEGRAM_CHANNEL_ID || env.CHANNEL_CHAT_ID, text);
 }

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS curated_wallets (
   label TEXT,
   category TEXT,
   quality_score REAL DEFAULT 0.0,
+  tier TEXT DEFAULT 'tier1',
   is_active INTEGER DEFAULT 1,
   is_exchange INTEGER DEFAULT 0,
   is_mev INTEGER DEFAULT 0,
@@ -27,12 +28,20 @@ CREATE TABLE IF NOT EXISTS tracked_wallets (
 
 CREATE TABLE IF NOT EXISTS candidate_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  idempotency_key TEXT UNIQUE,
   chain TEXT NOT NULL,
   tx_hash TEXT NOT NULL,
   log_index INTEGER DEFAULT 0,
+  from_address TEXT DEFAULT '',
+  to_address TEXT DEFAULT '',
+  asset_symbol TEXT DEFAULT '',
+  token_address TEXT,
+  raw_value REAL DEFAULT 0,
   event_type TEXT,
+  action_type TEXT,
   raw_json TEXT,
   value_usd REAL DEFAULT 0.0,
+  usd_value REAL DEFAULT 0.0,
   score REAL DEFAULT 0.0,
   conviction REAL DEFAULT 0.0,
   status TEXT DEFAULT 'pending',
@@ -51,12 +60,20 @@ CREATE TABLE IF NOT EXISTS wallet_profiles (
 
 CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  idempotency_key TEXT UNIQUE,
   user_id INTEGER,
   chain TEXT,
   tx_hash TEXT,
   title TEXT,
+  headline TEXT,
+  intent TEXT,
+  narrative TEXT,
+  reasoning TEXT,
+  social_hook TEXT,
   body_text TEXT,
   severity TEXT DEFAULT 'medium',
+  telegram_sent INTEGER DEFAULT 0,
+  x_posted INTEGER DEFAULT 0,
   published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   delivered_at DATETIME
 );
@@ -88,6 +105,25 @@ CREATE TABLE IF NOT EXISTS blacklisted_addresses (
   reason TEXT,
   added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_blacklisted_address ON blacklisted_addresses(address);
+CREATE INDEX IF NOT EXISTS idx_blacklist_addr ON blacklisted_addresses(address);
 
 CREATE INDEX IF NOT EXISTS idx_wallet_profiles_addr_chain ON wallet_profiles (address, chain);
+CREATE INDEX IF NOT EXISTS idx_events_usd_val ON candidate_events(usd_value DESC);
+CREATE INDEX IF NOT EXISTS idx_events_created ON candidate_events(created_at);
+
+-- Edge idempotency + per-wallet daily cooldown + delivery ledger
+CREATE TABLE IF NOT EXISTS whale_cooldowns (
+  chain TEXT NOT NULL,
+  address TEXT NOT NULL,
+  day TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  PRIMARY KEY (chain, address, day)
+);
+
+CREATE TABLE IF NOT EXISTS alert_deliveries (
+  event_key TEXT NOT NULL,
+  destination TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sending',
+  message_id INTEGER,
+  PRIMARY KEY (event_key, destination)
+);

@@ -14,6 +14,17 @@ export interface Env {
   AI_GATEWAY_URL?: string;
   GROQ_MODEL?: string;
   TELEGRAM_BOT_USERNAME?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHANNEL_ID?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
+  ALCHEMY_WEBHOOK_SIGNING_KEY?: string;
+  ALCHEMY_SIGNING_KEY_ETH?: string;
+  ALCHEMY_SIGNING_KEY_ARB?: string;
+  ALCHEMY_SIGNING_KEY_BASE?: string;
+  HELIUS_WEBHOOK_SECRET?: string;
+  CURATED_WALLETS_JSON?: string;
+  DEEP_ENGINE_URL?: string;
+  DEEP_ENGINE_SECRET?: string;
 }
 
 export interface CuratedWallet {

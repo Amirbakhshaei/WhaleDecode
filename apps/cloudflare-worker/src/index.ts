@@ -26,25 +26,19 @@ app.onError((err, c) => {
 
 export default app;
 
-// ponytail: Cloudflare Cron Trigger catch-up (* * * * *)
+// ponytail: daily 24h leaderboard + link-free X hook (cron: 0 14 * * *)
 export async function scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-  // ponytail: 60s fallback poller — light RPC check if webhook heartbeats lapse
   try {
-    const db = env.DB;
-    const wallets = await db.prepare("SELECT address, chain FROM curated_wallets WHERE is_active = 1 LIMIT 10").all() as { results?: Array<{ address: string; chain: string }> };
-    const targets = (wallets.results ?? []);
-    if (targets.length === 0) return;
-    const { multiFailoverFetch } = await import("./services/rpcRouter");
-    const cfg = { primary: env.DRPC_URL || "https://ethereum-rpc.publicnode.com", backup: env.DRPC_URL_SECONDARY || env.DRPC_URL || "https://ethereum-rpc.publicnode.com", timeoutMs: 4000 };
-    for (const w of targets) {
-      try {
-        // Lightweight block signature / balance check for curated address
-        await multiFailoverFetch(cfg, { jsonrpc: "2.0", method: "eth_getBalance", params: [w.address, "latest"], id: 1 });
-        // If succeeds, address is active; log for audit (no full event creation to keep lazy)
-        console.log("scheduled_poll_ok", { address: w.address, chain: w.chain, cron: event.cron });
-      } catch (e) {
-        console.error("scheduled_poll_fail", { address: w.address, error: String(e) });
-      }
+    const rows = await env.DB.prepare("SELECT c.label, e.chain, e.asset_symbol, e.usd_value FROM candidate_events e LEFT JOIN curated_wallets c ON c.address = e.from_address WHERE e.created_at >= datetime('now', '-1 day') ORDER BY e.usd_value DESC LIMIT 5").all<{ label: string | null; chain: string; asset_symbol: string; usd_value: number }>();
+    const top = rows.results ?? [];
+    if (top.length === 0) return;
+    const total = top.reduce((sum, r) => sum + (r.usd_value || 0), 0);
+    const lines = top.map((r) => `• ${(r.label || "Whale").replace(/[<>&]/g, "")}: $${Math.round(r.usd_value).toLocaleString("en-US")} ${String(r.asset_symbol || "").replace(/[<>&]/g, "")} on ${r.chain}`).join("\n");
+    const text = `While retail was panic-selling, smart money deployed $${(total / 1e6).toFixed(1)}M across ${top.length} narratives today. Complete on-chain flow breakdown:\n\n${lines}\n\nReal-time alerts: @WhaleDecodeBot`;
+    const token = env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN;
+    const chat = env.TELEGRAM_CHANNEL_ID || env.CHANNEL_CHAT_ID;
+    if (token && chat) {
+      ctx.waitUntil(fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: chat, text, link_preview_options: { is_disabled: true } }) }).then(() => undefined).catch((e) => console.error("rollup_failed", String(e))));
     }
   } catch (e) {
     console.error("scheduled_handler_failed", String(e));
