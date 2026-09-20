@@ -13,6 +13,7 @@ export interface Env {
   LLM_MODEL?: string;
   AI_GATEWAY_URL?: string;
   GROQ_MODEL?: string;
+  GROQ_CHEAP_MODEL?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHANNEL_ID?: string;

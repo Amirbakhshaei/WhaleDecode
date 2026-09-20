@@ -24,10 +24,8 @@ app.onError((err, c) => {
   );
 });
 
-export default app;
-
 // ponytail: daily 24h leaderboard + link-free X hook (cron: 0 14 * * *)
-export async function scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+async function scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
   try {
     const rows = await env.DB.prepare("SELECT c.label, e.chain, e.asset_symbol, e.usd_value FROM candidate_events e LEFT JOIN curated_wallets c ON c.address = e.from_address WHERE e.created_at >= datetime('now', '-1 day') ORDER BY e.usd_value DESC LIMIT 5").all<{ label: string | null; chain: string; asset_symbol: string; usd_value: number }>();
     const top = rows.results ?? [];
@@ -44,3 +42,8 @@ export async function scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionC
     console.error("scheduled_handler_failed", String(e));
   }
 }
+
+export default {
+  fetch: (request: Request, env: Env, ctx: ExecutionContext) => app.fetch(request, env, ctx),
+  scheduled,
+};

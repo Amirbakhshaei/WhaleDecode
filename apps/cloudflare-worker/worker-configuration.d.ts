@@ -4,8 +4,9 @@
 interface __BaseEnv_Env {
 	DB: D1Database;
 	TELEGRAM_BOT_USERNAME: "WhaleDecodeBot";
-	LLM_MODEL: "gemini-2.5-flash";
-	GROQ_MODEL: "llama-3.3-70b-versatile";
+	LLM_MODEL: "gemini-3.5-flash-lite";
+	GROQ_MODEL: "openai/gpt-oss-120b";
+	GROQ_CHEAP_MODEL: "openai/gpt-oss-20b";
 	DRPC_URL: "https://eth.llamarpc.com";
 }
 declare namespace Cloudflare {

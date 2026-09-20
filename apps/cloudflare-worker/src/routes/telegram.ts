@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { sendMessage } from "../telegramClient";
-import { groqChat } from "../llm";
+import { groqChat, GROQ_CHEAP_FALLBACK } from "../llm";
 import {
   addTrackedWallet,
   listTrackedWallets,
@@ -83,6 +83,7 @@ telegramRouter.post("/", async (c) => {
         const answer = await groqChat(
           `You are WhaleDecode, an on-chain intelligence assistant. Answer concisely and accurately:\n${question}`,
           c.env,
+          c.env.GROQ_CHEAP_MODEL || GROQ_CHEAP_FALLBACK,
         );
         await sendMessage(c.env, chatId, answer);
       }

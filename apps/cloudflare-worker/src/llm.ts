@@ -2,8 +2,9 @@ import type { Env, WhaleActivity, CuratedWallet } from "./types";
 import { guardEventAnalysis, type EventAnalysisResult, type ChatReportResult, type ConsolidatedReport } from "./types/llmSchemas";
 import { getPriceUsdc } from "./services/priceOracle";
 
-const GEMINI_FALLBACK = "gemini-2.5-flash";
-const GROQ_FALLBACK = "llama-3.3-70b-versatile";
+const GEMINI_FALLBACK = "gemini-3.5-flash-lite";
+const GROQ_FALLBACK = "openai/gpt-oss-120b";
+export const GROQ_CHEAP_FALLBACK = "openai/gpt-oss-20b";
 
 // ponytail: minimal DexScreener endpoint (no heavy library)
 const DEXSCREENER_API = (token: string) => `https://api.dexscreener.com/latest/dex/pairs/ethereum/${token}`;
