@@ -8,6 +8,7 @@ import { broadcast } from "./telegram";
 import { claimCooldown } from "../middleware/rateLimiter";
 import { MIN_USD } from "../config/constants";
 import { extractActivities } from "./extract";
+import { logger } from "../utils/logger";
 
 export async function processAlchemy(raw: string, env: Env): Promise<void> {
   const payload = safeParse(raw);
@@ -17,6 +18,7 @@ export async function processAlchemy(raw: string, env: Env): Promise<void> {
     const flow = await buildFlow(activity, network, env);
     if (!flow) continue;
     if (flow.usdValue < MIN_USD) {
+      logger.info("TRANSACTION_GATED_BELOW_FLOOR", { stage: "GATED", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, usdValue: flow.usdValue, threshold: MIN_USD });
       await forward(flow, env);
       continue;
     }
@@ -35,7 +37,10 @@ async function buildFlow(activity: WhaleActivity, network: string, env: Env): Pr
   const from = chain === "solana" ? rawFrom : rawFrom.toLowerCase();
   const to = chain === "solana" ? rawTo : rawTo.toLowerCase();
   if (!from || !to) return null;
-  if (isBlacklisted(from) || isBlacklisted(to)) return null;
+  if (isBlacklisted(from) || isBlacklisted(to)) {
+    logger.warn("TRANSACTION_DROPPED_BLACKLIST", { stage: "BLACKLIST", chain, from, to });
+    return null;
+  }
   const wallet = await findWallet(env, from, to);
   if (!wallet) return null;
   const symbol = String(activity.asset ?? "ETH").toUpperCase();
@@ -84,15 +89,26 @@ function normalizeChain(chain: string): Flow["chain"] {
 
 async function dispatch(flow: Flow, env: Env): Promise<void> {
   const duplicate = await env.DB.prepare("SELECT 1 FROM candidate_events WHERE chain = ? AND tx_hash = ? AND log_index = ?").bind(flow.chain, flow.txHash, flow.logIndex).first();
-  if (duplicate) return;
+  if (duplicate) {
+    logger.debug("TRANSACTION_DEDUPED", { stage: "DEDUP", chain: flow.chain, txHash: flow.txHash });
+    return;
+  }
   const key = await idempotencyKey(flow.chain, flow.txHash, flow.logIndex);
   const claimed = await env.DB.prepare("INSERT OR IGNORE INTO candidate_events (idempotency_key, chain, tx_hash, log_index, from_address, to_address, asset_symbol, token_address, raw_value, event_type, action_type, raw_json, value_usd, usd_value, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted')").bind(key, flow.chain, flow.txHash, flow.logIndex, flow.fromAddress, flow.toAddress, flow.assetSymbol, flow.tokenAddress ?? null, flow.amount, flow.actionType, flow.actionType, JSON.stringify({ from: flow.fromAddress, to: flow.toAddress, asset: flow.assetSymbol, amount: flow.amount, token: flow.tokenAddress ?? null }), flow.usdValue, flow.usdValue).run();
-  if (!claimed.meta.changes) return;
+  if (!claimed.meta.changes) {
+    logger.debug("TRANSACTION_DEDUPED", { stage: "DEDUP", chain: flow.chain, txHash: flow.txHash });
+    return;
+  }
   flow.idempotencyKey = key;
-  if (!await claimCooldown(env, flow.chain, flow.wallet.address, key)) return;
+  if (!await claimCooldown(env, flow.chain, flow.wallet.address, key)) {
+    logger.debug("TRANSACTION_DEDUPED", { stage: "DEDUP", chain: flow.chain, txHash: flow.txHash, reason: "cooldown" });
+    return;
+  }
   flow.reasoning = await reason(flow, env);
+  logger.info("AI_REASONING_COMPLETE", { stage: "AI_REASONING", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, intent: flow.reasoning.intent, usdValue: flow.usdValue });
   await env.DB.prepare("INSERT OR IGNORE INTO alerts (idempotency_key, chain, tx_hash, headline, intent, narrative, reasoning, social_hook, body_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(key, flow.chain, flow.txHash, flow.reasoning.headline, flow.reasoning.intent, flow.reasoning.narrative, flow.reasoning.analysis, flow.reasoning.socialHook, flow.reasoning.analysis).run();
   await broadcast(env, flow);
+  logger.info("ALPHA_ALERT_SYNTHESIZED", { stage: "ALERT", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, headline: flow.reasoning.headline, intent: flow.reasoning.intent, usdValue: flow.usdValue });
   await env.DB.prepare("UPDATE alerts SET telegram_sent = 1 WHERE idempotency_key = ?").bind(key).run();
   await forward(flow, env);
 }
@@ -104,5 +120,5 @@ async function forward(flow: Flow, env: Env): Promise<void> {
     headers: { "content-type": "application/json", authorization: `Bearer ${env.DEEP_ENGINE_SECRET}` },
     body: JSON.stringify(flow),
     signal: AbortSignal.timeout(2500),
-  }).catch(() => console.error("deep_engine_forward_failed"));
+  }).catch((e) => logger.error("deep_engine_forward_failed", { error: String(e) }));
 }

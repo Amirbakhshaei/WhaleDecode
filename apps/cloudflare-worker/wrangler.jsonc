@@ -13,7 +13,7 @@
     }
   ],
   "triggers": { "crons": ["0 14 * * *"] },
-  "observability": { "enabled": true, "logs": { "enabled": true }, "traces": { "enabled": true } },
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "enabled": true }, "traces": { "enabled": true } },
   "vars": {
     "TELEGRAM_BOT_USERNAME": "WhaleDecodeBot",
     "LLM_MODEL": "gemini-3.5-flash-lite",

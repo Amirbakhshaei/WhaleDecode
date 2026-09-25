@@ -5,6 +5,7 @@ import { verifySecret } from "../utils/crypto";
 import { isBlacklisted } from "../config/blacklist";
 import { MIN_USD } from "../config/constants";
 import { extractCandidateEvents } from "../services/heliusEvents";
+import { logger } from "../utils/logger";
 
 export const heliusRouter = new Hono<{ Bindings: Env }>();
 export { extractCandidateEvents };
@@ -19,7 +20,7 @@ heliusRouter.post("/", async (c) => {
   const secret = c.env.HELIUS_WEBHOOK_SECRET;
   const provided = c.req.header("authorization")?.replace(/^Bearer /i, "") ?? c.req.header("x-helius-signature");
   if (!await verifySecret(provided, secret)) return c.text("invalid_signature", 401);
-  c.executionCtx.waitUntil(processHelius(raw, c.env).catch(() => console.error("helius_pipeline_failed")));
+  c.executionCtx.waitUntil(processHelius(raw, c.env).catch((e) => logger.error("helius_pipeline_failed", { stage: "INGRESS", error: String(e) })));
   return c.text("EVENT_ACKNOWLEDGED", 200);
 });
 
