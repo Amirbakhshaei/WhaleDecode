@@ -3,7 +3,7 @@ import type { Env } from "../types";
 import { readBody } from "../middleware/auth";
 import { verifySecret } from "../utils/crypto";
 import { isBlacklisted } from "../config/blacklist";
-import { MIN_USD } from "../config/constants";
+import { chainMinUsd } from "../config/constants";
 import { extractCandidateEvents } from "../services/heliusEvents";
 import { logger } from "../utils/logger";
 
@@ -37,7 +37,7 @@ async function processHelius(raw: string, env: Env): Promise<void> {
     const from = String(detail.from ?? "");
     const to = String(detail.to ?? "");
     if (isBlacklisted(from) || isBlacklisted(to)) continue;
-    if (!Number.isFinite(ev.value_usd) || (ev.value_usd ?? 0) < MIN_USD) continue;
+    if (!Number.isFinite(ev.value_usd) || (ev.value_usd ?? 0) < chainMinUsd(ev.chain)) continue;
     await env.DB.prepare(
       "INSERT OR IGNORE INTO candidate_events (chain, tx_hash, log_index, from_address, to_address, asset_symbol, event_type, raw_json, value_usd, usd_value, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted')",
     ).bind(ev.chain, ev.tx_hash, ev.log_index, from, to, ev.asset ?? "", ev.asset ?? "unknown", JSON.stringify(ev.raw_json), ev.value_usd ?? 0, ev.value_usd ?? 0).run();

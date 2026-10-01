@@ -6,9 +6,12 @@ import { idempotencyKey } from "../utils/crypto";
 import { reason } from "./reasoning";
 import { broadcast } from "./telegram";
 import { claimCooldown } from "../middleware/rateLimiter";
-import { MIN_USD } from "../config/constants";
+import { MIN_CONFIDENCE_TO_PUBLISH, TOKEN_DEDUPE_WINDOW_SEC, chainMinUsd, isTreasuryLike } from "../config/constants";
 import { extractActivities } from "./extract";
 import { logger } from "../utils/logger";
+
+// Thesis so hedged it admits ignorance is not signal — never broadcast it.
+const HEDGED_THESIS_RE = /motive remains (uncertain|ambiguous)|without additional context|remains unclear|purpose .*not disclosed|exact motive remains/i;
 
 export async function processAlchemy(raw: string, env: Env): Promise<void> {
   const payload = safeParse(raw);
@@ -17,8 +20,8 @@ export async function processAlchemy(raw: string, env: Env): Promise<void> {
   for (const activity of activities) {
     const flow = await buildFlow(activity, network, env);
     if (!flow) continue;
-    if (flow.usdValue < MIN_USD) {
-      logger.info("TRANSACTION_GATED_BELOW_FLOOR", { stage: "GATED", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, usdValue: flow.usdValue, threshold: MIN_USD });
+    if (flow.usdValue < chainMinUsd(flow.chain)) {
+      logger.info("TRANSACTION_GATED_BELOW_FLOOR", { stage: "GATED", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, usdValue: flow.usdValue, threshold: chainMinUsd(flow.chain) });
       await forward(flow, env);
       continue;
     }
@@ -42,16 +45,48 @@ async function buildFlow(activity: WhaleActivity, network: string, env: Env): Pr
     return null;
   }
   const wallet = await findWallet(env, from, to);
-  if (!wallet) return null;
+  if (!wallet) {
+    logger.info("TRANSACTION_DROPPED_UNKNOWN_WALLET", { stage: "GATED", chain, from, to, txHash: String(activity.hash ?? "") });
+    return null;
+  }
   const symbol = String(activity.asset ?? "ETH").toUpperCase();
-  const tokenAddress = typeof activity.tokenAddress === "string" ? activity.tokenAddress : undefined;
+  // ponytail: alchemy nests the token contract at rawContract.address, not tokenAddress
+  const rawContract = activity.rawContract as { address?: unknown } | undefined;
+  const tokenAddress = typeof activity.tokenAddress === "string" ? activity.tokenAddress
+    : typeof rawContract?.address === "string" ? rawContract.address : undefined;
+  const actionType = ["TRANSFER", "SWAP", "STAKE", "UNSTAKE"].includes(String(activity.category ?? "TRANSFER").toUpperCase()) ? String(activity.category ?? "TRANSFER").toUpperCase() as Flow["actionType"] : "TRANSFER";
+  // Treasury/cold/DAO ops are internal bookkeeping, not market alpha — only
+  // swaps out of them carry signal. Kills the DAO-treasury TRANSFER spam.
+  if (actionType !== "SWAP" && isTreasuryLike(wallet.label, wallet.category)) {
+    logger.info("TRANSACTION_DROPPED_TREASURY_INTERNAL", { stage: "GATED", chain, txHash: String(activity.hash ?? ""), whale: wallet.label, actionType });
+    return null;
+  }
   const enrichment = await enrich(chain, symbol, tokenAddress);
-  if (!enrichment) return null;
+  if (!enrichment) {
+    logger.info("TRANSACTION_DROPPED_NO_PRICE", { stage: "ORACLE", chain, txHash: String(activity.hash ?? ""), asset: symbol, token: tokenAddress ?? null });
+    return null;
+  }
   const amount = Number(activity.value);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    logger.info("TRANSACTION_DROPPED_INVALID_VALUE", { stage: "GATED", chain, txHash: String(activity.hash ?? "") });
+    return null;
+  }
   const usdValue = amount * enrichment.priceUsd;
+  // ponytail: a transfer can't exceed the token's FDV, and 20x pool depth on
+  // a non-swap means the DexScreener pair is the wrong contract (ALPHA dupes).
+  if (enrichment.fdv && usdValue > enrichment.fdv) {
+    logger.info("TRANSACTION_DROPPED_IMPLAUSIBLE_VALUATION", { stage: "ORACLE", chain, txHash: String(activity.hash ?? ""), asset: symbol, usdValue, fdv: enrichment.fdv });
+    return null;
+  }
+  if (actionType !== "SWAP" && enrichment.liquidityUsd && enrichment.liquidityUsd > 0 && usdValue > enrichment.liquidityUsd * 20) {
+    logger.info("TRANSACTION_DROPPED_IMPLAUSIBLE_VALUATION", { stage: "ORACLE", chain, txHash: String(activity.hash ?? ""), asset: symbol, usdValue, liquidityUsd: enrichment.liquidityUsd });
+    return null;
+  }
   const txHash = String(activity.hash ?? "");
-  if (!/^0x[0-9a-f]{64}$/i.test(txHash)) return null;
+  if (!/^0x[0-9a-f]{64}$/i.test(txHash)) {
+    logger.info("TRANSACTION_DROPPED_INVALID_HASH", { stage: "GATED", chain, txHash });
+    return null;
+  }
   const logIndex = Number(activity.logIndex ?? 0);
   return {
     idempotencyKey: await idempotencyKey(chain, txHash, logIndex),
@@ -64,7 +99,7 @@ async function buildFlow(activity: WhaleActivity, network: string, env: Env): Pr
     tokenAddress,
     amount,
     usdValue,
-    actionType: ["TRANSFER", "SWAP", "STAKE", "UNSTAKE"].includes(String(activity.category ?? "TRANSFER").toUpperCase()) ? String(activity.category ?? "TRANSFER").toUpperCase() as Flow["actionType"] : "TRANSFER",
+    actionType,
     wallet,
     enrichment,
   };
@@ -93,6 +128,19 @@ async function dispatch(flow: Flow, env: Env): Promise<void> {
     logger.debug("TRANSACTION_DEDUPED", { stage: "DEDUP", chain: flow.chain, txHash: flow.txHash });
     return;
   }
+  // Token-level dedupe: same token re-alerted within the window (the 2x ALPHA
+  // double-post came from two treasuries moving the same token). One headline
+  // per token per hour — the second leg is context, not a new alert.
+  const tokenKey = (flow.tokenAddress ?? flow.assetSymbol ?? "").toLowerCase();
+  if (tokenKey) {
+    const recent = await env.DB.prepare(
+      `SELECT 1 FROM candidate_events WHERE chain = ? AND (lower(token_address) = ? OR (token_address IS NULL AND lower(asset_symbol) = ?)) AND created_at >= datetime('now', '-${TOKEN_DEDUPE_WINDOW_SEC} seconds') LIMIT 1`,
+    ).bind(flow.chain, tokenKey, tokenKey).first().catch(() => null);
+    if (recent) {
+      logger.debug("TRANSACTION_DEDUPED", { stage: "DEDUP", chain: flow.chain, txHash: flow.txHash, reason: "token_cooldown" });
+      return;
+    }
+  }
   const key = await idempotencyKey(flow.chain, flow.txHash, flow.logIndex);
   const claimed = await env.DB.prepare("INSERT OR IGNORE INTO candidate_events (idempotency_key, chain, tx_hash, log_index, from_address, to_address, asset_symbol, token_address, raw_value, event_type, action_type, raw_json, value_usd, usd_value, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted')").bind(key, flow.chain, flow.txHash, flow.logIndex, flow.fromAddress, flow.toAddress, flow.assetSymbol, flow.tokenAddress ?? null, flow.amount, flow.actionType, flow.actionType, JSON.stringify({ from: flow.fromAddress, to: flow.toAddress, asset: flow.assetSymbol, amount: flow.amount, token: flow.tokenAddress ?? null }), flow.usdValue, flow.usdValue).run();
   if (!claimed.meta.changes) {
@@ -106,6 +154,26 @@ async function dispatch(flow: Flow, env: Env): Promise<void> {
   }
   flow.reasoning = await reason(flow, env);
   logger.info("AI_REASONING_COMPLETE", { stage: "AI_REASONING", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, intent: flow.reasoning.intent, usdValue: flow.usdValue });
+  // Post-LLM publish gates: low conviction, internal ops, or a thesis that
+  // admits ignorance never reaches the channel — stored, not broadcast.
+  if (flow.reasoning.confidenceScore < MIN_CONFIDENCE_TO_PUBLISH) {
+    logger.info("TRANSACTION_GATED_LOW_CONVICTION", { stage: "GATED", chain: flow.chain, txHash: flow.txHash, confidence: flow.reasoning.confidenceScore, threshold: MIN_CONFIDENCE_TO_PUBLISH });
+    await env.DB.prepare("UPDATE candidate_events SET status = 'skipped' WHERE idempotency_key = ?").bind(key).run().catch(() => null);
+    await forward(flow, env);
+    return;
+  }
+  if (flow.reasoning.intent === "INTERNAL" || flow.reasoning.intent === "TRANSFER" || flow.reasoning.narrative === "Internal") {
+    logger.info("TRANSACTION_GATED_INTERNAL_OPS", { stage: "GATED", chain: flow.chain, txHash: flow.txHash, intent: flow.reasoning.intent });
+    await env.DB.prepare("UPDATE candidate_events SET status = 'skipped' WHERE idempotency_key = ?").bind(key).run().catch(() => null);
+    await forward(flow, env);
+    return;
+  }
+  if (HEDGED_THESIS_RE.test(flow.reasoning.analysis) && flow.reasoning.confidenceScore < 0.75) {
+    logger.info("TRANSACTION_GATED_HEDGED_THESIS", { stage: "GATED", chain: flow.chain, txHash: flow.txHash, confidence: flow.reasoning.confidenceScore });
+    await env.DB.prepare("UPDATE candidate_events SET status = 'skipped' WHERE idempotency_key = ?").bind(key).run().catch(() => null);
+    await forward(flow, env);
+    return;
+  }
   await env.DB.prepare("INSERT OR IGNORE INTO alerts (idempotency_key, chain, tx_hash, headline, intent, narrative, reasoning, social_hook, body_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(key, flow.chain, flow.txHash, flow.reasoning.headline, flow.reasoning.intent, flow.reasoning.narrative, flow.reasoning.analysis, flow.reasoning.socialHook, flow.reasoning.analysis).run();
   await broadcast(env, flow);
   logger.info("ALPHA_ALERT_SYNTHESIZED", { stage: "ALERT", chain: flow.chain, txHash: flow.txHash, whale: flow.wallet.label, headline: flow.reasoning.headline, intent: flow.reasoning.intent, usdValue: flow.usdValue });

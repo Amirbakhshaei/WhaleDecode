@@ -1,4 +1,5 @@
 import type { Chain, Flow } from "../config/constants";
+import { MIN_LIQUIDITY_USD } from "../config/constants";
 
 const STABLES: Record<string, Record<string, string>> = {
   ethereum: {
@@ -25,6 +26,9 @@ export async function enrich(chain: Chain, symbol: string, token?: string): Prom
       pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
       const pair = pairs[0];
       if (!pair || !Number.isFinite(Number(pair.priceUsd))) return null;
+      // ponytail: thin/fake pools (wrong ALPHA contract, dust pairs) must not
+      // price a $3M headline — drop when depth can't support the quote.
+      if ((pair.liquidity?.usd ?? 0) < MIN_LIQUIDITY_USD) return null;
       return { priceUsd: Number(pair.priceUsd), liquidityUsd: pair.liquidity?.usd, volume24h: pair.volume?.h24, fdv: pair.fdv };
     }
     if (symbol !== (chain === "solana" ? "SOL" : "ETH")) return null;

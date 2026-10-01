@@ -127,3 +127,6 @@ CREATE TABLE IF NOT EXISTS alert_deliveries (
   message_id INTEGER,
   PRIMARY KEY (event_key, destination)
 );
+-- Channel quality: token-level dedupe (one headline per token/hour) + rollup.
+CREATE INDEX IF NOT EXISTS idx_candidate_token_time ON candidate_events(chain, token_address, created_at);
+CREATE INDEX IF NOT EXISTS idx_candidate_status_time ON candidate_events(status, created_at);

@@ -37,3 +37,4 @@ backups/
 **/.mf/
 **/dist/
 **/.dev.vars
+.specify/
